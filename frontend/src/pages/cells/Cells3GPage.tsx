@@ -4,6 +4,7 @@ import {
   Popconfirm, Tag, Upload, message, Row, Col,
   Modal, Form, InputNumber,
 } from 'antd'
+import type { ColumnsType } from 'antd/es/table'
 import {
   PlusOutlined, UploadOutlined, SearchOutlined,
   EditOutlined, DeleteOutlined,
@@ -35,16 +36,14 @@ export default function Cells3GPage() {
     load()
     getVendors().then((rows: any[]) => {
       const v = new Set<string>()
-      rows.forEach((r: any) => { if (r.vendor_4g) v.add(r.vendor_4g) })
+      rows.forEach((r: any) => { if (r.vendor_3g) v.add(r.vendor_3g) })
       setVendors([...v])
     })
     getSites({ limit: 2000 }).then(setSites)
   }, [search, vendor])
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
-  const openEdit   = (r: Cell3G) => {
-    setEditing(r); form.setFieldsValue(r); setModalOpen(true)
-  }
+  const openEdit   = (r: Cell3G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
 
   const handleSave = async () => {
     const values = await form.validateFields()
@@ -77,19 +76,9 @@ export default function Cells3GPage() {
     return false
   }
 
-  const columns = [
-    { title: 'Site Name',  dataIndex: 'site_name',  width: 130 },
-    { title: 'Cell Name',  dataIndex: 'cell_name',  width: 130 },
-    { title: 'Vendor',     dataIndex: 'vendor',     width: 100 },
-    { title: 'Azimuth',    dataIndex: 'azimuth',    width: 80  },
-    { title: 'Do cao anten', dataIndex: 'do_cao_anten', width: 110 },
-    { title: 'MIMO', dataIndex: 'mimo', width: 80,
-      render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
-    { title: 'Vung phu', dataIndex: 'vung_phu_song', width: 90 },
-    { title: "PSC", dataIndex: "psc", width: 80 },
-    { title: "ARFCN", dataIndex: "arfcn", width: 80 },
+  const columns: ColumnsType<Cell3G> = [
     {
-      title: 'Hanh dong', width: 100, fixed: 'right' as const,
+      title: 'Hanh dong', key: 'action', fixed: 'left', width: 80,
       render: (_: unknown, r: Cell3G) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
@@ -99,7 +88,42 @@ export default function Cells3GPage() {
         </Space>
       ),
     },
+    // exact spec column order for 3G
+    { title: 'Mien',          dataIndex: 'mien',          fixed: 'left', width: 70  },
+    { title: 'Tinh',          dataIndex: 'tinh',          fixed: 'left', width: 130 },
+    { title: 'Phuong xa',     dataIndex: 'phuong_xa',     width: 130 },
+    { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 130,
+      render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 130,
+      render: (v: string) => <strong>{v}</strong> },
+    {
+      title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-',
+    },
+    { title: 'MORAN',         dataIndex: 'moran',         width: 120 },
+    { title: 'Lat',           dataIndex: 'lat',           width: 110 },
+    { title: 'Long',          dataIndex: 'long',          width: 110 },
+    { title: 'Vung phu song', dataIndex: 'vung_phu_song', width: 120 },
+    { title: 'Vendor',        dataIndex: 'vendor',        width: 100 },
+    { title: 'Do cao anten',  dataIndex: 'do_cao_anten',  width: 120 },
+    { title: 'Azimuth',       dataIndex: 'azimuth',       width: 90  },
+    { title: 'M-tilt',        dataIndex: 'm_tilt',        width: 80  },
+    { title: 'E-Tilt',        dataIndex: 'e_tilt',        width: 80  },
+    { title: 'Total Tilt',    dataIndex: 'total_tilt',    width: 100 },
+    { title: 'Loai Anten',    dataIndex: 'loai_anten',    width: 180 },
+    { title: 'Chung anten',   dataIndex: 'chung_anten',   width: 120 },
+    { title: 'Baseband',      dataIndex: 'baseband',      width: 120 },
+    { title: 'RF',            dataIndex: 'rf',            width: 100 },
+    { title: 'Cell ID',       dataIndex: 'cell_id',       width: 100 },
+    { title: 'ARFCN',         dataIndex: 'arfcn',         width: 90  },
+    { title: 'PSC',           dataIndex: 'psc',           width: 80  },
+    {
+      title: 'MIMO', dataIndex: 'mimo', width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-',
+    },
   ]
+
+  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
     <div>
@@ -129,22 +153,23 @@ export default function Cells3GPage() {
         </Col>
       </Row>
 
-      <Table columns={columns} dataSource={data} rowKey="id" loading={loading}
-             size="small" scroll={{ x: 900 }}
-             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells` }} />
+      <Table
+        columns={columns} dataSource={data} rowKey="id" loading={loading}
+        size="small" scroll={{ x: scrollX, y: 600 }} bordered
+        pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }}
+      />
 
-      <Modal title={editing ? 'Chinh sua Cell' : 'Them Cell moi'}
+      <Modal title={editing ? 'Chinh sua Cell 3G' : 'Them Cell 3G moi'}
              open={modalOpen} onOk={handleSave}
              onCancel={() => setModalOpen(false)}
-             width={720} okText="Luu">
+             width={800} okText="Luu">
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
                 <Select showSearch optionFilterProp="children"
                   filterOption={(input, option) =>
-                    String(option?.children ?? '')
-                      .toLowerCase().includes(input.toLowerCase())}>
+                    String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
                   {sites.map((s) =>
                     <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
                 </Select>
@@ -160,40 +185,30 @@ export default function Cells3GPage() {
                 <Input />
               </Form.Item>
             </Col>
-            <Col span={12}>
-              <Form.Item name="vendor" label="Vendor">
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
                 <Select allowClear>
-                  {vendors.map((v) =>
-                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
                 </Select>
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth">
-                <InputNumber style={{ width:'100%' }} />
+              <Form.Item name="lat" label="Lat">
+                <InputNumber style={{ width: '100%' }} precision={5} />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="do_cao_anten" label="Do cao anten">
-                <InputNumber style={{ width:'100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="m_tilt" label="M-Tilt">
-                <InputNumber style={{ width:'100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="e_tilt" label="E-Tilt">
-                <InputNumber style={{ width:'100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="mimo" label="MIMO">
-                <Select allowClear>
-                  {['2x2','4x4','8x8'].map((m) =>
-                    <Select.Option key={m} value={m}>{m}</Select.Option>)}
-                </Select>
+              <Form.Item name="long" label="Long">
+                <InputNumber style={{ width: '100%' }} precision={5} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -204,8 +219,82 @@ export default function Cells3GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="psc" label="PSC"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="arfcn" label="ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor">
+                <Select allowClear>
+                  {vendors.map((v) =>
+                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Do cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth">
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="loai_anten" label="Loai Anten">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="baseband" label="Baseband">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rf" label="RF">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="cell_id" label="Cell ID">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="arfcn" label="ARFCN">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="psc" label="PSC">
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2', '4x4', '8x8'].map((m) =>
+                    <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
           </Row>
         </Form>
       </Modal>
