@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
-  Popconfirm, Tag, Upload, message, Row, Col,
+  Popconfirm, Tag, Upload, message, Row, Col, Modal,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
@@ -38,12 +38,32 @@ export default function SitesPage() {
   const handleImport = async (file: File) => {
     try {
       const res = await importSitesExcel(file)
-      message.success(`Da nhap ${res.created} site`)
-      if (res.errors?.length)
-        message.warning(`${res.errors.length} loi - xem console`)
-      load()
-    } catch {
-      message.error('Import that bai')
+      if (res.created > 0) message.success(`Da nhap ${res.created} site`)
+      if (res.errors?.length) {
+        // Show first 5 errors in modal so user can see them
+        Modal.error({
+          title: `${res.errors.length} dong bi loi`,
+          width: 700,
+          content: (
+            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+              {res.errors.slice(0, 20).map((e: string, i: number) => (
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px solid #f0f0f0',
+                                      fontSize: 12, fontFamily: 'monospace' }}>
+                  {e}
+                </div>
+              ))}
+              {res.errors.length > 20 && (
+                <div style={{ color: '#999', marginTop: 8 }}>
+                  ... va {res.errors.length - 20} loi khac
+                </div>
+              )}
+            </div>
+          ),
+        })
+      }
+      if (res.created > 0) load()
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || 'Import that bai')
     }
     return false
   }

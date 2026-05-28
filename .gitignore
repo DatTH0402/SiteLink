@@ -1,2 +1,9 @@
+cat >> .gitignore << 'EOF'
+
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+EOF
