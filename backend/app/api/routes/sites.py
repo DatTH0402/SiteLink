@@ -112,16 +112,45 @@ async def import_sites_excel(
     current_user: User = Depends(get_current_user),
 ):
     content = await file.read()
-    records = parse_site_excel(content)
+    try:
+        records = parse_site_excel(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel file: {str(e)}")
+
     created, errors = 0, []
     for i, rec in enumerate(records):
+        row_num = i + 2  # Excel row number (1-indexed + header)
+
+        # Records with __error__ key are parse-level errors
+        if "__error__" in rec:
+            errors.append(f"Row {row_num}: {rec['__error__']}")
+            continue
+
+        # Validate required fields
+        if not rec.get("site_name"):
+            errors.append(f"Row {row_num}: 'Site name' is empty")
+            continue
+        if not rec.get("mien"):
+            errors.append(f"Row {row_num}: 'Mien' is empty")
+            continue
+        if not rec.get("tinh"):
+            errors.append(f"Row {row_num}: 'Tinh' is empty")
+            continue
+        if rec.get("lat") is None:
+            errors.append(f"Row {row_num}: 'Lat' is empty or invalid")
+            continue
+        if rec.get("long") is None:
+            errors.append(f"Row {row_num}: 'Long' is empty or invalid")
+            continue
+
         try:
-            if not rec.get("site_name"):
-                errors.append(f"Row {i+2}: missing site_name")
-                continue
-            existing = db.query(Site).filter(Site.site_name == rec["site_name"]).first()
+            existing = db.query(Site).filter(
+                Site.site_name == rec["site_name"]
+            ).first()
             if existing:
-                errors.append(f"Row {i+2}: site_name '{rec['site_name']}' already exists")
+                errors.append(
+                    f"Row {row_num}: site_name '{rec['site_name']}' already exists"
+                )
                 continue
             site = Site(**rec, created_by=current_user.id)
             db.add(site)
@@ -129,5 +158,20 @@ async def import_sites_excel(
             created += 1
         except Exception as e:
             db.rollback()
-            errors.append(f"Row {i+2}: {str(e)}")
+            errors.append(f"Row {row_num}: DB error - {str(e)}")
+
     return {"created": created, "errors": errors}
+
+@router.post("/debug-excel-columns")
+async def debug_excel_columns(
+    file: UploadFile = File(...),
+    _=Depends(get_current_user),
+):
+    """Returns the column names found in the uploaded Excel file."""
+    import pandas as pd, io
+    content = await file.read()
+    df = pd.read_excel(io.BytesIO(content), dtype=str, nrows=2)
+    return {
+        "columns_found": list(df.columns),
+        "first_row": df.iloc[0].to_dict() if len(df) > 0 else {},
+    }
