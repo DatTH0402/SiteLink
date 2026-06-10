@@ -102,8 +102,21 @@ export default function ReportPage() {
               }}>
                 Xoa loc
               </Button>
-              <Button icon={<DownloadOutlined />}
-                      onClick={() => window.open('/api/v1/report/export-csv','_blank')}>
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={() => {
+                  const token = localStorage.getItem('sl_token') || ''
+                  const params = new URLSearchParams()
+                  if (token) params.append('token', token)
+                  // add current filters
+                  const vals = form.getFieldsValue()
+                  if (vals.mien)          params.append('mien', vals.mien)
+                  if (vals.vendor)        params.append('vendor', vals.vendor)
+                  if (vals.mimo)          params.append('mimo', vals.mimo)
+                  if (vals.vung_phu_song) params.append('vung_phu_song', vals.vung_phu_song)
+                  window.open(`/api/v1/report/export-csv?${params.toString()}`, '_blank')
+                }}
+              >
                 Xuat CSV
               </Button>
             </Space>

@@ -1,5 +1,6 @@
 import api from './client'
 import type { Site } from '@/types'
+import type { SiteImportResult } from './cells'
 
 export const getSites = (params?: Record<string, unknown>) =>
   api.get<Site[]>('/api/v1/sites/', { params }).then((r) => r.data)
@@ -19,7 +20,7 @@ export const deleteSite = (id: number) =>
 export const importSitesExcel = (file: File) => {
   const form = new FormData()
   form.append('file', file)
-  return api.post<{ created: number; errors: string[] }>(
-    '/api/v1/sites/import-excel', form,
-  ).then((r) => r.data)
+  return api
+    .post<SiteImportResult>('/api/v1/sites/import-excel', form)
+    .then((r) => r.data)
 }

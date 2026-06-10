@@ -23,10 +23,10 @@ def _site_or_404(db: Session, site_id: int) -> Site:
 @router.get("/", response_model=List[SiteRead])
 def list_sites(
     skip: int = 0,
-    limit: int = 200,
+    limit: int = 500,
     search: Optional[str] = Query(None),
-    mien: Optional[str] = Query(None),
-    tinh: Optional[str] = Query(None),
+    mien:   Optional[str] = Query(None),
+    tinh:   Optional[str] = Query(None),
     tram_3g: Optional[bool] = Query(None),
     tram_4g: Optional[bool] = Query(None),
     tram_5g: Optional[bool] = Query(None),
@@ -115,63 +115,43 @@ async def import_sites_excel(
     try:
         records = parse_site_excel(content)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Cannot read Excel file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {str(e)}")
 
-    created, errors = 0, []
+    created, updated, errors = 0, 0, []
+
     for i, rec in enumerate(records):
-        row_num = i + 2  # Excel row number (1-indexed + header)
-
-        # Records with __error__ key are parse-level errors
+        row_num = i + 2
         if "__error__" in rec:
             errors.append(f"Row {row_num}: {rec['__error__']}")
             continue
-
-        # Validate required fields
         if not rec.get("site_name"):
             errors.append(f"Row {row_num}: 'Site name' is empty")
             continue
-        if not rec.get("mien"):
-            errors.append(f"Row {row_num}: 'Mien' is empty")
-            continue
-        if not rec.get("tinh"):
-            errors.append(f"Row {row_num}: 'Tinh' is empty")
-            continue
-        if rec.get("lat") is None:
-            errors.append(f"Row {row_num}: 'Lat' is empty or invalid")
-            continue
-        if rec.get("long") is None:
-            errors.append(f"Row {row_num}: 'Long' is empty or invalid")
-            continue
-
         try:
             existing = db.query(Site).filter(
                 Site.site_name == rec["site_name"]
             ).first()
             if existing:
-                errors.append(
-                    f"Row {row_num}: site_name '{rec['site_name']}' already exists"
-                )
-                continue
-            site = Site(**rec, created_by=current_user.id)
-            db.add(site)
-            db.commit()
-            created += 1
+                # UPDATE existing site with non-null values from Excel
+                old = {c.name: getattr(existing, c.name)
+                       for c in existing.__table__.columns}
+                for k, v in rec.items():
+                    if v is not None and k != "site_name":
+                        setattr(existing, k, v)
+                db.commit()
+                log_action(db, current_user, "UPDATE", "sites",
+                           existing.id, old_value=old, new_value=rec)
+                updated += 1
+            else:
+                # CREATE new site
+                site = Site(**rec, created_by=current_user.id)
+                db.add(site)
+                db.commit()
+                log_action(db, current_user, "CREATE", "sites",
+                           site.id, new_value=rec)
+                created += 1
         except Exception as e:
             db.rollback()
-            errors.append(f"Row {row_num}: DB error - {str(e)}")
+            errors.append(f"Row {row_num}: {str(e)}")
 
-    return {"created": created, "errors": errors}
-
-@router.post("/debug-excel-columns")
-async def debug_excel_columns(
-    file: UploadFile = File(...),
-    _=Depends(get_current_user),
-):
-    """Returns the column names found in the uploaded Excel file."""
-    import pandas as pd, io
-    content = await file.read()
-    df = pd.read_excel(io.BytesIO(content), dtype=str, nrows=2)
-    return {
-        "columns_found": list(df.columns),
-        "first_row": df.iloc[0].to_dict() if len(df) > 0 else {},
-    }
+    return {"created": created, "updated": updated, "errors": errors}

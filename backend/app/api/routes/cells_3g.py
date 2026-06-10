@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.cell_3g import Cell3G
+from app.models.site import Site
 from app.schemas.cell import Cell3GCreate, Cell3GUpdate, Cell3GRead
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
@@ -20,15 +21,37 @@ def _or_404(db: Session, record_id: int) -> Cell3G:
     return obj
 
 
+def _get_or_create_site(db: Session, rec: dict, user_id: int) -> Optional[Site]:
+    """Find site by name. If not found, create a minimal one from cell data."""
+    site_name = rec.get("site_name", "").strip()
+    if not site_name:
+        return None
+    site = db.query(Site).filter(Site.site_name == site_name).first()
+    if not site:
+        site = Site(
+            site_name=site_name,
+            mien=rec.get("mien"),
+            tinh=rec.get("tinh"),
+            phuong_xa=rec.get("phuong_xa"),
+            lat=rec.get("lat"),
+            long=rec.get("long"),
+            created_by=user_id,
+        )
+        db.add(site)
+        db.commit()
+        db.refresh(site)
+    return site
+
+
 @router.get("/", response_model=List[Cell3GRead])
 def list_cells(
     skip: int = 0,
-    limit: int = 200,
-    search: Optional[str] = Query(None),
-    mien: Optional[str] = Query(None),
-    tinh: Optional[str] = Query(None),
-    vendor: Optional[str] = Query(None),
-    mimo: Optional[str] = Query(None),
+    limit: int = 500,
+    search:        Optional[str] = Query(None),
+    mien:          Optional[str] = Query(None),
+    tinh:          Optional[str] = Query(None),
+    vendor:        Optional[str] = Query(None),
+    mimo:          Optional[str] = Query(None),
     vung_phu_song: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
@@ -39,16 +62,11 @@ def list_cells(
             Cell3G.cell_name.ilike(f"%{search}%") |
             Cell3G.site_name.ilike(f"%{search}%")
         )
-    if mien:
-        q = q.filter(Cell3G.mien == mien)
-    if tinh:
-        q = q.filter(Cell3G.tinh == tinh)
-    if vendor:
-        q = q.filter(Cell3G.vendor == vendor)
-    if mimo:
-        q = q.filter(Cell3G.mimo == mimo)
-    if vung_phu_song:
-        q = q.filter(Cell3G.vung_phu_song == vung_phu_song)
+    if mien:          q = q.filter(Cell3G.mien == mien)
+    if tinh:          q = q.filter(Cell3G.tinh == tinh)
+    if vendor:        q = q.filter(Cell3G.vendor == vendor)
+    if mimo:          q = q.filter(Cell3G.mimo == mimo)
+    if vung_phu_song: q = q.filter(Cell3G.vung_phu_song == vung_phu_song)
     return q.offset(skip).limit(limit).all()
 
 
@@ -114,26 +132,57 @@ async def import_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.models.site import Site
     content = await file.read()
-    records = parse_cell3g_excel(content)
-    created, errors = 0, []
+    try:
+        records = parse_cell3g_excel(content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {str(e)}")
+
+    created, skipped, errors = 0, 0, []
+    sites_auto_created = 0
+
     for i, rec in enumerate(records):
+        row_num = i + 2
+        if not rec.get("cell_name"):
+            errors.append(f"Row {row_num}: 'Cell Name' is empty")
+            continue
         try:
-            site = db.query(Site).filter(
-                Site.site_name == rec.get("site_name")
-            ).first()
+            # Auto-create site if not found
+            site = _get_or_create_site(db, rec, current_user.id)
             if not site:
-                errors.append(
-                    f"Row {i+2}: site_name '{rec.get('site_name')}' not found"
-                )
+                errors.append(f"Row {row_num}: cannot determine site_name")
                 continue
+
+            # Track if we auto-created this site
+            if site.created_by == current_user.id:
+                sites_auto_created += 1
+
             rec["site_id"] = site.id
-            cell = Cell3G(**rec, created_by=current_user.id)
-            db.add(cell)
-            db.commit()
-            created += 1
+
+            # Check duplicate cell
+            existing = db.query(Cell3G).filter(
+                Cell3G.site_id == site.id,
+                Cell3G.cell_name == rec["cell_name"],
+            ).first()
+            if existing:
+                # Update existing cell
+                for k, v in rec.items():
+                    if v is not None and k not in ("cell_name", "site_id"):
+                        setattr(existing, k, v)
+                db.commit()
+                skipped += 1
+            else:
+                cell = Cell3G(**rec, created_by=current_user.id)
+                db.add(cell)
+                db.commit()
+                created += 1
         except Exception as e:
             db.rollback()
-            errors.append(f"Row {i+2}: {str(e)}")
-    return {"created": created, "errors": errors}
+            errors.append(f"Row {row_num}: {str(e)}")
+
+    return {
+        "created": created,
+        "updated": skipped,
+        "sites_auto_created": sites_auto_created,
+        "errors": errors,
+    }

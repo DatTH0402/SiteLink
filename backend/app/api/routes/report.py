@@ -75,16 +75,32 @@ def report_summary(
 
 @router.get("/export-csv")
 def export_csv(
-    mien: Optional[str] = Query(None),
-    tinh: Optional[str] = Query(None),
-    vendor: Optional[str] = Query(None),
-    mimo: Optional[str] = Query(None),
+    mien:          Optional[str] = Query(None),
+    tinh:          Optional[str] = Query(None),
+    vendor:        Optional[str] = Query(None),
+    mimo:          Optional[str] = Query(None),
     vung_phu_song: Optional[str] = Query(None),
+    token:         Optional[str] = Query(None),   # accept token as query param
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
 ):
+    # Validate token from query param (for direct browser downloads)
+    from app.core.security import decode_access_token
+    from app.models.user import User
+    if not token:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_access_token(token)
+    if not payload:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = db.query(User).filter(User.username == payload.get("sub")).first()
+    if not user or not user.is_active:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="User inactive")
+
     from fastapi.responses import StreamingResponse
     import csv, io
+
     data = report_summary(
         mien=mien, tinh=tinh, vendor=vendor,
         mimo=mimo, vung_phu_song=vung_phu_song, db=db,
