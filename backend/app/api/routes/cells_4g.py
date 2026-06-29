@@ -21,26 +21,34 @@ def _or_404(db: Session, record_id: int) -> Cell4G:
     return obj
 
 
-def _get_or_create_site(db: Session, rec: dict, user_id: int) -> Optional[Site]:
-    """Find site by name. If not found, create a minimal one from cell data."""
-    site_name = rec.get("site_name", "").strip()
-    if not site_name:
-        return None
-    site = db.query(Site).filter(Site.site_name == site_name).first()
+def _require_site(db: Session, site_id: int) -> Site:
+    site = db.query(Site).filter(Site.id == site_id).first()
     if not site:
-        site = Site(
-            site_name=site_name,
-            mien=rec.get("mien"),
-            tinh=rec.get("tinh"),
-            phuong_xa=rec.get("phuong_xa"),
-            lat=rec.get("lat"),
-            long=rec.get("long"),
-            created_by=user_id,
+        raise HTTPException(
+            status_code=400,
+            detail=f"Site id={site_id} not found. Please create the site first.",
         )
-        db.add(site)
-        db.commit()
-        db.refresh(site)
     return site
+
+
+def _ensure_site(db: Session, rec: dict, current_user: User) -> int:
+    site_name = rec.get("site_name", "").strip()
+    site = db.query(Site).filter(Site.site_name == site_name).first()
+    if site:
+        return site.id
+    new_site = Site(
+        site_name=site_name,
+        mien=rec.get("mien") or "",
+        tinh=rec.get("tinh") or "",
+        phuong_xa=rec.get("phuong_xa"),
+        lat=rec.get("lat"),
+        long=rec.get("long"),
+        created_by=current_user.id,
+    )
+    db.add(new_site)
+    db.commit()
+    db.refresh(new_site)
+    return new_site.id
 
 
 @router.get("/", response_model=List[Cell4GRead])
@@ -75,8 +83,94 @@ def count_cells(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return {"count": db.query(Cell4G).count()}
 
 
+@router.post("/import-excel/dry-run")
+async def dry_run_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    content = await file.read()
+    try:
+        result = parse_cell4g_excel(content, db=db, dry_run=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
+
+    return {
+        "to_create":        len(result["to_create"]),
+        "to_update":        len(result["to_update"]),
+        "sites_to_create":  len(result["sites_to_create"]),
+        "errors":           len(result["errors"]),
+        "error_details":    result["errors"][:50],
+        "preview_create":   [r["cell_name"] for r in result["to_create"][:5]],
+        "preview_update":   [u["anchor"]    for u in result["to_update"][:5]],
+        "preview_new_sites":[r["site_name"] for r in result["sites_to_create"][:5]],
+        "dry_run":          True,
+    }
+
+
+@router.post("/import-excel")
+async def import_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    content = await file.read()
+    try:
+        result = parse_cell4g_excel(content, db=db, dry_run=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
+
+    errors  = list(result["errors"])
+    created, updated, sites_auto_created = 0, 0, 0
+
+    for rec in result["to_create"]:
+        try:
+            site_id = _ensure_site(db, rec, current_user)
+            if site_id != rec.get("site_id"):
+                sites_auto_created += 1
+            rec["site_id"] = site_id
+            cell = Cell4G(**{k: v for k, v in rec.items()
+                             if hasattr(Cell4G, k)},
+                          created_by=current_user.id)
+            db.add(cell)
+            db.commit()
+            created += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Create cell '{rec.get('cell_name')}': {e}")
+
+    for upd in result["to_update"]:
+        try:
+            existing = db.query(Cell4G).filter(
+                Cell4G.id == upd["existing_id"]
+            ).first()
+            if not existing:
+                errors.append(f"Cell '{upd['anchor']}' disappeared during import")
+                continue
+            changes = upd["changes"]
+            for k, v in changes.items():
+                if k in ("cell_name", "site_id"):
+                    continue
+                if v is not None and hasattr(existing, k):
+                    setattr(existing, k, v)
+            db.commit()
+            updated += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Update cell '{upd['anchor']}': {e}")
+
+    return {
+        "created": created,
+        "updated": updated,
+        "sites_auto_created": sites_auto_created,
+        "errors": errors,
+    }
+
+
 @router.get("/{cell_id}", response_model=Cell4GRead)
-def get_cell(cell_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_cell(cell_id: int,
+             db: Session = Depends(get_db),
+             _=Depends(get_current_user)):
     return _or_404(db, cell_id)
 
 
@@ -86,6 +180,7 @@ def create_cell(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_site(db, payload.site_id)
     cell = Cell4G(**payload.model_dump(), created_by=current_user.id)
     db.add(cell)
     db.commit()
@@ -103,13 +198,14 @@ def update_cell(
     current_user: User = Depends(get_current_user),
 ):
     cell = _or_404(db, cell_id)
-    old = {c.name: getattr(cell, c.name) for c in cell.__table__.columns}
+    old  = {c.name: getattr(cell, c.name) for c in cell.__table__.columns}
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(cell, k, v)
     db.commit()
     db.refresh(cell)
     log_action(db, current_user, "UPDATE", "cells_4g", cell.id,
-               old_value=old, new_value=payload.model_dump(exclude_unset=True))
+               old_value=old,
+               new_value=payload.model_dump(exclude_unset=True))
     return cell
 
 
@@ -124,65 +220,3 @@ def delete_cell(
     db.commit()
     log_action(db, current_user, "DELETE", "cells_4g", cell_id)
     return {"message": "Deleted"}
-
-
-@router.post("/import-excel")
-async def import_excel(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    content = await file.read()
-    try:
-        records = parse_cell4g_excel(content)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {str(e)}")
-
-    created, skipped, errors = 0, 0, []
-    sites_auto_created = 0
-
-    for i, rec in enumerate(records):
-        row_num = i + 2
-        if not rec.get("cell_name"):
-            errors.append(f"Row {row_num}: 'Cell Name' is empty")
-            continue
-        try:
-            # Auto-create site if not found
-            site = _get_or_create_site(db, rec, current_user.id)
-            if not site:
-                errors.append(f"Row {row_num}: cannot determine site_name")
-                continue
-
-            # Track if we auto-created this site
-            if site.created_by == current_user.id:
-                sites_auto_created += 1
-
-            rec["site_id"] = site.id
-
-            # Check duplicate cell
-            existing = db.query(Cell4G).filter(
-                Cell4G.site_id == site.id,
-                Cell4G.cell_name == rec["cell_name"],
-            ).first()
-            if existing:
-                # Update existing cell
-                for k, v in rec.items():
-                    if v is not None and k not in ("cell_name", "site_id"):
-                        setattr(existing, k, v)
-                db.commit()
-                skipped += 1
-            else:
-                cell = Cell4G(**rec, created_by=current_user.id)
-                db.add(cell)
-                db.commit()
-                created += 1
-        except Exception as e:
-            db.rollback()
-            errors.append(f"Row {row_num}: {str(e)}")
-
-    return {
-        "created": created,
-        "updated": skipped,
-        "sites_auto_created": sites_auto_created,
-        "errors": errors,
-    }

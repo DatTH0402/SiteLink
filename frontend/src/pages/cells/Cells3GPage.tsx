@@ -1,45 +1,43 @@
 import React, { useEffect, useState } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
-  Popconfirm, Tag, Upload, message, Row, Col,
-  Modal, Form, InputNumber, Spin,
+  Popconfirm, Tag, message, Row, Col,
+  Modal, Form, InputNumber,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  PlusOutlined, UploadOutlined, SearchOutlined,
-  EditOutlined, DeleteOutlined, LoadingOutlined,
+  PlusOutlined, SearchOutlined, UploadOutlined,
+  EditOutlined, DeleteOutlined,
 } from '@ant-design/icons'
 import { cells3gApi } from '@/api/cells'
-import type { Cell3G } from '@/types'
+import type { Cell3G, Site, AntennaItem } from '@/types'
 import { getSites } from '@/api/sites'
-import type { Site } from '@/types'
+import { getAntennaList } from '@/api/report'
+import DryRunModal from '@/components/shared/DryRunModal'
 
 export default function Cells3GPage() {
-  const [data,      setData]      = useState<Cell3G[]>([])
-  const [loading,   setLoading]   = useState(false)
-  const [importing, setImporting] = useState(false)
-  const [search,    setSearch]    = useState('')
-  const [mien,      setMien]      = useState<string | undefined>()
-  const [tinh,      setTinh]      = useState<string | undefined>()
-  const [vendor,    setVendor]    = useState<string | undefined>()
-  const [sites,     setSites]     = useState<Site[]>([])
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editing,   setEditing]   = useState<Cell3G | null>(null)
+  const [data,        setData]        = useState<Cell3G[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [search,      setSearch]      = useState('')
+  const [mien,        setMien]        = useState<string | undefined>()
+  const [tinh,        setTinh]        = useState<string | undefined>()
+  const [vendor,      setVendor]      = useState<string | undefined>()
+  const [sites,       setSites]       = useState<Site[]>([])
+  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
+  const [modalOpen,   setModalOpen]   = useState(false)
+  const [editing,     setEditing]     = useState<Cell3G | null>(null)
+  const [dryRunOpen,  setDryRunOpen]  = useState(false)
   const [form] = Form.useForm()
 
-  // Derived options from loaded data
-  const tinhOptions   = [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
-  const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
+  const tinhOptions   = [...new Set(data.map((c) => c.tinh).filter(Boolean))].sort() as string[]
+  const vendorOptions = [...new Set(data.map((c) => c.vendor).filter(Boolean))].sort() as string[]
 
   const load = async () => {
     setLoading(true)
     try {
       setData(await cells3gApi.list({
-        search: search || undefined,
-        mien:   mien   || undefined,
-        tinh:   tinh   || undefined,
-        vendor: vendor || undefined,
-        limit: 1000,
+        search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined, limit: 1000,
       }))
     } finally { setLoading(false) }
   }
@@ -47,19 +45,23 @@ export default function Cells3GPage() {
   useEffect(() => {
     load()
     getSites({ limit: 2000 }).then(setSites)
+    getAntennaList().then(setAntennaList)
   }, [search, mien, tinh, vendor])
 
-  const openCreate = () => {
-    setEditing(null)
-    form.resetFields()
-    setModalOpen(true)
+  const handleSiteSelect = (siteId: number) => {
+    const site = sites.find((s) => s.id === siteId)
+    if (site) form.setFieldValue('site_name', site.site_name)
   }
 
-  const openEdit = (r: Cell3G) => {
-    setEditing(r)
-    form.setFieldsValue(r)
-    setModalOpen(true)
+  const handleAntennaSelect = (antennaName: string) => {
+    const ant = antennaList.find((a) => a.name === antennaName)
+    if (!ant) return
+    // Auto-fill antenna-related fields
+    form.setFieldsValue({ loai_anten: ant.name })
   }
+
+  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
+  const openEdit   = (r: Cell3G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
 
   const handleSave = async () => {
     const values = await form.validateFields()
@@ -71,56 +73,12 @@ export default function Cells3GPage() {
         await cells3gApi.create(values)
         message.success('Tao cell thanh cong')
       }
-      setModalOpen(false)
-      load()
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || 'Loi')
-    }
+      setModalOpen(false); load()
+    } catch (e: any) { message.error(e.response?.data?.detail || 'Loi') }
   }
 
   const handleDelete = async (id: number) => {
-    await cells3gApi.remove(id)
-    message.success('Da xoa')
-    load()
-  }
-
-  const handleImport = async (file: File) => {
-    setImporting(true)
-    try {
-      const res = await cells3gApi.importExcel(file)
-      const msgs: string[] = []
-      if (res.created > 0)             msgs.push(`Tao moi: ${res.created} cell`)
-      if (res.updated > 0)             msgs.push(`Cap nhat: ${res.updated} cell`)
-      if (res.sites_auto_created > 0)  msgs.push(`Tu dong tao: ${res.sites_auto_created} site`)
-      if (msgs.length > 0) message.success(msgs.join(' | '))
-      if (res.errors?.length) {
-        Modal.error({
-          title: `${res.errors.length} dong bi loi`,
-          width: 700,
-          content: (
-            <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-              {res.errors.slice(0, 20).map((e: string, i: number) => (
-                <div key={i} style={{
-                  padding: '4px 0', borderBottom: '1px solid #f0f0f0',
-                  fontSize: 12, fontFamily: 'monospace',
-                }}>{e}</div>
-              ))}
-              {res.errors.length > 20 && (
-                <div style={{ color: '#999', marginTop: 8 }}>
-                  ... va {res.errors.length - 20} loi khac
-                </div>
-              )}
-            </div>
-          ),
-        })
-      }
-      if (res.created > 0 || res.updated > 0) load()
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || 'Import that bai')
-    } finally {
-      setImporting(false)
-    }
-    return false
+    await cells3gApi.remove(id); message.success('Da xoa'); load()
   }
 
   const columns: ColumnsType<Cell3G> = [
@@ -135,227 +93,102 @@ export default function Cells3GPage() {
         </Space>
       ),
     },
-    {
-      title: 'Mien', dataIndex: 'mien', fixed: 'left', width: 70,
-      sorter: (a, b) => (a.mien || '').localeCompare(b.mien || ''),
-    },
-    {
-      title: 'Tinh', dataIndex: 'tinh', fixed: 'left', width: 130,
-      sorter: (a, b) => (a.tinh || '').localeCompare(b.tinh || ''),
-    },
-    {
-      title: 'Phuong xa', dataIndex: 'phuong_xa', width: 130,
-      sorter: (a, b) => (a.phuong_xa || '').localeCompare(b.phuong_xa || ''),
-    },
-    {
-      title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 130,
-      sorter: (a, b) => (a.site_name || '').localeCompare(b.site_name || ''),
-      render: (v: string) => <strong>{v}</strong>,
-    },
-    {
-      title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 130,
-      sorter: (a, b) => (a.cell_name || '').localeCompare(b.cell_name || ''),
-      render: (v: string) => <strong>{v}</strong>,
-    },
-    {
-      title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
-      sorter: (a, b) => (a.cell_vip || '').localeCompare(b.cell_vip || ''),
-      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-',
-    },
-    {
-      title: 'MORAN', dataIndex: 'moran', width: 120,
-      sorter: (a, b) => (a.moran || '').localeCompare(b.moran || ''),
-    },
-    {
-      title: 'Lat', dataIndex: 'lat', width: 110,
-      sorter: (a, b) => (a.lat || 0) - (b.lat || 0),
-    },
-    {
-      title: 'Long', dataIndex: 'long', width: 110,
-      sorter: (a, b) => (a.long || 0) - (b.long || 0),
-    },
-    {
-      title: 'Vung phu song', dataIndex: 'vung_phu_song', width: 120,
-      sorter: (a, b) => (a.vung_phu_song || '').localeCompare(b.vung_phu_song || ''),
-    },
-    {
-      title: 'Vendor', dataIndex: 'vendor', width: 100,
-      sorter: (a, b) => (a.vendor || '').localeCompare(b.vendor || ''),
-    },
-    {
-      title: 'Do cao anten', dataIndex: 'do_cao_anten', width: 120,
-      sorter: (a, b) => (a.do_cao_anten || 0) - (b.do_cao_anten || 0),
-    },
-    {
-      title: 'Azimuth', dataIndex: 'azimuth', width: 90,
-      sorter: (a, b) => (a.azimuth || 0) - (b.azimuth || 0),
-    },
-    {
-      title: 'M-tilt', dataIndex: 'm_tilt', width: 80,
-      sorter: (a, b) => (a.m_tilt || 0) - (b.m_tilt || 0),
-    },
-    {
-      title: 'E-Tilt', dataIndex: 'e_tilt', width: 80,
-      sorter: (a, b) => (a.e_tilt || 0) - (b.e_tilt || 0),
-    },
-    {
-      title: 'Total Tilt', dataIndex: 'total_tilt', width: 100,
-      sorter: (a, b) => (a.total_tilt || 0) - (b.total_tilt || 0),
-    },
-    { title: 'Loai Anten',  dataIndex: 'loai_anten',  width: 180 },
-    { title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },
-    { title: 'Baseband',    dataIndex: 'baseband',    width: 120 },
-    { title: 'RF',          dataIndex: 'rf',          width: 100 },
-    {
-      title: 'Cell ID', dataIndex: 'cell_id', width: 100,
-      sorter: (a, b) => (a.cell_id || '').localeCompare(b.cell_id || ''),
-    },
-    {
-      title: 'ARFCN', dataIndex: 'arfcn', width: 90,
-      sorter: (a, b) => (a.arfcn || '').localeCompare(b.arfcn || ''),
-    },
-    {
-      title: 'PSC', dataIndex: 'psc', width: 80,
-      sorter: (a, b) => (a.psc || '').localeCompare(b.psc || ''),
-    },
-    {
-      title: 'MIMO', dataIndex: 'mimo', width: 80,
-      sorter: (a, b) => (a.mimo || '').localeCompare(b.mimo || ''),
-      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-',
-    },
+    { title: 'Mien',      dataIndex: 'mien',      fixed: 'left', width: 70  },
+    { title: 'Tinh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
+    { title: 'Phuong xa', dataIndex: 'phuong_xa',               width: 160 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 200,
+      render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 200,
+      render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',         dataIndex: 'moran',         width: 120 },
+    { title: 'Lat',           dataIndex: 'lat',           width: 110 },
+    { title: 'Long',          dataIndex: 'long',          width: 110 },
+    { title: 'Vung phu song', dataIndex: 'vung_phu_song', width: 120 },
+    { title: 'Vendor',        dataIndex: 'vendor',        width: 100 },
+    { title: 'Do cao anten',  dataIndex: 'do_cao_anten',  width: 120 },
+    { title: 'Azimuth',       dataIndex: 'azimuth',       width: 90  },
+    { title: 'M-tilt',        dataIndex: 'm_tilt',        width: 80  },
+    { title: 'E-Tilt',        dataIndex: 'e_tilt',        width: 80  },
+    { title: 'Total Tilt',    dataIndex: 'total_tilt',    width: 100 },
+    { title: 'Loai Anten',    dataIndex: 'loai_anten',    width: 200 },
+    { title: 'Chung anten',   dataIndex: 'chung_anten',   width: 120 },
+    { title: 'Baseband',      dataIndex: 'baseband',      width: 120 },
+    { title: 'RF',            dataIndex: 'rf',            width: 100 },
+    { title: 'Cell ID',       dataIndex: 'cell_id',       width: 100 },
+    { title: 'ARFCN',         dataIndex: 'arfcn',         width: 90  },
+    { title: 'PSC',           dataIndex: 'psc',           width: 80  },
+    { title: 'MIMO', dataIndex: 'mimo', width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
   ]
-
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
     <div>
-      {/* Import overlay */}
-      {importing && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.45)', zIndex: 9999,
-          display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center',
-        }}>
-          <Spin indicator={<LoadingOutlined style={{ fontSize: 48, color: '#fff' }} spin />} />
-          <div style={{ color: '#fff', marginTop: 16, fontSize: 16 }}>
-            Dang xu ly import Excel, vui long cho...
-          </div>
-        </div>
-      )}
-
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Cell 3G</Typography.Title>
         <Space>
-          <Upload beforeUpload={handleImport} accept=".xlsx,.xls"
-                  showUploadList={false} disabled={importing}>
-            <Button icon={importing ? <LoadingOutlined /> : <UploadOutlined />}
-                    loading={importing}>
-              {importing ? 'Dang import...' : 'Import Excel'}
-            </Button>
-          </Upload>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Them moi
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
+            Import Excel
           </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Them moi</Button>
         </Space>
       </Row>
 
-      {/* Filter bar */}
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="260px">
-          <Input
-            prefix={<SearchOutlined />}
-            placeholder="Tim cell / site name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            allowClear
-          />
+          <Input prefix={<SearchOutlined />} placeholder="Tim cell / site name..."
+                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
         </Col>
         <Col>
-          <Select
-            placeholder="Mien" allowClear style={{ width: 90 }}
-            value={mien} onChange={setMien}
-          >
-            {['MB', 'MT', 'MN'].map(m =>
-              <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          <Select placeholder="Mien" allowClear style={{ width: 90 }}
+                  value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="180px">
-          <Select
-            placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
-            value={tinh} onChange={setTinh}
-            filterOption={(input, opt) =>
-              String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}
-          >
-            {tinhOptions.map(t =>
-              <Select.Option key={t} value={t}>{t}</Select.Option>)}
+          <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
+                  value={tinh} onChange={setTinh}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map((t) => <Select.Option key={t} value={t}>{t}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="160px">
-          <Select
-            placeholder="Vendor" allowClear style={{ width: '100%' }}
-            value={vendor} onChange={setVendor}
-          >
-            {vendorOptions.map(v =>
-              <Select.Option key={v} value={v}>{v}</Select.Option>)}
+          <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
+                  value={vendor} onChange={setVendor}>
+            {vendorOptions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
         </Col>
         <Col>
-          <Button onClick={() => {
-            setSearch('')
-            setMien(undefined)
-            setTinh(undefined)
-            setVendor(undefined)
-          }}>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
             Xoa loc
           </Button>
         </Col>
       </Row>
 
-      <Table
-        columns={columns}
-        dataSource={data}
-        rowKey="id"
-        loading={loading}
-        size="small"
-        scroll={{ x: scrollX, y: 600 }}
-        bordered
-        pagination={{
-          pageSize: 50,
-          showTotal: (t) => `${t} cells`,
-          showSizeChanger: true,
-        }}
-      />
+      <Table columns={columns} dataSource={data} rowKey="id" loading={loading} size="small"
+             scroll={{ x: scrollX, y: 600 }} bordered
+             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }} />
 
-      {/* Create / Edit Modal */}
-      <Modal
-        title={editing ? 'Chinh sua Cell 3G' : 'Them Cell 3G moi'}
-        open={modalOpen}
-        onOk={handleSave}
-        onCancel={() => setModalOpen(false)}
-        width={800}
-        okText="Luu"
-        destroyOnClose
-      >
+      {/* ── Add/Edit Modal ── */}
+      <Modal title={editing ? 'Chinh sua Cell 3G' : 'Them Cell 3G moi'}
+             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+             width={800} okText="Luu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="site_id" label="Site (chon tu danh sach)">
-                <Select
-                  showSearch optionFilterProp="children" allowClear
-                  placeholder="Chon site..."
-                  filterOption={(input, option) =>
-                    String(option?.children ?? '').toLowerCase()
-                      .includes(input.toLowerCase())}
-                >
-                  {sites.map(s =>
-                    <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+                <Select showSearch optionFilterProp="children" allowClear
+                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map((s) => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="site_name" label="Site Name" rules={[{ required: true }]}>
-                <Input />
+              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+                <Input readOnly style={{ background: '#f5f5f5' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -400,7 +233,7 @@ export default function Cells3GPage() {
             <Col span={8}>
               <Form.Item name="vendor" label="Vendor">
                 <Select allowClear>
-                  {['Ericsson', 'Nokia', 'Huawei', 'ZTE', 'Samsung'].map(v =>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
                     <Select.Option key={v} value={v}>{v}</Select.Option>)}
                 </Select>
               </Form.Item>
@@ -411,7 +244,7 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0-359)">
+              <Form.Item name="azimuth" label="Azimuth">
                 <InputNumber style={{ width: '100%' }} min={0} max={359} />
               </Form.Item>
             </Col>
@@ -430,52 +263,53 @@ export default function Cells3GPage() {
                 <InputNumber style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={24}>
               <Form.Item name="loai_anten" label="Loai Anten">
-                <Input />
+                <Select showSearch allowClear placeholder="Chon loai anten..."
+                        onChange={handleAntennaSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map((a) =>
+                    <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="chung_anten" label="Chung anten">
-                <Input />
-              </Form.Item>
+              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="baseband" label="Baseband">
-                <Input />
-              </Form.Item>
+              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="rf" label="RF">
-                <Input />
-              </Form.Item>
+              <Form.Item name="rf" label="RF"><Input /></Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="cell_id" label="Cell ID">
-                <Input />
-              </Form.Item>
+              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="arfcn" label="ARFCN">
-                <Input />
-              </Form.Item>
+              <Form.Item name="arfcn" label="ARFCN"><Input /></Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="psc" label="PSC">
-                <Input />
-              </Form.Item>
+              <Form.Item name="psc" label="PSC"><Input /></Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="mimo" label="MIMO">
                 <Select allowClear>
-                  {['2x2', '4x4', '8x8'].map(m =>
-                    <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                  {['2x2','4x4','8x8'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
           </Row>
         </Form>
       </Modal>
+
+      <DryRunModal
+        open={dryRunOpen}
+        onClose={() => setDryRunOpen(false)}
+        title="Import Cell 3G tu Excel"
+        dryRunFn={cells3gApi.dryRunExcel}
+        importFn={cells3gApi.importExcel}
+        onSuccess={load}
+      />
     </div>
   )
 }

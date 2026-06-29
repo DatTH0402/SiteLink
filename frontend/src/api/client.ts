@@ -1,6 +1,5 @@
 import axios from 'axios'
 
-// Detect current host/port so it works on any port
 const api = axios.create({ baseURL: window.location.origin })
 
 api.interceptors.request.use((config) => {
@@ -12,10 +11,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    // Only auto-logout on 401 Unauthorized, not on other errors
     if (err.response?.status === 401) {
       localStorage.removeItem('sl_token')
       window.location.href = '/login'
     }
+    // Always reject so callers can handle the error themselves
     return Promise.reject(err)
   },
 )

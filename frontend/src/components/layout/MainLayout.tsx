@@ -4,6 +4,7 @@ import {
   DashboardOutlined, DatabaseOutlined, TableOutlined,
   BarChartOutlined, UserOutlined, AuditOutlined,
   LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
+  WifiOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
@@ -17,9 +18,9 @@ export default function MainLayout() {
   const { user, logout } = useAuthStore()
 
   const menuItems = [
-    { key: '/',       icon: <DashboardOutlined />, label: 'Dashboard' },
-    { key: '/report', icon: <BarChartOutlined />,  label: 'Bao cao tong hop' },
-    { key: '/sites',  icon: <DatabaseOutlined />,  label: 'Quan ly Site' },
+    { key: '/',        icon: <DashboardOutlined />, label: 'Dashboard' },
+    { key: '/report',  icon: <BarChartOutlined />,  label: 'Bao cao tong hop' },
+    { key: '/sites',   icon: <DatabaseOutlined />,  label: 'Quan ly Site' },
     {
       key: 'cells',
       icon: <TableOutlined />,
@@ -30,6 +31,7 @@ export default function MainLayout() {
         { key: '/cells/5g', label: 'Cell 5G' },
       ],
     },
+    { key: '/antenna', icon: <WifiOutlined />, label: 'Quan ly Antenna' },
     ...(user?.role === 'admin'
       ? [{
           key: 'admin',

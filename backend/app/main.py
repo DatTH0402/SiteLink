@@ -8,6 +8,7 @@ from app.api.routes import (
     auth, users, sites, cells_3g, cells_4g, cells_5g,
     dropdowns, report, audit,
 )
+from app.api.routes import antenna as antenna_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -19,7 +20,6 @@ def _seed_initial_data():
         from app.core.security import get_password_hash
         from app.models.dropdown import DropdownGeneral, DropdownVendor
 
-        # Admin user
         if not db.query(User).filter(User.username == "admin").first():
             db.add(User(
                 email="admin@sitelink.com",
@@ -88,15 +88,16 @@ def on_startup():
 
 
 PREFIX = "/api/v1"
-app.include_router(auth.router,      prefix=f"{PREFIX}/auth",      tags=["Auth"])
-app.include_router(users.router,     prefix=f"{PREFIX}/users",     tags=["Users"])
-app.include_router(sites.router,     prefix=f"{PREFIX}/sites",     tags=["Sites"])
-app.include_router(cells_3g.router,  prefix=f"{PREFIX}/cells-3g",  tags=["Cells-3G"])
-app.include_router(cells_4g.router,  prefix=f"{PREFIX}/cells-4g",  tags=["Cells-4G"])
-app.include_router(cells_5g.router,  prefix=f"{PREFIX}/cells-5g",  tags=["Cells-5G"])
-app.include_router(dropdowns.router, prefix=f"{PREFIX}/dropdowns", tags=["Dropdowns"])
-app.include_router(report.router,    prefix=f"{PREFIX}/report",    tags=["Report"])
-app.include_router(audit.router,     prefix=f"{PREFIX}/audit",     tags=["Audit"])
+app.include_router(auth.router,            prefix=f"{PREFIX}/auth",      tags=["Auth"])
+app.include_router(users.router,           prefix=f"{PREFIX}/users",     tags=["Users"])
+app.include_router(sites.router,           prefix=f"{PREFIX}/sites",     tags=["Sites"])
+app.include_router(cells_3g.router,        prefix=f"{PREFIX}/cells-3g",  tags=["Cells-3G"])
+app.include_router(cells_4g.router,        prefix=f"{PREFIX}/cells-4g",  tags=["Cells-4G"])
+app.include_router(cells_5g.router,        prefix=f"{PREFIX}/cells-5g",  tags=["Cells-5G"])
+app.include_router(dropdowns.router,       prefix=f"{PREFIX}/dropdowns", tags=["Dropdowns"])
+app.include_router(report.router,          prefix=f"{PREFIX}/report",    tags=["Report"])
+app.include_router(audit.router,           prefix=f"{PREFIX}/audit",     tags=["Audit"])
+app.include_router(antenna_router.router,  prefix=f"{PREFIX}/antennas",  tags=["Antennas"])
 
 
 @app.get("/health")

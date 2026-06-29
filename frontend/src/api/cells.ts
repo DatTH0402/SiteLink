@@ -1,12 +1,7 @@
 import api from './client'
-import type { Cell3G, Cell4G, Cell5G } from '@/types'
+import type { Cell3G, Cell4G, Cell5G, CellDryRunResult, ImportResult } from '@/types'
 
-export interface CellImportResult {
-  created: number
-  updated: number
-  sites_auto_created: number
-  errors: string[]
-}
+export type { CellDryRunResult, ImportResult }
 
 export interface SiteImportResult {
   created: number
@@ -31,11 +26,21 @@ function makeCellApi<T>(tech: string) {
     remove: (id: number) =>
       api.delete(`/api/v1/cells-${tech}/${id}`),
 
+    /** Step-1: preview – nothing written to DB */
+    dryRunExcel: (file: File) => {
+      const form = new FormData()
+      form.append('file', file)
+      return api
+        .post<CellDryRunResult>(`/api/v1/cells-${tech}/import-excel/dry-run`, form)
+        .then((r) => r.data)
+    },
+
+    /** Step-2: actual import */
     importExcel: (file: File) => {
       const form = new FormData()
       form.append('file', file)
       return api
-        .post<CellImportResult>(`/api/v1/cells-${tech}/import-excel`, form)
+        .post<ImportResult>(`/api/v1/cells-${tech}/import-excel`, form)
         .then((r) => r.data)
     },
   }

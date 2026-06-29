@@ -25,8 +25,8 @@ export interface Site {
   repeater: boolean
   booster: boolean
   node_truyen_dan_only: boolean
+  tram_phu_song_tsca: boolean
   phan_loai_tram?: string
-  tram_phu_song_tsca?: string
   moran_3g?: string
   moran_4g?: string
   moran_5g?: string
@@ -85,12 +85,11 @@ export interface Cell5G extends CellBase {
 export interface ReportRow {
   mien?: string
   tinh?: string
-  site_name?: string
+  site_count: number
   site_2g: number
   site_3g: number
   site_4g: number
   site_5g: number
-  cell_2g: number
   cell_3g: number
   cell_4g: number
   cell_5g: number
@@ -105,4 +104,96 @@ export interface AuditLog {
   old_value?: string
   new_value?: string
   timestamp: string
+}
+
+export interface TinhItem {
+  ten_tinh: string
+  mien: string
+}
+
+export interface PhuongXaItem {
+  id: number
+  mien: string
+  ten_tinh: string
+  ten_phuong_xa: string
+  ma_tinh: string
+  ma_phuong_xa: string
+  ky_tu_1_6: string
+}
+
+export interface AntennaItem {
+  id: number
+  name: string
+  band?: string
+  no_of_ports?: number
+  no_of_beam?: number
+  horizontal_bw?: string
+  vertical_bw?: string
+  gain?: string
+  etilt?: string
+  h?: string
+  w?: string
+  d?: string
+  weight?: string
+  connector_type?: string
+  ghi_chu?: string
+}
+
+export interface ProvinceChartItem {
+  tinh: string
+  site_count: number
+}
+
+export interface CellProvinceChartItem {
+  tinh: string
+  cell_count: number
+}
+
+// ── Dry-run previews ─────────────────────────────────────────────────────────
+
+export interface SiteDryRunResult {
+  to_create: number
+  to_update: number
+  errors: number
+  error_details: string[]
+  preview_create: string[]
+  preview_update: string[]
+  dry_run: true
+}
+
+export interface CellDryRunResult {
+  to_create: number
+  to_update: number
+  sites_to_create: number
+  errors: number
+  error_details: string[]
+  preview_create: string[]
+  preview_update: string[]
+  preview_new_sites: string[]
+  dry_run: true
+}
+
+export interface ImportResult {
+  created: number
+  updated: number
+  sites_auto_created?: number
+  errors: string[]
+}
+
+export interface AntennaFull {
+  id: number
+  name: string
+  no_of_ports?: number
+  band?: string
+  no_of_beam?: number
+  horizontal_bw?: string
+  vertical_bw?: string
+  gain?: string
+  etilt?: string
+  h?: string
+  w?: string
+  d?: string
+  weight?: string
+  connector_type?: string
+  ghi_chu?: string
 }
