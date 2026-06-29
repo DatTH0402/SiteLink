@@ -29,63 +29,25 @@ import pandas as pd
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _strip_accents(text: str) -> str:
-    """
-    Remove diacritics from a Unicode string and map non-decomposable
-    Vietnamese characters to their ASCII equivalents.
-
-    unicodedata.normalize("NFKD") decomposes most accented letters into
-    base + combining mark, which we then drop.  However a few Vietnamese
-    characters are atomic Unicode code-points that NFKD does NOT decompose:
-
-        Đ  U+0110  →  D
-        đ  U+0111  →  d
-
-    These must be handled with an explicit replacement map BEFORE the NFKD
-    pass so that the combining-mark filter can finish the job cleanly.
-    """
-    # Explicit map for characters not decomposed by NFKD
-    _CHAR_MAP = str.maketrans({
-        "Đ": "D",
-        "đ": "d",
-    })
-    text = text.translate(_CHAR_MAP)
+    """Remove diacritics (accents) from a Unicode string."""
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
-# Prefixes to remove before fuzzy-matching province / ward names.
-#
-# CRITICAL: applied AFTER _strip_accents() → text is pure ASCII at this point.
-#
-# Vietnamese admin level  →  ASCII after strip_accents()
-#   Tỉnh                  →  Tinh   →  tinh
-#   Thành phố / TP        →  Thanh pho / TP
-#   Quận                  →  Quan
-#   Huyện                 →  Huyen
-#   Thị xã                →  Thi xa
-#   Xã                    →  Xa
-#   Phường                →  Phuong
-#   Thị trấn              →  Thi tran
+# Prefixes to remove before fuzzy-matching province / ward names
 _PREFIX_RE = re.compile(
-    r"^(tp\.?|thanh\s+pho|thi\s+tran|thi\s+xa|phuong|huyen|tinh|quan|xa)\s+",
+    r"^(tp\.?|tinh|tỉnh|thanh\s*pho|thành\s*phố|"
+    r"quan|quận|huyen|huyện|thi\s*xa|thị\s*xã|"
+    r"xa|xã|phuong|phường|thi\s*tran|thị\s*trấn)\s*",
     re.IGNORECASE,
 )
 
 
 def _normalize(text: str) -> str:
-    """
-    Canonical key used for fuzzy geo lookup.
-
-    Pipeline:
-      1. Explicit char map  : Đ→D, đ→d  (NFKD does not handle these)
-      2. NFKD + drop marks  : ă→a, ơ→o, ê→e …
-      3. Lowercase + strip
-      4. Drop admin prefix  : 'tinh quang ninh' → 'quang ninh'
-      5. Collapse spacing   : 'quang ninh' → 'quangninh'
-    """
+    """Canonical key used for fuzzy lookup."""
     t = _strip_accents(text).lower().strip()
     t = _PREFIX_RE.sub("", t)
-    t = re.sub(r"[\s\-_\.]+", "", t)
+    t = re.sub(r"[\s\-_\.]+", "", t)   # collapse whitespace / punctuation
     return t
 
 

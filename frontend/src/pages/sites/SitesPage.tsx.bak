@@ -78,8 +78,8 @@ export default function SitesPage() {
     { title: 'Tinh', dataIndex: 'tinh', fixed: 'left', width: 160,
       sorter: (a, b) => (a.tinh||'').localeCompare(b.tinh||'') },
     { title: 'Phuong xa',      dataIndex: 'phuong_xa',    width: 160 },
-    { title: 'Site name (cu)', dataIndex: 'site_name_cu', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Site name', dataIndex: 'site_name', fixed: 'left', width: 220,
+    { title: 'Site name (cu)', dataIndex: 'site_name_cu', width: 130 },
+    { title: 'Site name', dataIndex: 'site_name', fixed: 'left', width: 160,
       sorter: (a, b) => (a.site_name||'').localeCompare(b.site_name||''),
       render: (v: string) => <strong>{v}</strong> },
     { title: 'Site VIP', dataIndex: 'site_vip', width: 90,
@@ -105,8 +105,8 @@ export default function SitesPage() {
       dataIndex: 'do_cao_dinh_cot_anten', width: 190 },
     { title: 'Do cao cot anten mat san (m)',
       dataIndex: 'do_cao_cot_anten', width: 210 },
-    { title: 'Dia chi', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Ghi chu', dataIndex: 'ghi_chu', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Dia chi', dataIndex: 'dia_chi', width: 200 },
+    { title: 'Ghi chu', dataIndex: 'ghi_chu', width: 200 },
   ]
 
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
