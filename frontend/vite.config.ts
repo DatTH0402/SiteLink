@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 export default defineConfig({
+  base: '/sitelink/',
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
