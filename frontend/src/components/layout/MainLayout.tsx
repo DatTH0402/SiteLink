@@ -8,6 +8,7 @@ import {
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
+import { ssoLogout } from '@/api/auth'
 
 const { Sider, Header, Content } = Layout
 
@@ -15,7 +16,18 @@ export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
   const navigate   = useNavigate()
   const location   = useLocation()
-  const { user, logout } = useAuthStore()
+  const { user, logout, idToken } = useAuthStore()
+
+  const handleLogout = async () => {
+    // Call SSO logout if we have id_token
+    if (idToken) {
+      try {
+        await ssoLogout(idToken)
+      } catch { /* ignore */ }
+    }
+    logout()
+    navigate('/login')
+  }
 
   const menuItems = [
     { key: '/',        icon: <DashboardOutlined />, label: 'Dashboard' },
@@ -50,7 +62,7 @@ export default function MainLayout() {
       key: 'logout',
       icon: <LogoutOutlined />,
       label: 'Dang xuat',
-      onClick: () => { logout(); navigate('/login') },
+      onClick: handleLogout,
     }],
   }
 
@@ -97,8 +109,16 @@ export default function MainLayout() {
           </Space>
           <Dropdown menu={userMenu}>
             <Space style={{ cursor: 'pointer' }}>
-              <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1890ff' }} />
-              <span>{user?.full_name || user?.username}</span>
+              <Avatar icon={<UserOutlined />}
+                      style={{ backgroundColor: user?.auth_provider === 'sso'
+                        ? '#f5a623' : '#1890ff' }} />
+              <span>
+                {user?.full_name || user?.username}
+                {user?.auth_provider === 'sso' && (
+                  <span style={{ fontSize: 10, color: '#f5a623',
+                                 marginLeft: 4 }}>[SSO]</span>
+                )}
+              </span>
             </Space>
           </Dropdown>
         </Header>
