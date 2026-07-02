@@ -14,6 +14,7 @@ import type { Cell3G, Site, AntennaItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
+import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
 export default function Cells3GPage() {
   const [data,        setData]        = useState<Cell3G[]>([])
@@ -56,7 +57,6 @@ export default function Cells3GPage() {
   const handleAntennaSelect = (antennaName: string) => {
     const ant = antennaList.find((a) => a.name === antennaName)
     if (!ant) return
-    // Auto-fill antenna-related fields
     form.setFieldsValue({ loai_anten: ant.name })
   }
 
@@ -171,7 +171,6 @@ export default function Cells3GPage() {
              scroll={{ x: scrollX, y: 600 }} bordered
              pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }} />
 
-      {/* ── Add/Edit Modal ── */}
       <Modal title={editing ? 'Chinh sua Cell 3G' : 'Them Cell 3G moi'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
              width={800} okText="Luu" destroyOnClose>
@@ -213,13 +212,17 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="lat" label="Lat">
-                <InputNumber style={{ width: '100%' }} precision={5} />
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
+                         rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="8.33 – 23.39" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="long" label="Long">
-                <InputNumber style={{ width: '100%' }} precision={5} />
+              <Form.Item name="long" label="Long (102.14 – 109.47)"
+                         rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -244,7 +247,8 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth">
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
+                         rules={[{ validator: azimuthValidator }]}>
                 <InputNumber style={{ width: '100%' }} min={0} max={359} />
               </Form.Item>
             </Col>
@@ -306,6 +310,7 @@ export default function Cells3GPage() {
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
         title="Import Cell 3G tu Excel"
+        templateKey="cell-3g"
         dryRunFn={cells3gApi.dryRunExcel}
         importFn={cells3gApi.importExcel}
         onSuccess={load}

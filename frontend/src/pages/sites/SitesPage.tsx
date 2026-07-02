@@ -172,6 +172,7 @@ export default function SitesPage() {
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
         title="Import Site tu Excel"
+        templateKey="site"
         dryRunFn={dryRunSitesExcel}
         importFn={importSitesExcel}
         onSuccess={load}

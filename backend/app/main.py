@@ -9,6 +9,7 @@ from app.api.routes import (
     dropdowns, report, audit,
 )
 from app.api.routes import antenna as antenna_router
+from app.api.routes import templates as templates_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -66,6 +67,45 @@ def _seed_initial_data():
         db.close()
 
 
+def _generate_templates():
+    """Generate Excel templates on startup if they don't exist."""
+    import os, sys
+    template_dir = os.path.join(
+        os.path.dirname(__file__), "..", "templates"
+    )
+    template_dir = os.path.abspath(template_dir)
+    os.makedirs(template_dir, exist_ok=True)
+
+    required = [
+        "template_site.xlsx",
+        "template_cell_3g.xlsx",
+        "template_cell_4g.xlsx",
+        "template_cell_5g.xlsx",
+    ]
+    missing = [f for f in required
+               if not os.path.exists(os.path.join(template_dir, f))]
+
+    if missing:
+        try:
+            script = os.path.join(
+                os.path.dirname(__file__), "..", "create_templates.py"
+            )
+            if os.path.exists(script):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    "create_templates", script
+                )
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                mod.create_site_template()
+                mod.create_cell3g_template()
+                mod.create_cell4g_template()
+                mod.create_cell5g_template()
+                print("[startup] Excel templates generated.")
+        except Exception as exc:
+            print(f"[startup] Warning: could not generate templates: {exc}")
+
+
 app = FastAPI(
     title="SiteLink API",
     version="1.0.0",
@@ -85,19 +125,21 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     _seed_initial_data()
+    _generate_templates()
 
 
 PREFIX = "/api/v1"
-app.include_router(auth.router,            prefix=f"{PREFIX}/auth",      tags=["Auth"])
-app.include_router(users.router,           prefix=f"{PREFIX}/users",     tags=["Users"])
-app.include_router(sites.router,           prefix=f"{PREFIX}/sites",     tags=["Sites"])
-app.include_router(cells_3g.router,        prefix=f"{PREFIX}/cells-3g",  tags=["Cells-3G"])
-app.include_router(cells_4g.router,        prefix=f"{PREFIX}/cells-4g",  tags=["Cells-4G"])
-app.include_router(cells_5g.router,        prefix=f"{PREFIX}/cells-5g",  tags=["Cells-5G"])
-app.include_router(dropdowns.router,       prefix=f"{PREFIX}/dropdowns", tags=["Dropdowns"])
-app.include_router(report.router,          prefix=f"{PREFIX}/report",    tags=["Report"])
-app.include_router(audit.router,           prefix=f"{PREFIX}/audit",     tags=["Audit"])
-app.include_router(antenna_router.router,  prefix=f"{PREFIX}/antennas",  tags=["Antennas"])
+app.include_router(auth.router,             prefix=f"{PREFIX}/auth",       tags=["Auth"])
+app.include_router(users.router,            prefix=f"{PREFIX}/users",      tags=["Users"])
+app.include_router(sites.router,            prefix=f"{PREFIX}/sites",      tags=["Sites"])
+app.include_router(cells_3g.router,         prefix=f"{PREFIX}/cells-3g",   tags=["Cells-3G"])
+app.include_router(cells_4g.router,         prefix=f"{PREFIX}/cells-4g",   tags=["Cells-4G"])
+app.include_router(cells_5g.router,         prefix=f"{PREFIX}/cells-5g",   tags=["Cells-5G"])
+app.include_router(dropdowns.router,        prefix=f"{PREFIX}/dropdowns",  tags=["Dropdowns"])
+app.include_router(report.router,           prefix=f"{PREFIX}/report",     tags=["Report"])
+app.include_router(audit.router,            prefix=f"{PREFIX}/audit",      tags=["Audit"])
+app.include_router(antenna_router.router,   prefix=f"{PREFIX}/antennas",   tags=["Antennas"])
+app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=["Templates"])
 
 
 @app.get("/health")

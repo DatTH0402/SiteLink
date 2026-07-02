@@ -239,6 +239,7 @@ export default function AntennaPage() {
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
         title="Import Antenna tu Excel"
+        templateKey={undefined}
         dryRunFn={dryRunAntennaExcel}
         importFn={importAntennaExcel}
         onSuccess={load}

@@ -1,0 +1,1068 @@
+#!/bin/bash
+# fix_features.sh
+# Fixes the failed step from add_features.sh
+# Usage: chmod +x fix_features.sh && ./fix_features.sh
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+echo "========================================"
+echo "SiteLink Fix Script"
+echo "========================================"
+
+# ── Fix 1: Create missing utils directory and validators.ts ──────────────────
+echo "[1/5] Creating frontend/src/utils/ and validators.ts..."
+
+mkdir -p frontend/src/utils
+
+cat > frontend/src/utils/validators.ts << 'TSEOF'
+/**
+ * validators.ts
+ * Shared Ant Design form validators for SiteLink.
+ */
+
+// Vietnam bounding box
+export const VN_LAT_MIN = 8.33
+export const VN_LAT_MAX = 23.39
+export const VN_LON_MIN = 102.14
+export const VN_LON_MAX = 109.47
+
+export const latValidator = (_: unknown, value: number) => {
+  if (value === undefined || value === null || value === 0) return Promise.resolve()
+  if (value < VN_LAT_MIN || value > VN_LAT_MAX)
+    return Promise.reject(
+      new Error(`Latitude phai trong khoang ${VN_LAT_MIN} – ${VN_LAT_MAX} (lanh tho Viet Nam)`)
+    )
+  return Promise.resolve()
+}
+
+export const lonValidator = (_: unknown, value: number) => {
+  if (value === undefined || value === null || value === 0) return Promise.resolve()
+  if (value < VN_LON_MIN || value > VN_LON_MAX)
+    return Promise.reject(
+      new Error(`Longitude phai trong khoang ${VN_LON_MIN} – ${VN_LON_MAX} (lanh tho Viet Nam)`)
+    )
+  return Promise.resolve()
+}
+
+export const azimuthValidator = (_: unknown, value: number) => {
+  if (value === undefined || value === null) return Promise.resolve()
+  if (value < 0 || value > 359)
+    return Promise.reject(new Error('Azimuth phai trong khoang 0 – 359'))
+  return Promise.resolve()
+}
+TSEOF
+
+echo "    ✓ validators.ts created"
+
+# ── Fix 2: Rewrite Cells3GPage with validators fully inline ──────────────────
+echo "[2/5] Rewriting Cells3GPage.tsx with validators..."
+
+cat > frontend/src/pages/cells/Cells3GPage.tsx << 'TSXEOF'
+import React, { useEffect, useState } from 'react'
+import {
+  Typography, Button, Space, Table, Input, Select,
+  Popconfirm, Tag, message, Row, Col,
+  Modal, Form, InputNumber,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
+  PlusOutlined, SearchOutlined, UploadOutlined,
+  EditOutlined, DeleteOutlined,
+} from '@ant-design/icons'
+import { cells3gApi } from '@/api/cells'
+import type { Cell3G, Site, AntennaItem } from '@/types'
+import { getSites } from '@/api/sites'
+import { getAntennaList } from '@/api/report'
+import DryRunModal from '@/components/shared/DryRunModal'
+import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+
+export default function Cells3GPage() {
+  const [data,        setData]        = useState<Cell3G[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [search,      setSearch]      = useState('')
+  const [mien,        setMien]        = useState<string | undefined>()
+  const [tinh,        setTinh]        = useState<string | undefined>()
+  const [vendor,      setVendor]      = useState<string | undefined>()
+  const [sites,       setSites]       = useState<Site[]>([])
+  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
+  const [modalOpen,   setModalOpen]   = useState(false)
+  const [editing,     setEditing]     = useState<Cell3G | null>(null)
+  const [dryRunOpen,  setDryRunOpen]  = useState(false)
+  const [form] = Form.useForm()
+
+  const tinhOptions   = [...new Set(data.map((c) => c.tinh).filter(Boolean))].sort() as string[]
+  const vendorOptions = [...new Set(data.map((c) => c.vendor).filter(Boolean))].sort() as string[]
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      setData(await cells3gApi.list({
+        search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined, limit: 1000,
+      }))
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => {
+    load()
+    getSites({ limit: 2000 }).then(setSites)
+    getAntennaList().then(setAntennaList)
+  }, [search, mien, tinh, vendor])
+
+  const handleSiteSelect = (siteId: number) => {
+    const site = sites.find((s) => s.id === siteId)
+    if (site) form.setFieldValue('site_name', site.site_name)
+  }
+
+  const handleAntennaSelect = (antennaName: string) => {
+    const ant = antennaList.find((a) => a.name === antennaName)
+    if (!ant) return
+    form.setFieldsValue({ loai_anten: ant.name })
+  }
+
+  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
+  const openEdit   = (r: Cell3G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    try {
+      if (editing) {
+        await cells3gApi.update(editing.id, values)
+        message.success('Cap nhat thanh cong')
+      } else {
+        await cells3gApi.create(values)
+        message.success('Tao cell thanh cong')
+      }
+      setModalOpen(false); load()
+    } catch (e: any) { message.error(e.response?.data?.detail || 'Loi') }
+  }
+
+  const handleDelete = async (id: number) => {
+    await cells3gApi.remove(id); message.success('Da xoa'); load()
+  }
+
+  const columns: ColumnsType<Cell3G> = [
+    {
+      title: 'Hanh dong', key: 'action', fixed: 'left', width: 80,
+      render: (_: unknown, r: Cell3G) => (
+        <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+          <Popconfirm title="Xoa cell nay?" onConfirm={() => handleDelete(r.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+    { title: 'Mien',      dataIndex: 'mien',      fixed: 'left', width: 70  },
+    { title: 'Tinh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
+    { title: 'Phuong xa', dataIndex: 'phuong_xa',               width: 160 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',         dataIndex: 'moran',         width: 120 },
+    { title: 'Lat',           dataIndex: 'lat',           width: 110 },
+    { title: 'Long',          dataIndex: 'long',          width: 110 },
+    { title: 'Vung phu song', dataIndex: 'vung_phu_song', width: 120 },
+    { title: 'Vendor',        dataIndex: 'vendor',        width: 100 },
+    { title: 'Do cao anten',  dataIndex: 'do_cao_anten',  width: 120 },
+    { title: 'Azimuth',       dataIndex: 'azimuth',       width: 90  },
+    { title: 'M-tilt',        dataIndex: 'm_tilt',        width: 80  },
+    { title: 'E-Tilt',        dataIndex: 'e_tilt',        width: 80  },
+    { title: 'Total Tilt',    dataIndex: 'total_tilt',    width: 100 },
+    { title: 'Loai Anten',    dataIndex: 'loai_anten',    width: 250, ellipsis: { showTitle: true } },
+    { title: 'Chung anten',   dataIndex: 'chung_anten',   width: 120 },
+    { title: 'Baseband',      dataIndex: 'baseband',      width: 120 },
+    { title: 'RF',            dataIndex: 'rf',            width: 100 },
+    { title: 'Cell ID',       dataIndex: 'cell_id',       width: 100 },
+    { title: 'ARFCN',         dataIndex: 'arfcn',         width: 90  },
+    { title: 'PSC',           dataIndex: 'psc',           width: 80  },
+    { title: 'MIMO', dataIndex: 'mimo', width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+  ]
+  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+
+  return (
+    <div>
+      <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>Cell 3G</Typography.Title>
+        <Space>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
+            Import Excel
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Them moi</Button>
+        </Space>
+      </Row>
+
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="260px">
+          <Input prefix={<SearchOutlined />} placeholder="Tim cell / site name..."
+                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+        </Col>
+        <Col>
+          <Select placeholder="Mien" allowClear style={{ width: 90 }}
+                  value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="180px">
+          <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
+                  value={tinh} onChange={setTinh}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map((t) => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="160px">
+          <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
+                  value={vendor} onChange={setVendor}>
+            {vendorOptions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
+            Xoa loc
+          </Button>
+        </Col>
+      </Row>
+
+      <Table columns={columns} dataSource={data} rowKey="id" loading={loading} size="small"
+             scroll={{ x: scrollX, y: 600 }} bordered
+             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }} />
+
+      <Modal title={editing ? 'Chinh sua Cell 3G' : 'Them Cell 3G moi'}
+             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+             width={800} okText="Luu" destroyOnClose>
+        <Form form={form} layout="vertical">
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+                <Select showSearch optionFilterProp="children" allowClear
+                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map((s) => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+                <Input readOnly style={{ background: '#f5f5f5' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
+                <Select allowClear>
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
+                         rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="8.33 – 23.39" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long (102.14 – 109.47)"
+                         rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="102.14 – 109.47" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vung_phu_song" label="Vung phu song">
+                <Select allowClear>
+                  <Select.Option value="Indoor">Indoor</Select.Option>
+                  <Select.Option value="Outdoor">Outdoor</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor">
+                <Select allowClear>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
+                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Do cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
+                         rules={[{ validator: azimuthValidator }]}>
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="loai_anten" label="Loai Anten">
+                <Select showSearch allowClear placeholder="Chon loai anten..."
+                        onChange={handleAntennaSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map((a) =>
+                    <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rf" label="RF"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="arfcn" label="ARFCN"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="psc" label="PSC"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2','4x4','8x8'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      <DryRunModal
+        open={dryRunOpen}
+        onClose={() => setDryRunOpen(false)}
+        title="Import Cell 3G tu Excel"
+        templateKey="cell-3g"
+        dryRunFn={cells3gApi.dryRunExcel}
+        importFn={cells3gApi.importExcel}
+        onSuccess={load}
+      />
+    </div>
+  )
+}
+TSXEOF
+
+echo "    ✓ Cells3GPage.tsx rewritten"
+
+# ── Fix 3: Rewrite Cells4GPage ────────────────────────────────────────────────
+echo "[3/5] Rewriting Cells4GPage.tsx with validators..."
+
+cat > frontend/src/pages/cells/Cells4GPage.tsx << 'TSXEOF'
+import React, { useEffect, useState } from 'react'
+import {
+  Typography, Button, Space, Table, Input, Select,
+  Popconfirm, Tag, message, Row, Col,
+  Modal, Form, InputNumber,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
+  PlusOutlined, SearchOutlined, UploadOutlined,
+  EditOutlined, DeleteOutlined,
+} from '@ant-design/icons'
+import { cells4gApi } from '@/api/cells'
+import type { Cell4G, Site, AntennaItem } from '@/types'
+import { getSites } from '@/api/sites'
+import { getAntennaList } from '@/api/report'
+import DryRunModal from '@/components/shared/DryRunModal'
+import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+
+export default function Cells4GPage() {
+  const [data,        setData]        = useState<Cell4G[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [search,      setSearch]      = useState('')
+  const [mien,        setMien]        = useState<string | undefined>()
+  const [tinh,        setTinh]        = useState<string | undefined>()
+  const [vendor,      setVendor]      = useState<string | undefined>()
+  const [sites,       setSites]       = useState<Site[]>([])
+  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
+  const [modalOpen,   setModalOpen]   = useState(false)
+  const [editing,     setEditing]     = useState<Cell4G | null>(null)
+  const [dryRunOpen,  setDryRunOpen]  = useState(false)
+  const [form] = Form.useForm()
+
+  const tinhOptions   = [...new Set(data.map((c) => c.tinh).filter(Boolean))].sort() as string[]
+  const vendorOptions = [...new Set(data.map((c) => c.vendor).filter(Boolean))].sort() as string[]
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      setData(await cells4gApi.list({
+        search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined, limit: 1000,
+      }))
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => {
+    load()
+    getSites({ limit: 2000 }).then(setSites)
+    getAntennaList().then(setAntennaList)
+  }, [search, mien, tinh, vendor])
+
+  const handleSiteSelect = (siteId: number) => {
+    const site = sites.find((s) => s.id === siteId)
+    if (site) form.setFieldValue('site_name', site.site_name)
+  }
+
+  const handleAntennaSelect = (antennaName: string) => {
+    const ant = antennaList.find((a) => a.name === antennaName)
+    if (!ant) return
+    form.setFieldsValue({ loai_anten: ant.name })
+  }
+
+  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
+  const openEdit   = (r: Cell4G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    try {
+      if (editing) {
+        await cells4gApi.update(editing.id, values)
+        message.success('Cap nhat thanh cong')
+      } else {
+        await cells4gApi.create(values)
+        message.success('Tao cell thanh cong')
+      }
+      setModalOpen(false); load()
+    } catch (e: any) { message.error(e.response?.data?.detail || 'Loi') }
+  }
+
+  const handleDelete = async (id: number) => {
+    await cells4gApi.remove(id); message.success('Da xoa'); load()
+  }
+
+  const columns: ColumnsType<Cell4G> = [
+    {
+      title: 'Hanh dong', key: 'action', fixed: 'left', width: 80,
+      render: (_: unknown, r: Cell4G) => (
+        <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+          <Popconfirm title="Xoa cell nay?" onConfirm={() => handleDelete(r.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+    { title: 'Mien',      dataIndex: 'mien',      fixed: 'left', width: 70  },
+    { title: 'Tinh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
+    { title: 'Phuong xa', dataIndex: 'phuong_xa',               width: 160 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',            dataIndex: 'moran',            width: 120 },
+    { title: 'Lat',              dataIndex: 'lat',              width: 110 },
+    { title: 'Long',             dataIndex: 'long',             width: 110 },
+    { title: 'Vung phu song',    dataIndex: 'vung_phu_song',    width: 120 },
+    { title: 'Vendor',           dataIndex: 'vendor',           width: 100 },
+    { title: 'Do cao anten',     dataIndex: 'do_cao_anten',     width: 120 },
+    { title: 'Azimuth',          dataIndex: 'azimuth',          width: 90  },
+    { title: 'M-tilt',           dataIndex: 'm_tilt',           width: 80  },
+    { title: 'E-Tilt',           dataIndex: 'e_tilt',           width: 80  },
+    { title: 'Total Tilt',       dataIndex: 'total_tilt',       width: 100 },
+    { title: 'Loai Anten',       dataIndex: 'loai_anten',       width: 200 },
+    { title: 'Chung anten',      dataIndex: 'chung_anten',      width: 120 },
+    { title: 'Baseband',         dataIndex: 'baseband',         width: 120 },
+    { title: 'RF',               dataIndex: 'rf',               width: 100 },
+    { title: 'Cell ID',          dataIndex: 'cell_id',          width: 100 },
+    { title: 'EARFCN',           dataIndex: 'earfcn',           width: 90  },
+    { title: 'PCI',              dataIndex: 'pci',              width: 80  },
+    { title: 'Root Sequence ID', dataIndex: 'root_sequence_id', width: 150 },
+    { title: 'MIMO', dataIndex: 'mimo', width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+  ]
+  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+
+  return (
+    <div>
+      <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>Cell 4G</Typography.Title>
+        <Space>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
+            Import Excel
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Them moi</Button>
+        </Space>
+      </Row>
+
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="260px">
+          <Input prefix={<SearchOutlined />} placeholder="Tim cell / site name..."
+                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+        </Col>
+        <Col>
+          <Select placeholder="Mien" allowClear style={{ width: 90 }}
+                  value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="180px">
+          <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
+                  value={tinh} onChange={setTinh}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map((t) => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="160px">
+          <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
+                  value={vendor} onChange={setVendor}>
+            {vendorOptions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
+            Xoa loc
+          </Button>
+        </Col>
+      </Row>
+
+      <Table columns={columns} dataSource={data} rowKey="id" loading={loading} size="small"
+             scroll={{ x: scrollX, y: 600 }} bordered
+             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }} />
+
+      <Modal title={editing ? 'Chinh sua Cell 4G' : 'Them Cell 4G moi'}
+             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+             width={800} okText="Luu" destroyOnClose>
+        <Form form={form} layout="vertical">
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+                <Select showSearch optionFilterProp="children" allowClear
+                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map((s) => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+                <Input readOnly style={{ background: '#f5f5f5' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
+                <Select allowClear>
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
+                         rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="8.33 – 23.39" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long (102.14 – 109.47)"
+                         rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="102.14 – 109.47" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vung_phu_song" label="Vung phu song">
+                <Select allowClear>
+                  <Select.Option value="Indoor">Indoor</Select.Option>
+                  <Select.Option value="Outdoor">Outdoor</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor">
+                <Select allowClear>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
+                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Do cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
+                         rules={[{ validator: azimuthValidator }]}>
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="loai_anten" label="Loai Anten">
+                <Select showSearch allowClear placeholder="Chon loai anten..."
+                        onChange={handleAntennaSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map((a) => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rf" label="RF"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="pci" label="PCI"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2','4x4','8x8'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      <DryRunModal
+        open={dryRunOpen}
+        onClose={() => setDryRunOpen(false)}
+        title="Import Cell 4G tu Excel"
+        templateKey="cell-4g"
+        dryRunFn={cells4gApi.dryRunExcel}
+        importFn={cells4gApi.importExcel}
+        onSuccess={load}
+      />
+    </div>
+  )
+}
+TSXEOF
+
+echo "    ✓ Cells4GPage.tsx rewritten"
+
+# ── Fix 4: Rewrite Cells5GPage ────────────────────────────────────────────────
+echo "[4/5] Rewriting Cells5GPage.tsx with validators..."
+
+cat > frontend/src/pages/cells/Cells5GPage.tsx << 'TSXEOF'
+import React, { useEffect, useState } from 'react'
+import {
+  Typography, Button, Space, Table, Input, Select,
+  Popconfirm, Tag, message, Row, Col,
+  Modal, Form, InputNumber,
+} from 'antd'
+import type { ColumnsType } from 'antd/es/table'
+import {
+  PlusOutlined, SearchOutlined, UploadOutlined,
+  EditOutlined, DeleteOutlined,
+} from '@ant-design/icons'
+import { cells5gApi } from '@/api/cells'
+import type { Cell5G, Site, AntennaItem } from '@/types'
+import { getSites } from '@/api/sites'
+import { getAntennaList } from '@/api/report'
+import DryRunModal from '@/components/shared/DryRunModal'
+import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+
+export default function Cells5GPage() {
+  const [data,        setData]        = useState<Cell5G[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [search,      setSearch]      = useState('')
+  const [mien,        setMien]        = useState<string | undefined>()
+  const [tinh,        setTinh]        = useState<string | undefined>()
+  const [vendor,      setVendor]      = useState<string | undefined>()
+  const [sites,       setSites]       = useState<Site[]>([])
+  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
+  const [modalOpen,   setModalOpen]   = useState(false)
+  const [editing,     setEditing]     = useState<Cell5G | null>(null)
+  const [dryRunOpen,  setDryRunOpen]  = useState(false)
+  const [form] = Form.useForm()
+
+  const tinhOptions   = [...new Set(data.map((c) => c.tinh).filter(Boolean))].sort() as string[]
+  const vendorOptions = [...new Set(data.map((c) => c.vendor).filter(Boolean))].sort() as string[]
+
+  const load = async () => {
+    setLoading(true)
+    try {
+      setData(await cells5gApi.list({
+        search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined, limit: 1000,
+      }))
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => {
+    load()
+    getSites({ limit: 2000 }).then(setSites)
+    getAntennaList().then(setAntennaList)
+  }, [search, mien, tinh, vendor])
+
+  const handleSiteSelect = (siteId: number) => {
+    const site = sites.find((s) => s.id === siteId)
+    if (site) form.setFieldValue('site_name', site.site_name)
+  }
+
+  const handleAntennaSelect = (antennaName: string) => {
+    const ant = antennaList.find((a) => a.name === antennaName)
+    if (!ant) return
+    form.setFieldsValue({ loai_anten: ant.name })
+  }
+
+  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
+  const openEdit   = (r: Cell5G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
+
+  const handleSave = async () => {
+    const values = await form.validateFields()
+    try {
+      if (editing) {
+        await cells5gApi.update(editing.id, values)
+        message.success('Cap nhat thanh cong')
+      } else {
+        await cells5gApi.create(values)
+        message.success('Tao cell thanh cong')
+      }
+      setModalOpen(false); load()
+    } catch (e: any) { message.error(e.response?.data?.detail || 'Loi') }
+  }
+
+  const handleDelete = async (id: number) => {
+    await cells5gApi.remove(id); message.success('Da xoa'); load()
+  }
+
+  const columns: ColumnsType<Cell5G> = [
+    {
+      title: 'Hanh dong', key: 'action', fixed: 'left', width: 80,
+      render: (_: unknown, r: Cell5G) => (
+        <Space>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
+          <Popconfirm title="Xoa cell nay?" onConfirm={() => handleDelete(r.id)}>
+            <Button size="small" danger icon={<DeleteOutlined />} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+    { title: 'Mien',      dataIndex: 'mien',      fixed: 'left', width: 70  },
+    { title: 'Tinh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
+    { title: 'Phuong xa', dataIndex: 'phuong_xa',               width: 160 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',            dataIndex: 'moran',            width: 120 },
+    { title: 'Lat',              dataIndex: 'lat',              width: 110 },
+    { title: 'Long',             dataIndex: 'long',             width: 110 },
+    { title: 'Vung phu song',    dataIndex: 'vung_phu_song',    width: 120 },
+    { title: 'Vendor',           dataIndex: 'vendor',           width: 100 },
+    { title: 'Do cao anten',     dataIndex: 'do_cao_anten',     width: 120 },
+    { title: 'Azimuth',          dataIndex: 'azimuth',          width: 90  },
+    { title: 'M-tilt',           dataIndex: 'm_tilt',           width: 80  },
+    { title: 'E-Tilt',           dataIndex: 'e_tilt',           width: 80  },
+    { title: 'Total Tilt',       dataIndex: 'total_tilt',       width: 100 },
+    { title: 'Loai Anten',       dataIndex: 'loai_anten',       width: 250, ellipsis: { showTitle: true } },
+    { title: 'Baseband',         dataIndex: 'baseband',         width: 120 },
+    { title: 'RF',               dataIndex: 'rf',               width: 100 },
+    { title: 'Cell ID',          dataIndex: 'cell_id',          width: 100 },
+    { title: 'NR-ARFCN',         dataIndex: 'nr_arfcn',         width: 100 },
+    { title: 'PCI',              dataIndex: 'pci',              width: 80  },
+    { title: 'Root Sequence ID', dataIndex: 'root_sequence_id', width: 150 },
+    { title: 'MIMO', dataIndex: 'mimo', width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+  ]
+  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+
+  return (
+    <div>
+      <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
+        <Typography.Title level={3} style={{ margin: 0 }}>Cell 5G</Typography.Title>
+        <Space>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
+            Import Excel
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Them moi</Button>
+        </Space>
+      </Row>
+
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="260px">
+          <Input prefix={<SearchOutlined />} placeholder="Tim cell / site name..."
+                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+        </Col>
+        <Col>
+          <Select placeholder="Mien" allowClear style={{ width: 90 }}
+                  value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="180px">
+          <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
+                  value={tinh} onChange={setTinh}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map((t) => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col flex="160px">
+          <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
+                  value={vendor} onChange={setVendor}>
+            {vendorOptions.map((v) => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+          </Select>
+        </Col>
+        <Col>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
+            Xoa loc
+          </Button>
+        </Col>
+      </Row>
+
+      <Table columns={columns} dataSource={data} rowKey="id" loading={loading} size="small"
+             scroll={{ x: scrollX, y: 600 }} bordered
+             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`, showSizeChanger: true }} />
+
+      <Modal title={editing ? 'Chinh sua Cell 5G' : 'Them Cell 5G moi'}
+             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+             width={800} okText="Luu" destroyOnClose>
+        <Form form={form} layout="vertical">
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+                <Select showSearch optionFilterProp="children" allowClear
+                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map((s) => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+                <Input readOnly style={{ background: '#f5f5f5' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
+                <Select allowClear>
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
+                         rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="8.33 – 23.39" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long (102.14 – 109.47)"
+                         rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="102.14 – 109.47" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vung_phu_song" label="Vung phu song">
+                <Select allowClear>
+                  <Select.Option value="Indoor">Indoor</Select.Option>
+                  <Select.Option value="Outdoor">Outdoor</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor">
+                <Select allowClear>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
+                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Do cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
+                         rules={[{ validator: azimuthValidator }]}>
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="loai_anten" label="Loai Anten">
+                <Select showSearch allowClear placeholder="Chon loai anten..."
+                        onChange={handleAntennaSelect}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map((a) => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rf" label="RF"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="nr_arfcn" label="NR-ARFCN"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="pci" label="PCI"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2','4x4','8x8'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      <DryRunModal
+        open={dryRunOpen}
+        onClose={() => setDryRunOpen(false)}
+        title="Import Cell 5G tu Excel"
+        templateKey="cell-5g"
+        dryRunFn={cells5gApi.dryRunExcel}
+        importFn={cells5gApi.importExcel}
+        onSuccess={load}
+      />
+    </div>
+  )
+}
+TSXEOF
+
+echo "    ✓ Cells5GPage.tsx rewritten"
+
+# ── Fix 5: Rebuild ────────────────────────────────────────────────────────────
+echo "[5/5] Rebuilding containers..."
+
+sudo docker compose down
+sudo docker compose up -d --build
+
+echo ""
+echo "========================================"
+echo "Fix complete!"
+echo "========================================"
+echo ""
+echo "Fixed:"
+echo "  - Created frontend/src/utils/ directory"
+echo "  - Created frontend/src/utils/validators.ts"
+echo "  - Rewrote Cells3GPage.tsx (validators inline, no sed patching)"
+echo "  - Rewrote Cells4GPage.tsx (validators inline, no sed patching)"
+echo "  - Rewrote Cells5GPage.tsx (validators inline, no sed patching)"
+echo ""
+echo "All 3 cell pages now have:"
+echo "  - Lat validation: 8.33 – 23.39"
+echo "  - Long validation: 102.14 – 109.47"
+echo "  - Azimuth validation: 0 – 359"
+echo "  - templateKey passed to DryRunModal"
+echo ""

@@ -14,6 +14,7 @@ import type { Cell4G, Site, AntennaItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
+import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
 export default function Cells4GPage() {
   const [data,        setData]        = useState<Cell4G[]>([])
@@ -211,8 +212,20 @@ export default function Cells4GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="lat" label="Lat"><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="long" label="Long"><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
+                         rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="8.33 – 23.39" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long (102.14 – 109.47)"
+                         rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5}
+                             placeholder="102.14 – 109.47" />
+              </Form.Item>
+            </Col>
             <Col span={8}>
               <Form.Item name="vung_phu_song" label="Vung phu song">
                 <Select allowClear>
@@ -229,11 +242,32 @@ export default function Cells4GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="do_cao_anten" label="Do cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="azimuth" label="Azimuth"><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Do cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
+                         rules={[{ validator: azimuthValidator }]}>
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
             <Col span={24}>
               <Form.Item name="loai_anten" label="Loai Anten">
                 <Select showSearch allowClear placeholder="Chon loai anten..."
@@ -243,13 +277,27 @@ export default function Cells4GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={12}><Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="pci" label="PCI"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rf" label="RF"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="pci" label="PCI"><Input /></Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item>
+            </Col>
             <Col span={8}>
               <Form.Item name="mimo" label="MIMO">
                 <Select allowClear>
@@ -265,6 +313,7 @@ export default function Cells4GPage() {
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
         title="Import Cell 4G tu Excel"
+        templateKey="cell-4g"
         dryRunFn={cells4gApi.dryRunExcel}
         importFn={cells4gApi.importExcel}
         onSuccess={load}

@@ -98,6 +98,8 @@ export interface ReportRow {
 export interface AuditLog {
   id: number
   username: string
+  full_name: string
+  email: string
   action: string
   table_name: string
   record_id: number
@@ -148,8 +150,6 @@ export interface CellProvinceChartItem {
   tinh: string
   cell_count: number
 }
-
-// ── Dry-run previews ─────────────────────────────────────────────────────────
 
 export interface SiteDryRunResult {
   to_create: number

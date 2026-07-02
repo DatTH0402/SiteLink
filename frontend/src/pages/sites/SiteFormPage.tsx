@@ -168,13 +168,37 @@ export default function SiteFormPage() {
         <Card title="Toa do va Col anten" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={6}>
-              <Form.Item name="lat" label="Latitude">
-                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001} />
+              <Form.Item
+                name="lat"
+                label="Latitude"
+                rules={[{
+                  validator: (_: unknown, value: number) => {
+                    if (value === undefined || value === null) return Promise.resolve()
+                    if (value < 8.33 || value > 23.39)
+                      return Promise.reject('Latitude phai trong khoang 8.33 – 23.39 (Viet Nam)')
+                    return Promise.resolve()
+                  }
+                }]}
+              >
+                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
+                  placeholder="8.33 – 23.39" />
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="long" label="Longitude">
-                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001} />
+              <Form.Item
+                name="long"
+                label="Longitude"
+                rules={[{
+                  validator: (_: unknown, value: number) => {
+                    if (value === undefined || value === null) return Promise.resolve()
+                    if (value < 102.14 || value > 109.47)
+                      return Promise.reject('Longitude phai trong khoang 102.14 – 109.47 (Viet Nam)')
+                    return Promise.resolve()
+                  }
+                }]}
+              >
+                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
+                  placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={6}>

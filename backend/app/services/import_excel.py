@@ -3,15 +3,10 @@ import_excel.py
 ==============
 Handles Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
 
-New capabilities
-----------------
-* Fuzzy province/ward mapping  – strips accents & common prefixes so
-  "Ha Noi", "hà nội", "Tp.Hà Nội" all resolve to "Thành phố Hà Nội".
-* Dry-run mode                 – returns a preview dict without touching DB.
-* Auto-create missing sites    – when importing cells, if the site referenced
-  by site_name does not exist, create it from columns in the cell file.
-* Anchor-based upsert          – site_name is the anchor for sites;
-  (site_name, cell_name) is the anchor for cells.
+Validation rules:
+  - Lat: 8.33 ≤ lat ≤ 23.39  (Vietnam bounding box)
+  - Long: 102.14 ≤ long ≤ 109.47
+  - Azimuth: 0 ≤ azimuth ≤ 359
 """
 
 from __future__ import annotations
@@ -23,49 +18,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+# ── Vietnam bounding box ──────────────────────────────────────────────────────
+VN_LAT_MIN, VN_LAT_MAX   =  8.33,  23.39
+VN_LON_MIN, VN_LON_MAX   = 102.14, 109.47
+AZI_MIN,    AZI_MAX       = 0,      359
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _strip_accents(text: str) -> str:
-    """
-    Remove diacritics from a Unicode string and map non-decomposable
-    Vietnamese characters to their ASCII equivalents.
-
-    unicodedata.normalize("NFKD") decomposes most accented letters into
-    base + combining mark, which we then drop.  However a few Vietnamese
-    characters are atomic Unicode code-points that NFKD does NOT decompose:
-
-        Đ  U+0110  →  D
-        đ  U+0111  →  d
-
-    These must be handled with an explicit replacement map BEFORE the NFKD
-    pass so that the combining-mark filter can finish the job cleanly.
-    """
-    # Explicit map for characters not decomposed by NFKD
-    _CHAR_MAP = str.maketrans({
-        "Đ": "D",
-        "đ": "d",
-    })
+    _CHAR_MAP = str.maketrans({"Đ": "D", "đ": "d"})
     text = text.translate(_CHAR_MAP)
     nfkd = unicodedata.normalize("NFKD", text)
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
-# Prefixes to remove before fuzzy-matching province / ward names.
-#
-# CRITICAL: applied AFTER _strip_accents() → text is pure ASCII at this point.
-#
-# Vietnamese admin level  →  ASCII after strip_accents()
-#   Tỉnh                  →  Tinh   →  tinh
-#   Thành phố / TP        →  Thanh pho / TP
-#   Quận                  →  Quan
-#   Huyện                 →  Huyen
-#   Thị xã                →  Thi xa
-#   Xã                    →  Xa
-#   Phường                →  Phuong
-#   Thị trấn              →  Thi tran
 _PREFIX_RE = re.compile(
     r"^(tp\.?|thanh\s+pho|thi\s+tran|thi\s+xa|phuong|huyen|tinh|quan|xa)\s+",
     re.IGNORECASE,
@@ -73,16 +42,6 @@ _PREFIX_RE = re.compile(
 
 
 def _normalize(text: str) -> str:
-    """
-    Canonical key used for fuzzy geo lookup.
-
-    Pipeline:
-      1. Explicit char map  : Đ→D, đ→d  (NFKD does not handle these)
-      2. NFKD + drop marks  : ă→a, ơ→o, ê→e …
-      3. Lowercase + strip
-      4. Drop admin prefix  : 'tinh quang ninh' → 'quang ninh'
-      5. Collapse spacing   : 'quang ninh' → 'quangninh'
-    """
     t = _strip_accents(text).lower().strip()
     t = _PREFIX_RE.sub("", t)
     t = re.sub(r"[\s\-_\.]+", "", t)
@@ -90,19 +49,11 @@ def _normalize(text: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Fuzzy-mapping cache
+# Geo cache
 # ─────────────────────────────────────────────────────────────────────────────
 
 class GeoCache:
-    """
-    Loaded once per import call.
-    Provides O(1) lookup:
-        tinh_map  : normalised_key  → official ten_tinh
-        xa_map    : (normalised_tinh, normalised_xa_key) → official ten_phuong_xa
-        tinh_mien : official ten_tinh → mien code (MB / MT / MN)
-    """
-
-    def __init__(self, db) -> None:  # db: SQLAlchemy Session
+    def __init__(self, db) -> None:
         from app.models.dropdown import DropdownTinhXaPhuong
         rows = db.query(DropdownTinhXaPhuong).all()
 
@@ -113,7 +64,7 @@ class GeoCache:
         for r in rows:
             if r.ten_tinh:
                 k_tinh = _normalize(r.ten_tinh)
-                self.tinh_map[k_tinh]   = r.ten_tinh
+                self.tinh_map[k_tinh]      = r.ten_tinh
                 self.tinh_mien[r.ten_tinh] = r.mien or ""
             if r.ten_tinh and r.ten_phuong_xa:
                 k_tinh = _normalize(r.ten_tinh)
@@ -125,20 +76,17 @@ class GeoCache:
             return None
         return self.tinh_map.get(_normalize(raw))
 
-    def resolve_xa(self, tinh_official: str,
-                   raw_xa: Optional[str]) -> Optional[str]:
+    def resolve_xa(self, tinh_official: str, raw_xa: Optional[str]) -> Optional[str]:
         if not raw_xa or not tinh_official:
             return None
-        k_tinh = _normalize(tinh_official)
-        k_xa   = _normalize(raw_xa)
-        return self.xa_map.get((k_tinh, k_xa))
+        return self.xa_map.get((_normalize(tinh_official), _normalize(raw_xa)))
 
     def mien_for(self, tinh_official: str) -> str:
         return self.tinh_mien.get(tinh_official, "")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Low-level column readers
+# Low-level readers
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _read_excel(file_bytes: bytes) -> pd.DataFrame:
@@ -174,7 +122,60 @@ def _float(row, *keys) -> Optional[float]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Site import  (with dry-run + fuzzy mapping)
+# Validation helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _validate_lat(
+    lat: Optional[float],
+    row_num: int,
+    label: str,
+    errors: List[str],
+) -> Optional[float]:
+    if lat is None:
+        return None
+    if not (VN_LAT_MIN <= lat <= VN_LAT_MAX):
+        errors.append(
+            f"Row {row_num} ({label}): Latitude {lat} ngoai pham vi Viet Nam "
+            f"({VN_LAT_MIN}–{VN_LAT_MAX}) – giu nguyen gia tri nhung canh bao"
+        )
+    return lat
+
+
+def _validate_lon(
+    lon: Optional[float],
+    row_num: int,
+    label: str,
+    errors: List[str],
+) -> Optional[float]:
+    if lon is None:
+        return None
+    if not (VN_LON_MIN <= lon <= VN_LON_MAX):
+        errors.append(
+            f"Row {row_num} ({label}): Longitude {lon} ngoai pham vi Viet Nam "
+            f"({VN_LON_MIN}–{VN_LON_MAX}) – giu nguyen gia tri nhung canh bao"
+        )
+    return lon
+
+
+def _validate_azimuth(
+    azi: Optional[float],
+    row_num: int,
+    label: str,
+    errors: List[str],
+) -> Optional[float]:
+    if azi is None:
+        return None
+    if not (AZI_MIN <= azi <= AZI_MAX):
+        errors.append(
+            f"Row {row_num} ({label}): Azimuth {azi} phai trong khoang "
+            f"{AZI_MIN}–{AZI_MAX} – dong bi bo qua"
+        )
+        return None   # invalid azimuth → reject the value
+    return azi
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Site import
 # ─────────────────────────────────────────────────────────────────────────────
 
 def parse_site_excel(
@@ -182,16 +183,6 @@ def parse_site_excel(
     db=None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Returns:
-    {
-        "to_create": [ { site_name, mien, tinh, ... }, ... ],
-        "to_update": [ { "existing_id": int, "anchor": str, "changes": {...} }, ... ],
-        "errors":    [ "Row N: ..." ],
-        "dry_run":   bool,
-    }
-    When dry_run=True the caller should NOT write anything to the DB.
-    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
 
@@ -199,23 +190,20 @@ def parse_site_excel(
     to_update: List[Dict] = []
     errors:    List[str]  = []
 
-    from app.models.site import Site  # lazy import to avoid circular
+    from app.models.site import Site
 
     for i, row in df.iterrows():
-        row_num = int(str(i)) + 2  # type: ignore[arg-type]
+        row_num   = int(str(i)) + 2
         site_name = _v(row, "Site name", "Site Name", "site_name", "SITE NAME")
 
         if not site_name:
             errors.append(f"Row {row_num}: 'Site name' column is empty – skipped")
             continue
 
-        # ── raw province / ward ──────────────────────────────────────────
-        raw_tinh     = _v(row, "Tỉnh", "Tinh", "TINH", "tinh", "Province")
-        raw_phuong   = _v(row, "Phường xã", "Phuong xa", "Phường Xã",
-                          "phuong_xa", "Ward")
-        raw_mien     = _v(row, "Miền", "Mien", "MIEN", "mien")
+        raw_tinh   = _v(row, "Tỉnh", "Tinh", "TINH", "tinh", "Province")
+        raw_phuong = _v(row, "Phường xã", "Phuong xa", "Phường Xã", "phuong_xa", "Ward")
+        raw_mien   = _v(row, "Miền", "Mien", "MIEN", "mien")
 
-        # ── fuzzy-resolve province / ward ────────────────────────────────
         if geo and raw_tinh:
             tinh_official = geo.resolve_tinh(raw_tinh)
             if not tinh_official:
@@ -228,7 +216,6 @@ def parse_site_excel(
             phuong_xa_official: Optional[str] = None
             if raw_phuong:
                 phuong_xa_official = geo.resolve_xa(tinh_official, raw_phuong)
-                # ward mismatch is a warning, not a hard error
                 if not phuong_xa_official:
                     errors.append(
                         f"Row {row_num} (site '{site_name}'): "
@@ -246,16 +233,21 @@ def parse_site_excel(
             )
             continue
 
+        # ── Lat / Long validation ────────────────────────────────────────
+        raw_lat  = _float(row, "Lat", "LAT", "lat", "Latitude")
+        raw_long = _float(row, "Long", "LONG", "long", "Longitude")
+        lat  = _validate_lat(raw_lat,  row_num, site_name, errors)
+        long = _validate_lon(raw_long, row_num, site_name, errors)
+
         rec: Dict[str, Any] = {
             "mien":         mien,
             "tinh":         tinh_official,
             "phuong_xa":    phuong_xa_official,
-            "site_name_cu": _v(row, "Site name (cũ)", "Site name (cu)",
-                               "Site Name (cũ)"),
+            "site_name_cu": _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)"),
             "site_name":    site_name,
             "site_vip":     _v(row, "Site VIP", "site_vip"),
-            "lat":          _float(row, "Lat", "LAT", "lat", "Latitude"),
-            "long":         _float(row, "Long", "LONG", "long", "Longitude"),
+            "lat":          lat,
+            "long":         long,
             "tram_2g":      _bool(row, "Trạm 2G", "Tram 2G", "tram_2g"),
             "tram_3g":      _bool(row, "Trạm 3G", "Tram 3G", "tram_3g"),
             "tram_4g":      _bool(row, "Trạm 4G", "Tram 4G", "tram_4g"),
@@ -278,13 +270,13 @@ def parse_site_excel(
                 "IBC/Macro outdoor/IBC + Outdoor/miniDAS/Smallcell",
                 "Phan loai tram", "phan_loai_tram",
             ),
-            "moran_3g": _v(row,
-                "TRẠM MORAN 3G (VNPT HOST, MBF HOST)", "MORAN 3G", "moran_3g"),
-            "moran_4g": _v(row,
-                "TRẠM MORAN 4G (VNPT HOST, MBF HOST)", "MORAN 4G", "moran_4g"),
-            "moran_5g": _v(row,
-                "TRẠM MORAN 5G (VNPT HOST, MBF HOST)", "MORAN 5G", "moran_5g"),
-            "ma_ptm": _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
+            "moran_3g": _v(row, "TRẠM MORAN 3G (VNPT HOST, MBF HOST)",
+                           "MORAN 3G", "moran_3g"),
+            "moran_4g": _v(row, "TRẠM MORAN 4G (VNPT HOST, MBF HOST)",
+                           "MORAN 4G", "moran_4g"),
+            "moran_5g": _v(row, "TRẠM MORAN 5G (VNPT HOST, MBF HOST)",
+                           "MORAN 5G", "moran_5g"),
+            "ma_ptm":   _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
             "do_cao_dinh_cot_anten": _float(
                 row,
                 "Độ cao đỉnh cột anten (m) đến mặt đất",
@@ -302,9 +294,7 @@ def parse_site_excel(
         }
 
         if db:
-            existing = db.query(Site).filter(
-                Site.site_name == site_name
-            ).first()
+            existing = db.query(Site).filter(Site.site_name == site_name).first()
             if existing:
                 to_update.append({
                     "existing_id": existing.id,
@@ -316,21 +306,20 @@ def parse_site_excel(
         else:
             to_create.append(rec)
 
-    return {
-        "to_create": to_create,
-        "to_update": to_update,
-        "errors":    errors,
-        "dry_run":   dry_run,
-    }
+    return {"to_create": to_create, "to_update": to_update,
+            "errors": errors, "dry_run": dry_run}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cell-common helpers
+# Cell common
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _cell_common(row, geo: Optional[GeoCache] = None,
-                 errors_out: Optional[List] = None,
-                 row_num: int = 0) -> Dict[str, Any]:
+def _cell_common(
+    row,
+    geo: Optional[GeoCache] = None,
+    errors_out: Optional[List] = None,
+    row_num: int = 0,
+) -> Dict[str, Any]:
     raw_tinh   = _v(row, "Tỉnh", "Tinh", "tinh")
     raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
     raw_mien   = _v(row, "Miền", "Mien", "mien")
@@ -340,8 +329,7 @@ def _cell_common(row, geo: Optional[GeoCache] = None,
         if not tinh_official:
             if errors_out is not None:
                 errors_out.append(
-                    f"Row {row_num}: Province '{raw_tinh}' not found in DB – "
-                    f"stored as-is"
+                    f"Row {row_num}: Province '{raw_tinh}' not found in DB – stored as-is"
                 )
             tinh_official = raw_tinh
         mien = geo.mien_for(tinh_official) or raw_mien or ""
@@ -353,70 +341,70 @@ def _cell_common(row, geo: Optional[GeoCache] = None,
         mien               = raw_mien
         phuong_xa_official = raw_phuong
 
+    cell_name = _v(row, "Cell Name", "Cell name", "cell_name") or ""
+    label     = cell_name or f"row {row_num}"
+
+    # Validated fields
+    raw_lat  = _float(row, "Lat", "LAT", "lat")
+    raw_long = _float(row, "Long", "LONG", "long")
+    raw_azi  = _float(row, "Azimuth", "azimuth")
+
+    lat  = _validate_lat(raw_lat,  row_num, label, errors_out or [])
+    lon  = _validate_lon(raw_long, row_num, label, errors_out or [])
+    azi  = _validate_azimuth(raw_azi, row_num, label, errors_out or [])
+
     return {
-        "mien":      mien,
-        "tinh":      tinh_official,
-        "phuong_xa": phuong_xa_official,
-        "site_name": _v(row, "Site Name", "Site name", "site_name") or "",
-        "cell_name": _v(row, "Cell Name", "Cell name", "cell_name") or "",
-        "cell_vip":  _v(row, "Cell VIP",  "cell_vip"),
-        "moran":     _v(row, "MORAN", "Moran", "moran"),
-        "lat":       _float(row, "Lat", "LAT", "lat"),
-        "long":      _float(row, "Long", "LONG", "long"),
-        "vung_phu_song": _v(row, "Vùng phủ sóng", "Vung phu song",
-                             "vung_phu_song"),
-        "vendor":    _v(row, "Vendor", "vendor"),
-        "do_cao_anten": _float(row, "Độ cao anten", "Do cao anten",
-                                "do_cao_anten"),
-        "azimuth":   _float(row, "Azimuth", "azimuth"),
-        "m_tilt":    _float(row, "M-tilt",  "M-Tilt",  "m_tilt"),
-        "e_tilt":    _float(row, "E-Tilt",  "E-tilt",  "e_tilt"),
-        "total_tilt": _float(row, "Total Tilt", "Total tilt", "total_tilt"),
-        "loai_anten": _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
-        "baseband":  _v(row, "Baseband", "baseband"),
-        "rf":        _v(row, "RF", "rf"),
-        "cell_id":   _v(row, "Cell ID", "cell_id"),
-        "mimo":      _v(row, "MIMO", "mimo"),
+        "mien":          mien,
+        "tinh":          tinh_official,
+        "phuong_xa":     phuong_xa_official,
+        "site_name":     _v(row, "Site Name", "Site name", "site_name") or "",
+        "cell_name":     cell_name,
+        "cell_vip":      _v(row, "Cell VIP", "cell_vip"),
+        "moran":         _v(row, "MORAN", "Moran", "moran"),
+        "lat":           lat,
+        "long":          lon,
+        "vung_phu_song": _v(row, "Vùng phủ sóng", "Vung phu song", "vung_phu_song"),
+        "vendor":        _v(row, "Vendor", "vendor"),
+        "do_cao_anten":  _float(row, "Độ cao anten", "Do cao anten", "do_cao_anten"),
+        "azimuth":       azi,
+        "m_tilt":        _float(row, "M-tilt", "M-Tilt", "m_tilt"),
+        "e_tilt":        _float(row, "E-Tilt", "E-tilt", "e_tilt"),
+        "total_tilt":    _float(row, "Total Tilt", "Total tilt", "total_tilt"),
+        "loai_anten":    _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
+        "baseband":      _v(row, "Baseband", "baseband"),
+        "rf":            _v(row, "RF", "rf"),
+        "cell_id":       _v(row, "Cell ID", "cell_id"),
+        "mimo":          _v(row, "MIMO", "mimo"),
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cell import parsers  (dry-run + auto-create-site + fuzzy)
+# Generic cell parser
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _parse_cell_excel(
     file_bytes: bytes,
     Model,
-    extra_fields_fn,           # (row) -> dict of tech-specific fields
+    extra_fields_fn,
     db=None,
     dry_run: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Generic cell import that supports:
-    * dry_run     – preview without touching DB
-    * auto-create – creates missing Site records from cell file data
-    * fuzzy-map   – resolves province/ward to official DB names
-    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
 
-    to_create:      List[Dict] = []
-    to_update:      List[Dict] = []
-    sites_to_create: List[Dict] = []   # new sites that will be auto-created
-    errors:         List[str]  = []
-
-    # Track sites we will auto-create during this import (name → rec)
-    # so we don't schedule the same new site twice
+    to_create:       List[Dict] = []
+    to_update:       List[Dict] = []
+    sites_to_create: List[Dict] = []
+    errors:          List[str]  = []
     pending_new_sites: Dict[str, Dict] = {}
 
-    from app.models.site import Site  # lazy
+    from app.models.site import Site
 
     for i, row in df.iterrows():
-        row_num   = int(str(i)) + 2  # type: ignore[arg-type]
+        row_num    = int(str(i)) + 2
         row_errors: List[str] = []
 
-        common = _cell_common(row, geo=geo, errors_out=row_errors,
-                              row_num=row_num)
+        common    = _cell_common(row, geo=geo, errors_out=row_errors, row_num=row_num)
         errors.extend(row_errors)
 
         cell_name = common.get("cell_name", "")
@@ -432,19 +420,15 @@ def _parse_cell_excel(
         extra = extra_fields_fn(row)
         rec   = {**common, **extra}
 
-        # ── resolve site ─────────────────────────────────────────────────
         site_obj = None
         if db:
-            site_obj = db.query(Site).filter(
-                Site.site_name == site_name
-            ).first()
+            site_obj = db.query(Site).filter(Site.site_name == site_name).first()
 
         if site_obj:
             site_id = site_obj.id
         elif site_name in pending_new_sites:
-            site_id = None   # will be resolved after site creation
+            site_id = None
         else:
-            # Schedule auto-create of the site
             new_site_rec = {
                 "site_name": site_name,
                 "mien":      common.get("mien") or "",
@@ -457,9 +441,8 @@ def _parse_cell_excel(
             sites_to_create.append(new_site_rec)
             site_id = None
 
-        rec["site_id"] = site_id  # None for pending; resolved on commit
+        rec["site_id"] = site_id
 
-        # ── check existing cell ──────────────────────────────────────────
         existing_cell = None
         if db and site_obj:
             existing_cell = db.query(Model).filter(
@@ -476,22 +459,17 @@ def _parse_cell_excel(
         else:
             to_create.append(rec)
 
-    result: Dict[str, Any] = {
-        "to_create":      to_create,
-        "to_update":      to_update,
+    return {
+        "to_create":       to_create,
+        "to_update":       to_update,
         "sites_to_create": sites_to_create,
         "errors":          errors,
         "dry_run":         dry_run,
     }
-    return result
 
 
 def parse_site_excel_simple(file_bytes: bytes) -> List[Dict[str, Any]]:
-    """
-    Legacy list-based return kept for backward compatibility.
-    Used internally when db is not available.
-    """
-    result = parse_site_excel(file_bytes, db=None, dry_run=False)
+    result  = parse_site_excel(file_bytes, db=None, dry_run=False)
     records: List[Dict] = []
     for rec in result["to_create"]:
         records.append(rec)
@@ -500,32 +478,19 @@ def parse_site_excel_simple(file_bytes: bytes) -> List[Dict[str, Any]]:
     return records
 
 
-# ── Public parsers ────────────────────────────────────────────────────────────
-
-def parse_cell3g_excel(
-    file_bytes: bytes,
-    db=None,
-    dry_run: bool = False,
-) -> Dict[str, Any]:
+def parse_cell3g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_3g import Cell3G
-
     def extra(row):
         return {
             "chung_anten": _v(row, "Chung anten", "chung_anten"),
             "arfcn":       _v(row, "ARFCN", "arfcn"),
             "psc":         _v(row, "PSC",   "psc"),
         }
-
     return _parse_cell_excel(file_bytes, Cell3G, extra, db=db, dry_run=dry_run)
 
 
-def parse_cell4g_excel(
-    file_bytes: bytes,
-    db=None,
-    dry_run: bool = False,
-) -> Dict[str, Any]:
+def parse_cell4g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_4g import Cell4G
-
     def extra(row):
         return {
             "chung_anten":      _v(row, "Chung anten",     "chung_anten"),
@@ -533,22 +498,15 @@ def parse_cell4g_excel(
             "pci":              _v(row, "PCI",              "pci"),
             "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
         }
-
     return _parse_cell_excel(file_bytes, Cell4G, extra, db=db, dry_run=dry_run)
 
 
-def parse_cell5g_excel(
-    file_bytes: bytes,
-    db=None,
-    dry_run: bool = False,
-) -> Dict[str, Any]:
+def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_5g import Cell5G
-
     def extra(row):
         return {
             "nr_arfcn":         _v(row, "NR-ARFCN",        "nr_arfcn"),
             "pci":              _v(row, "PCI",              "pci"),
             "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
         }
-
     return _parse_cell_excel(file_bytes, Cell5G, extra, db=db, dry_run=dry_run)
