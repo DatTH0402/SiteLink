@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
-  Popconfirm, Tag, message, Row, Col, Alert,
+  Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   PlusOutlined, UploadOutlined, SearchOutlined,
-  EditOutlined, DeleteOutlined,
+  EditOutlined, DeleteOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { getSites, deleteSite, dryRunSitesExcel, importSitesExcel } from '@/api/sites'
+import { exportSites } from '@/api/export'
 import type { Site } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
 
@@ -17,13 +18,14 @@ const boolCell = (v: boolean) =>
   v ? <Tag color="green">x</Tag> : <Tag color="default">-</Tag>
 
 export default function SitesPage() {
-  const navigate    = useNavigate()
-  const [sites,     setSites]     = useState<Site[]>([])
-  const [loading,   setLoading]   = useState(false)
-  const [search,    setSearch]    = useState('')
-  const [mien,      setMien]      = useState<string | undefined>()
-  const [tinh,      setTinh]      = useState<string | undefined>()
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const navigate     = useNavigate()
+  const [sites,      setSites]      = useState<Site[]>([])
+  const [loading,    setLoading]    = useState(false)
+  const [exporting,  setExporting]  = useState(false)
+  const [search,     setSearch]     = useState('')
+  const [mien,       setMien]       = useState<string | undefined>()
+  const [tinh,       setTinh]       = useState<string | undefined>()
+  const [loadError,  setLoadError]  = useState<string | null>(null)
   const [dryRunOpen, setDryRunOpen] = useState(false)
 
   const tinhOptions = [
@@ -33,8 +35,12 @@ export default function SitesPage() {
   const load = () => {
     setLoading(true)
     setLoadError(null)
-    getSites({ search: search || undefined, mien: mien || undefined,
-               tinh: tinh || undefined, limit: 500 })
+    getSites({
+      search: search || undefined,
+      mien:   mien   || undefined,
+      tinh:   tinh   || undefined,
+      limit:  500,
+    })
       .then(setSites)
       .catch((err) => {
         const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
@@ -53,6 +59,22 @@ export default function SitesPage() {
     } catch (err: any) {
       const detail = err?.response?.data?.detail || 'Xoa that bai'
       message.error(detail)
+    }
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      await exportSites({
+        search: search || undefined,
+        mien:   mien   || undefined,
+        tinh:   tinh   || undefined,
+      })
+      message.success(`Xuat Excel thanh cong (${sites.length} sites)`)
+    } catch (e: any) {
+      message.error(e?.message || 'Xuat that bai')
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -78,7 +100,8 @@ export default function SitesPage() {
     { title: 'Tinh', dataIndex: 'tinh', fixed: 'left', width: 160,
       sorter: (a, b) => (a.tinh||'').localeCompare(b.tinh||'') },
     { title: 'Phuong xa',      dataIndex: 'phuong_xa',    width: 160 },
-    { title: 'Site name (cu)', dataIndex: 'site_name_cu', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Site name (cu)', dataIndex: 'site_name_cu', width: 200,
+      ellipsis: { showTitle: true } },
     { title: 'Site name', dataIndex: 'site_name', fixed: 'left', width: 220,
       sorter: (a, b) => (a.site_name||'').localeCompare(b.site_name||''),
       render: (v: string) => <strong>{v}</strong> },
@@ -95,7 +118,7 @@ export default function SitesPage() {
     { title: 'Node truyen dan only',
       dataIndex: 'node_truyen_dan_only', width: 160, render: boolCell },
     { title: 'Tram phu song TSCA',
-      dataIndex: 'tram_phu_song_tsca',   width: 160, render: boolCell },
+      dataIndex: 'tram_phu_song_tsca', width: 160, render: boolCell },
     { title: 'Phan loai tram', dataIndex: 'phan_loai_tram', width: 180 },
     { title: 'MORAN 3G', dataIndex: 'moran_3g', width: 120 },
     { title: 'MORAN 4G', dataIndex: 'moran_4g', width: 120 },
@@ -105,8 +128,10 @@ export default function SitesPage() {
       dataIndex: 'do_cao_dinh_cot_anten', width: 190 },
     { title: 'Do cao cot anten mat san (m)',
       dataIndex: 'do_cao_cot_anten', width: 210 },
-    { title: 'Dia chi', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Ghi chu', dataIndex: 'ghi_chu', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Dia chi', dataIndex: 'dia_chi', width: 200,
+      ellipsis: { showTitle: true } },
+    { title: 'Ghi chu', dataIndex: 'ghi_chu', width: 200,
+      ellipsis: { showTitle: true } },
   ]
 
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
@@ -114,8 +139,20 @@ export default function SitesPage() {
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>Quan ly Site</Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Quan ly Site
+        </Typography.Title>
         <Space>
+          <Tooltip title="Xuat du lieu hien tai ra Excel">
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exporting}
+              onClick={handleExport}
+              style={{ borderColor: '#52c41a', color: '#52c41a' }}
+            >
+              Xuat Excel ({sites.length})
+            </Button>
+          </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
             Import Excel
           </Button>
@@ -134,7 +171,8 @@ export default function SitesPage() {
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="260px">
           <Input prefix={<SearchOutlined />} placeholder="Tim site name..."
-                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+                 value={search} onChange={(e) => setSearch(e.target.value)}
+                 allowClear />
         </Col>
         <Col>
           <Select placeholder="Mien" allowClear style={{ width: 90 }}
@@ -147,13 +185,16 @@ export default function SitesPage() {
           <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
                   value={tinh} onChange={setTinh}
                   filterOption={(input, opt) =>
-                    String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
+                    String(opt?.children ?? '').toLowerCase()
+                      .includes(input.toLowerCase())}>
             {tinhOptions.map((t) =>
               <Select.Option key={t} value={t}>{t}</Select.Option>)}
           </Select>
         </Col>
         <Col>
-          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined) }}>
+          <Button onClick={() => {
+            setSearch(''); setMien(undefined); setTinh(undefined)
+          }}>
             Xoa loc
           </Button>
         </Col>
@@ -162,11 +203,20 @@ export default function SitesPage() {
         </Col>
       </Row>
 
-      <Table columns={columns} dataSource={sites} rowKey="id"
-             loading={loading} size="small"
-             scroll={{ x: scrollX, y: 600 }} bordered
-             pagination={{ pageSize: 50, showTotal: (t) => `${t} sites`,
-                           showSizeChanger: true }} />
+      <Table
+        columns={columns}
+        dataSource={sites}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        scroll={{ x: scrollX, y: 600 }}
+        bordered
+        pagination={{
+          pageSize: 50,
+          showTotal: (t) => `${t} sites`,
+          showSizeChanger: true,
+        }}
+      />
 
       <DryRunModal
         open={dryRunOpen}

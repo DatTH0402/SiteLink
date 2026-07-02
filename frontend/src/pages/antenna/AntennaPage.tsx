@@ -1,23 +1,25 @@
 import React, { useEffect, useState } from 'react'
 import {
   Typography, Button, Space, Table, Input, Popconfirm,
-  message, Row, Col, Modal, Form, InputNumber,
+  message, Row, Col, Modal, Form, InputNumber, Tooltip,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   PlusOutlined, SearchOutlined, UploadOutlined,
-  EditOutlined, DeleteOutlined,
+  EditOutlined, DeleteOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import {
   getAntennas, createAntenna, updateAntenna,
   deleteAntenna, dryRunAntennaExcel, importAntennaExcel,
 } from '@/api/antenna'
+import { exportAntennas } from '@/api/export'
 import type { AntennaFull } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
 
 export default function AntennaPage() {
   const [data,       setData]       = useState<AntennaFull[]>([])
   const [loading,    setLoading]    = useState(false)
+  const [exporting,  setExporting]  = useState(false)
   const [search,     setSearch]     = useState('')
   const [modalOpen,  setModalOpen]  = useState(false)
   const [editing,    setEditing]    = useState<AntennaFull | null>(null)
@@ -34,6 +36,16 @@ export default function AntennaPage() {
   }
 
   useEffect(() => { load() }, [search])
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      await exportAntennas({ search: search || undefined })
+      message.success(`Xuat Excel thanh cong (${data.length} antennas)`)
+    } catch (e: any) {
+      message.error(e?.message || 'Xuat that bai')
+    } finally { setExporting(false) }
+  }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
   const openEdit   = (r: AntennaFull) => {
@@ -95,8 +107,17 @@ export default function AntennaPage() {
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>Quan ly Antenna</Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          Quan ly Antenna
+        </Typography.Title>
         <Space>
+          <Tooltip title="Xuat du lieu hien tai ra Excel">
+            <Button icon={<DownloadOutlined />} loading={exporting}
+                    onClick={handleExport}
+                    style={{ borderColor: '#52c41a', color: '#52c41a' }}>
+              Xuat Excel ({data.length})
+            </Button>
+          </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
             Import Excel
           </Button>
@@ -119,12 +140,12 @@ export default function AntennaPage() {
         </Col>
       </Row>
 
-      <Table columns={columns} dataSource={data} rowKey="id" loading={loading} size="small"
-             scroll={{ x: scrollX, y: 600 }} bordered
+      <Table columns={columns} dataSource={data} rowKey="id" loading={loading}
+             size="small" scroll={{ x: scrollX, y: 600 }} bordered
              pagination={{ pageSize: 50, showTotal: (t) => `${t} antennas`,
                            showSizeChanger: true }} />
 
-      {/* ── Detail modal ── */}
+      {/* Detail modal */}
       <Modal title={selected?.name} open={detailOpen}
              onCancel={() => setDetailOpen(false)} footer={null} width={600}>
         {selected && (
@@ -154,7 +175,7 @@ export default function AntennaPage() {
         )}
       </Modal>
 
-      {/* ── Create / Edit modal ── */}
+      {/* Create/Edit modal */}
       <Modal title={editing ? 'Chinh sua Antenna' : 'Them Antenna moi'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
              width={700} okText="Luu" destroyOnClose>

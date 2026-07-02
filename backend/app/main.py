@@ -2,14 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db.session import engine, SessionLocal
-from app.db import base  # noqa – registers all models
+from app.db import base  # noqa
 from app.db.base import Base
 from app.api.routes import (
     auth, users, sites, cells_3g, cells_4g, cells_5g,
     dropdowns, report, audit,
 )
-from app.api.routes import antenna as antenna_router
+from app.api.routes import antenna  as antenna_router
 from app.api.routes import templates as templates_router
+from app.api.routes import export    as export_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -68,27 +69,23 @@ def _seed_initial_data():
 
 
 def _generate_templates():
-    """Generate Excel templates on startup if they don't exist."""
-    import os, sys
-    template_dir = os.path.join(
-        os.path.dirname(__file__), "..", "templates"
+    import os
+    template_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "templates")
     )
-    template_dir = os.path.abspath(template_dir)
     os.makedirs(template_dir, exist_ok=True)
-
     required = [
-        "template_site.xlsx",
-        "template_cell_3g.xlsx",
-        "template_cell_4g.xlsx",
-        "template_cell_5g.xlsx",
+        "template_site.xlsx", "template_cell_3g.xlsx",
+        "template_cell_4g.xlsx", "template_cell_5g.xlsx",
     ]
-    missing = [f for f in required
-               if not os.path.exists(os.path.join(template_dir, f))]
-
+    missing = [
+        f for f in required
+        if not os.path.exists(os.path.join(template_dir, f))
+    ]
     if missing:
         try:
-            script = os.path.join(
-                os.path.dirname(__file__), "..", "create_templates.py"
+            script = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "create_templates.py")
             )
             if os.path.exists(script):
                 import importlib.util
@@ -129,17 +126,18 @@ def on_startup():
 
 
 PREFIX = "/api/v1"
-app.include_router(auth.router,             prefix=f"{PREFIX}/auth",       tags=["Auth"])
-app.include_router(users.router,            prefix=f"{PREFIX}/users",      tags=["Users"])
-app.include_router(sites.router,            prefix=f"{PREFIX}/sites",      tags=["Sites"])
-app.include_router(cells_3g.router,         prefix=f"{PREFIX}/cells-3g",   tags=["Cells-3G"])
-app.include_router(cells_4g.router,         prefix=f"{PREFIX}/cells-4g",   tags=["Cells-4G"])
-app.include_router(cells_5g.router,         prefix=f"{PREFIX}/cells-5g",   tags=["Cells-5G"])
-app.include_router(dropdowns.router,        prefix=f"{PREFIX}/dropdowns",  tags=["Dropdowns"])
-app.include_router(report.router,           prefix=f"{PREFIX}/report",     tags=["Report"])
-app.include_router(audit.router,            prefix=f"{PREFIX}/audit",      tags=["Audit"])
-app.include_router(antenna_router.router,   prefix=f"{PREFIX}/antennas",   tags=["Antennas"])
-app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=["Templates"])
+app.include_router(auth.router,              prefix=f"{PREFIX}/auth",       tags=["Auth"])
+app.include_router(users.router,             prefix=f"{PREFIX}/users",      tags=["Users"])
+app.include_router(sites.router,             prefix=f"{PREFIX}/sites",      tags=["Sites"])
+app.include_router(cells_3g.router,          prefix=f"{PREFIX}/cells-3g",   tags=["Cells-3G"])
+app.include_router(cells_4g.router,          prefix=f"{PREFIX}/cells-4g",   tags=["Cells-4G"])
+app.include_router(cells_5g.router,          prefix=f"{PREFIX}/cells-5g",   tags=["Cells-5G"])
+app.include_router(dropdowns.router,         prefix=f"{PREFIX}/dropdowns",  tags=["Dropdowns"])
+app.include_router(report.router,            prefix=f"{PREFIX}/report",     tags=["Report"])
+app.include_router(audit.router,             prefix=f"{PREFIX}/audit",      tags=["Audit"])
+app.include_router(antenna_router.router,    prefix=f"{PREFIX}/antennas",   tags=["Antennas"])
+app.include_router(templates_router.router,  prefix=f"{PREFIX}/templates",  tags=["Templates"])
+app.include_router(export_router.router,     prefix=f"{PREFIX}/export",     tags=["Export"])
 
 
 @app.get("/health")
