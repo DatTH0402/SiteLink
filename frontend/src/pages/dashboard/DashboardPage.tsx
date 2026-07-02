@@ -120,7 +120,7 @@ export default function DashboardPage() {
   }, [])
 
   const stats = [
-    { title: 'Tong so Site', value: counts.sites, icon: <DatabaseOutlined />,  color: '#1890ff' },
+    { title: 'Tổng số Site', value: counts.sites, icon: <DatabaseOutlined />,  color: '#1890ff' },
     { title: 'Cell 3G',      value: counts.c3g,   icon: <PartitionOutlined />, color: '#52c41a' },
     { title: 'Cell 4G',      value: counts.c4g,   icon: <WifiOutlined />,      color: '#faad14' },
     { title: 'Cell 5G',      value: counts.c5g,   icon: <RiseOutlined />,      color: '#f5222d' },
@@ -159,7 +159,7 @@ export default function DashboardPage() {
             <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
               <Col xs={24}>
                 <ProvinceBarChart
-                  title="So luong Site theo Tinh / Thanh pho"
+                  title="Số lượng Site theo tỉnh / Thành phố"
                   data={siteByProv}
                   color="#1890ff"
                   valueKey="So Site"
@@ -169,7 +169,7 @@ export default function DashboardPage() {
             <Row gutter={[16, 16]}>
               <Col xs={24} lg={8}>
                 <ProvinceBarChart
-                  title="So luong Cell 3G theo Tinh"
+                  title="Số lượng Cell 3G theo tỉnh"
                   data={cell3gProv}
                   color="#52c41a"
                   valueKey="Cell 3G"
@@ -177,7 +177,7 @@ export default function DashboardPage() {
               </Col>
               <Col xs={24} lg={8}>
                 <ProvinceBarChart
-                  title="So luong Cell 4G theo Tinh"
+                  title="Số lượng Cell 4G theo tỉnh"
                   data={cell4gProv}
                   color="#faad14"
                   valueKey="Cell 4G"
@@ -185,7 +185,7 @@ export default function DashboardPage() {
               </Col>
               <Col xs={24} lg={8}>
                 <ProvinceBarChart
-                  title="So luong Cell 5G theo Tinh"
+                  title="Số lượng Cell 5G theo tỉnh"
                   data={cell5gProv}
                   color="#f5222d"
                   valueKey="Cell 5G"

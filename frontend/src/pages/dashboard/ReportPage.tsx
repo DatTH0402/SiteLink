@@ -42,10 +42,10 @@ export default function ReportPage() {
   const onSearch = (values: Record<string, string>) => fetchReport(values)
 
   const columns = [
-    { title: 'Mien',    dataIndex: 'mien',       width: 70  },
-    { title: 'Tinh',    dataIndex: 'tinh',        width: 180 },
+    { title: 'Miền',    dataIndex: 'mien',       width: 70  },
+    { title: 'Tỉnh',    dataIndex: 'tinh',        width: 180 },
     {
-      title: 'So Site', dataIndex: 'site_count',  width: 100,
+      title: 'Số Site', dataIndex: 'site_count',  width: 100,
       render: (v: number) => <strong>{v}</strong>,
     },
     { title: 'Site 2G', dataIndex: 'site_2g', width: 90,
@@ -63,13 +63,13 @@ export default function ReportPage() {
 
   return (
     <div>
-      <Typography.Title level={3}>Bao cao tong hop</Typography.Title>
+      <Typography.Title level={3}>Báo cáo tổng hợp</Typography.Title>
 
       <Form form={form} layout="vertical" onFinish={onSearch}>
         <Row gutter={16}>
           <Col span={4}>
-            <Form.Item name="mien" label="Mien">
-              <Select allowClear placeholder="Tat ca">
+            <Form.Item name="mien" label="Miền">
+              <Select allowClear placeholder="Tất cả">
                 {['MB', 'MT', 'MN'].map((m) => (
                   <Select.Option key={m} value={m}>{m}</Select.Option>
                 ))}
@@ -77,9 +77,9 @@ export default function ReportPage() {
             </Form.Item>
           </Col>
           <Col span={5}>
-            <Form.Item name="tinh" label="Tinh / Thanh pho">
+            <Form.Item name="tinh" label="Tỉnh / Thành phố">
               <Select
-                allowClear showSearch placeholder="Tat ca"
+                allowClear showSearch placeholder="Tất cả"
                 filterOption={(input, opt) =>
                   String(opt?.children ?? '').toLowerCase()
                     .includes(input.toLowerCase())
@@ -95,7 +95,7 @@ export default function ReportPage() {
           </Col>
           <Col span={4}>
             <Form.Item name="vendor" label="Vendor">
-              <Select allowClear placeholder="Tat ca">
+              <Select allowClear placeholder="Tất cả">
                 {vendors.map((v) => (
                   <Select.Option key={v} value={v}>{v}</Select.Option>
                 ))}
@@ -104,7 +104,7 @@ export default function ReportPage() {
           </Col>
           <Col span={4}>
             <Form.Item name="mimo" label="MIMO">
-              <Select allowClear placeholder="Tat ca">
+              <Select allowClear placeholder="Tất cả">
                 {['2x2', '4x4', '8x8'].map((m) => (
                   <Select.Option key={m} value={m}>{m}</Select.Option>
                 ))}
@@ -112,8 +112,8 @@ export default function ReportPage() {
             </Form.Item>
           </Col>
           <Col span={4}>
-            <Form.Item name="vung_phu_song" label="Vung phu song">
-              <Select allowClear placeholder="Tat ca">
+            <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
+              <Select allowClear placeholder="Tất cả">
                 <Select.Option value="Indoor">Indoor</Select.Option>
                 <Select.Option value="Outdoor">Outdoor</Select.Option>
               </Select>
@@ -123,13 +123,13 @@ export default function ReportPage() {
             <Space>
               <Button type="primary" icon={<SearchOutlined />}
                       htmlType="submit" loading={loading}>
-                Tim kiem
+                Tìm kiếm
               </Button>
               <Button icon={<ClearOutlined />} onClick={() => {
                 form.resetFields()
                 fetchReport({})
               }}>
-                Xoa loc
+                Xóa lọc
               </Button>
             </Space>
           </Col>
@@ -149,7 +149,7 @@ export default function ReportPage() {
                 window.open(`/api/v1/report/export-csv?${params.toString()}`, '_blank')
               }}
             >
-              Xuat CSV
+              Xuất CSV
             </Button>
           </Col>
         </Row>
@@ -160,14 +160,14 @@ export default function ReportPage() {
       {totals && (
         <Row gutter={8} style={{ marginBottom: 16 }}>
           {[
-            { label: 'Tong Site',    val: totals.site_count, color: '#597ef7' },
-            { label: 'Tong Site 2G', val: totals.site_2g,    color: '#95de64' },
-            { label: 'Tong Site 3G', val: totals.site_3g,    color: '#69b1ff' },
-            { label: 'Tong Site 4G', val: totals.site_4g,    color: '#ffd666' },
-            { label: 'Tong Site 5G', val: totals.site_5g,    color: '#ff7875' },
-            { label: 'Tong Cell 3G', val: totals.cell_3g,    color: '#69b1ff' },
-            { label: 'Tong Cell 4G', val: totals.cell_4g,    color: '#ffd666' },
-            { label: 'Tong Cell 5G', val: totals.cell_5g,    color: '#ff7875' },
+            { label: 'Tổng Site',    val: totals.site_count, color: '#597ef7' },
+            { label: 'Tổng Site 2G', val: totals.site_2g,    color: '#95de64' },
+            { label: 'Tổng Site 3G', val: totals.site_3g,    color: '#69b1ff' },
+            { label: 'Tổng Site 4G', val: totals.site_4g,    color: '#ffd666' },
+            { label: 'Tổng Site 5G', val: totals.site_5g,    color: '#ff7875' },
+            { label: 'Tổng Cell 3G', val: totals.cell_3g,    color: '#69b1ff' },
+            { label: 'Tổng Cell 4G', val: totals.cell_4g,    color: '#ffd666' },
+            { label: 'Tổng Cell 5G', val: totals.cell_5g,    color: '#ff7875' },
           ].map((t) => (
             <Col key={t.label}>
               <Tag color={t.color} style={{ fontSize: 13, padding: '4px 10px' }}>

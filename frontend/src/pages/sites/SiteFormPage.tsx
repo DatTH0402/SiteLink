@@ -55,18 +55,18 @@ export default function SiteFormPage() {
     try {
       if (isEdit) {
         await updateSite(Number(id), values)
-        message.success('Cap nhat site thanh cong')
+        message.success('Cập nhật site thành công')
       } else {
         await createSite(values)
-        message.success('Tao site moi thanh cong')
+        message.success('Tạo site mới thành công')
       }
       navigate('/sites')
     } catch (e: any) {
-      const detail = e.response?.data?.detail || 'Co loi xay ra'
+      const detail = e.response?.data?.detail || 'Có lỗi xảy ra'
       if (typeof detail === 'string' && detail.includes('already exists')) {
-        message.warning(`Site da ton tai: ${values.site_name}`)
+        message.warning(`Site đã tồn tại: ${values.site_name}`)
       } else {
-        message.error(typeof detail === 'string' ? detail : 'Co loi xay ra')
+        message.error(typeof detail === 'string' ? detail : 'Có lỗi xảy ra')
       }
     } finally {
       setLoading(false)
@@ -77,18 +77,18 @@ export default function SiteFormPage() {
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/sites')}>
-          Quay lai
+          Quay lại
         </Button>
         <Typography.Title level={3} style={{ margin: 0 }}>
-          {isEdit ? 'Chinh sua Site' : 'Them Site moi'}
+          {isEdit ? 'Chỉnh sửa Site' : 'Thêm Site mới'}
         </Typography.Title>
       </Space>
 
       <Form form={form} layout="vertical" onFinish={onFinish}>
-        <Card title="Thong tin chung" style={{ marginBottom: 16 }}>
+        <Card title="Thông tin chung" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={4}>
-              <Form.Item name="mien" label="Mien">
+              <Form.Item name="mien" label="Miền">
                 <Select placeholder="Chon mien" allowClear>
                   {['MB', 'MT', 'MN'].map((m) => (
                     <Select.Option key={m} value={m}>{m}</Select.Option>
@@ -97,11 +97,11 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item name="tinh" label="Tinh / Thanh pho"
-                         rules={[{ required: true, message: 'Vui long chon tinh' }]}>
+              <Form.Item name="tinh" label="Tỉnh / Thành phố"
+                         rules={[{ required: true, message: 'Vui lòng chọn tỉnh' }]}>
                 <Select
                   showSearch allowClear
-                  placeholder="Chon tinh / thanh pho..."
+                  placeholder="Chọn tỉnh / thành phố..."
                   optionFilterProp="children"
                   onChange={handleTinhChange}
                   filterOption={(input, option) =>
@@ -118,10 +118,10 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item name="phuong_xa" label="Phuong / Xa">
+              <Form.Item name="phuong_xa" label="Phường / Xã">
                 <Select
                   showSearch allowClear
-                  placeholder={selectedTinh ? 'Chon phuong / xa...' : 'Chon tinh truoc'}
+                  placeholder={selectedTinh ? 'Chọn phường / xã...' : 'Chọn tỉnh trước'}
                   disabled={!selectedTinh}
                   loading={loadingPhuongXa}
                   optionFilterProp="children"
@@ -139,13 +139,13 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="site_name_cu" label="Site name (cu)">
+              <Form.Item name="site_name_cu" label="Site name (cũ)">
                 <Input />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="site_name" label="Site name"
-                         rules={[{ required: true, message: 'Vui long nhap site name' }]}>
+                         rules={[{ required: true, message: 'Vui lòng nhập site name' }]}>
                 <Input />
               </Form.Item>
             </Col>
@@ -158,14 +158,14 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={4}>
-              <Form.Item name="ma_ptm" label="Ma PTM">
+              <Form.Item name="ma_ptm" label="Mã PTM">
                 <Input />
               </Form.Item>
             </Col>
           </Row>
         </Card>
 
-        <Card title="Toa do va Col anten" style={{ marginBottom: 16 }}>
+        <Card title="Toạ độ và Cột anten" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={6}>
               <Form.Item
@@ -175,7 +175,7 @@ export default function SiteFormPage() {
                   validator: (_: unknown, value: number) => {
                     if (value === undefined || value === null) return Promise.resolve()
                     if (value < 8.33 || value > 23.39)
-                      return Promise.reject('Latitude phai trong khoang 8.33 – 23.39 (Viet Nam)')
+                      return Promise.reject('Latitude phải trong khoảng 8.33 – 23.39 (Việt Nam)')
                     return Promise.resolve()
                   }
                 }]}
@@ -192,7 +192,7 @@ export default function SiteFormPage() {
                   validator: (_: unknown, value: number) => {
                     if (value === undefined || value === null) return Promise.resolve()
                     if (value < 102.14 || value > 109.47)
-                      return Promise.reject('Longitude phai trong khoang 102.14 – 109.47 (Viet Nam)')
+                      return Promise.reject('Longitude phải trong khoảng 102.14 – 109.47 (Việt Nam)')
                     return Promise.resolve()
                   }
                 }]}
@@ -202,22 +202,22 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_dinh_cot_anten" label="Do cao dinh cot anten (m)">
+              <Form.Item name="do_cao_dinh_cot_anten" label="Độ cao đỉnh cột anten (m)">
                 <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_cot_anten" label="Do cao cot anten mat san (m)">
+              <Form.Item name="do_cao_cot_anten" label="Độ cao cột anten mặt đất (m)">
                 <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
           </Row>
         </Card>
 
-        <Card title="Loai tram va Cong nghe" style={{ marginBottom: 16 }}>
+        <Card title="Loại trạm và Công nghệ" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item name="phan_loai_tram" label="Phan loai tram">
+              <Form.Item name="phan_loai_tram" label="Phân loại trạm">
                 <Select allowClear>
                   {phanLoaiOpts.map((o) => (
                     <Select.Option key={o} value={o}>{o}</Select.Option>
@@ -226,14 +226,14 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             {([
-              ['tram_2g',            'Tram 2G'],
-              ['tram_3g',            'Tram 3G'],
-              ['tram_4g',            'Tram 4G'],
-              ['tram_5g',            'Tram 5G'],
+              ['tram_2g',            'Trạm 2G'],
+              ['tram_3g',            'Trạm 3G'],
+              ['tram_4g',            'Trạm 4G'],
+              ['tram_5g',            'Trạm 5G'],
               ['repeater',           'Repeater'],
               ['booster',            'Booster'],
-              ['node_truyen_dan_only','Node truyen dan only'],
-              ['tram_phu_song_tsca', 'Tram phu song TSCA'],
+              ['node_truyen_dan_only','Node truyền dẫn only'],
+              ['tram_phu_song_tsca', 'Trạm phủ sóng TSCA'],
             ] as [string, string][]).map(([name, label]) => (
               <Col span={4} key={name}>
                 <Form.Item name={name} label={label} valuePropName="checked">
@@ -260,15 +260,15 @@ export default function SiteFormPage() {
           </Row>
         </Card>
 
-        <Card title="Thong tin khac" style={{ marginBottom: 16 }}>
+        <Card title="Thông tin khác" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="dia_chi" label="Dia chi">
+              <Form.Item name="dia_chi" label="Địa chỉ">
                 <Input.TextArea rows={2} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="ghi_chu" label="Ghi chu">
+              <Form.Item name="ghi_chu" label="Ghi chú">
                 <Input.TextArea rows={2} />
               </Form.Item>
             </Col>
@@ -277,9 +277,9 @@ export default function SiteFormPage() {
 
         <Space>
           <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={loading}>
-            {isEdit ? 'Cap nhat' : 'Tao moi'}
+            {isEdit ? 'Cập nhật' : 'Tạo mới'}
           </Button>
-          <Button onClick={() => navigate('/sites')}>Huy</Button>
+          <Button onClick={() => navigate('/sites')}>Hủy</Button>
         </Space>
       </Form>
     </div>

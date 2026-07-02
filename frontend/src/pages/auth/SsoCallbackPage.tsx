@@ -47,8 +47,8 @@ export default function SsoCallbackPage() {
     }
 
     if (!code) {
-      setError('Khong nhan duoc ma xac thuc tu SSO')
-      setDetail('URL khong chua tham so "code"')
+      setError('Không nhận được mã xác thực từ SSO')
+      setDetail('URL không chứa tham số "code"')
       setStatus('error')
       return
     }
@@ -58,7 +58,7 @@ export default function SsoCallbackPage() {
     sessionStorage.removeItem('sso_state')
 
     if (savedState && state && savedState !== state) {
-      setError('State khong hop le (CSRF protection)')
+      setError('State không hợp lệ (CSRF protection)')
       setDetail(`Expected: ${savedState}, Got: ${state}`)
       setStatus('error')
       return
@@ -78,7 +78,7 @@ export default function SsoCallbackPage() {
       })
       .catch((e: any) => {
         const msg = e?.response?.data?.detail || e?.message || 'SSO callback that bai'
-        setError('Dang nhap SSO that bai')
+        setError('Đăng nhập SSO thất bại')
         setDetail(msg)
         setStatus('error')
       })
@@ -97,7 +97,7 @@ export default function SsoCallbackPage() {
       }}>
         <Spin size="large" />
         <Typography.Text style={{ color: '#fff' }}>
-          Dang xu ly dang nhap SSO...
+          Đang xử lý đăng nhập SSO...
         </Typography.Text>
         <Typography.Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>
           {buildCallbackUrl()}
@@ -118,7 +118,7 @@ export default function SsoCallbackPage() {
         background: 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)',
       }}>
         <Typography.Text style={{ color: '#52c41a', fontSize: 18 }}>
-          ✓ Dang nhap thanh cong! Dang chuyen trang...
+          ✓ Đăng nhập thành công! Đang chuyển trang...
         </Typography.Text>
       </div>
     )
@@ -160,7 +160,7 @@ export default function SsoCallbackPage() {
             type="primary"
             onClick={() => navigate('/login', { replace: true })}
           >
-            Quay lai trang dang nhap
+            Quay lại trang đăng nhập
           </Button>
         </div>
       </div>

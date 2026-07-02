@@ -58,9 +58,9 @@ export default function Cells4GPage() {
         search: search || undefined, mien: mien || undefined,
         tinh: tinh || undefined, vendor: vendor || undefined,
       })
-      message.success(`Xuat Excel thanh cong (${data.length} cells)`)
+      message.success(`Xuất Excel thành công (${data.length} cells)`)
     } catch (e: any) {
-      message.error(e?.message || 'Xuat that bai')
+      message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
 
@@ -83,34 +83,34 @@ export default function Cells4GPage() {
     try {
       if (editing) {
         await cells4gApi.update(editing.id, values)
-        message.success('Cap nhat thanh cong')
+        message.success('Cập nhật thành công')
       } else {
         await cells4gApi.create(values)
-        message.success('Tao cell thanh cong')
+        message.success('Tạo cell thành công')
       }
       setModalOpen(false); load()
-    } catch (e: any) { message.error(e.response?.data?.detail || 'Loi') }
+    } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
 
   const handleDelete = async (id: number) => {
-    await cells4gApi.remove(id); message.success('Da xoa'); load()
+    await cells4gApi.remove(id); message.success('Đã xóa'); load()
   }
 
   const columns: ColumnsType<Cell4G> = [
     {
-      title: 'Hanh dong', key: 'action', fixed: 'left', width: 80,
+      title: 'Hành động', key: 'action', fixed: 'left', width: 80,
       render: (_: unknown, r: Cell4G) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
-          <Popconfirm title="Xoa cell nay?" onConfirm={() => handleDelete(r.id)}>
+          <Popconfirm title="Xóa cell này?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
     },
-    { title: 'Mien',      dataIndex: 'mien',      fixed: 'left', width: 70  },
-    { title: 'Tinh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
-    { title: 'Phuong xa', dataIndex: 'phuong_xa',               width: 160 },
+    { title: 'Miền',      dataIndex: 'mien',      fixed: 'left', width: 70  },
+    { title: 'Tỉnh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
+    { title: 'Phường/Xã', dataIndex: 'phuong_xa',               width: 160 },
     { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
@@ -120,14 +120,14 @@ export default function Cells4GPage() {
     { title: 'MORAN',            dataIndex: 'moran',            width: 120 },
     { title: 'Lat',              dataIndex: 'lat',              width: 110 },
     { title: 'Long',             dataIndex: 'long',             width: 110 },
-    { title: 'Vung phu song',    dataIndex: 'vung_phu_song',    width: 120 },
+    { title: 'Vùng phủ sóng',    dataIndex: 'vung_phu_song',    width: 120 },
     { title: 'Vendor',           dataIndex: 'vendor',           width: 100 },
-    { title: 'Do cao anten',     dataIndex: 'do_cao_anten',     width: 120 },
+    { title: 'Độ cao anten',     dataIndex: 'do_cao_anten',     width: 120 },
     { title: 'Azimuth',          dataIndex: 'azimuth',          width: 90  },
     { title: 'M-tilt',           dataIndex: 'm_tilt',           width: 80  },
     { title: 'E-Tilt',           dataIndex: 'e_tilt',           width: 80  },
     { title: 'Total Tilt',       dataIndex: 'total_tilt',       width: 100 },
-    { title: 'Loai Anten',       dataIndex: 'loai_anten',       width: 200 },
+    { title: 'Loại Anten',       dataIndex: 'loai_anten',       width: 200 },
     { title: 'Chung anten',      dataIndex: 'chung_anten',      width: 120 },
     { title: 'Baseband',         dataIndex: 'baseband',         width: 120 },
     { title: 'RF',               dataIndex: 'rf',               width: 100 },
@@ -145,36 +145,36 @@ export default function Cells4GPage() {
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Cell 4G</Typography.Title>
         <Space>
-          <Tooltip title="Xuat du lieu hien tai ra Excel">
+          <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting}
                     onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuat Excel ({data.length})
+              Xuất Excel ({data.length})
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
             Import Excel
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Them moi
+            Thêm mới
           </Button>
         </Space>
       </Row>
 
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="260px">
-          <Input prefix={<SearchOutlined />} placeholder="Tim cell / site name..."
+          <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
                  value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
         </Col>
         <Col>
-          <Select placeholder="Mien" allowClear style={{ width: 90 }}
+          <Select placeholder="Miền" allowClear style={{ width: 90 }}
                   value={mien} onChange={setMien}>
             {['MB','MT','MN'].map((m) =>
               <Select.Option key={m} value={m}>{m}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="180px">
-          <Select placeholder="Tinh" allowClear showSearch style={{ width: '100%' }}
+          <Select placeholder="Tỉnh" allowClear showSearch style={{ width: '100%' }}
                   value={tinh} onChange={setTinh}
                   filterOption={(i, o) =>
                     String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
@@ -194,7 +194,7 @@ export default function Cells4GPage() {
             setSearch(''); setMien(undefined)
             setTinh(undefined); setVendor(undefined)
           }}>
-            Xoa loc
+            Xóa lọc
           </Button>
         </Col>
       </Row>
@@ -204,15 +204,15 @@ export default function Cells4GPage() {
              pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`,
                            showSizeChanger: true }} />
 
-      <Modal title={editing ? 'Chinh sua Cell 4G' : 'Them Cell 4G moi'}
+      <Modal title={editing ? 'Chỉnh sửa Cell 4G' : 'Thêm Cell 4G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={800} okText="Luu" destroyOnClose>
+             width={800} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
                 <Select showSearch optionFilterProp="children" allowClear
-                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        placeholder="Chọn site..." onChange={handleSiteSelect}
                         filterOption={(i, o) =>
                           String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
                   {sites.map((s) =>
@@ -221,7 +221,7 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+              <Form.Item name="site_name" label="Site Name (tự động điền)">
                 <Input readOnly style={{ background: '#f5f5f5' }} />
               </Form.Item>
             </Col>
@@ -261,7 +261,7 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="vung_phu_song" label="Vung phu song">
+              <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
                 <Select allowClear>
                   <Select.Option value="Indoor">Indoor</Select.Option>
                   <Select.Option value="Outdoor">Outdoor</Select.Option>
@@ -303,8 +303,8 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={24}>
-              <Form.Item name="loai_anten" label="Loai Anten">
-                <Select showSearch allowClear placeholder="Chon loai anten..."
+              <Form.Item name="loai_anten" label="Loại Anten">
+                <Select showSearch allowClear placeholder="Chọn loại anten..."
                         onChange={handleAntennaSelect}
                         filterOption={(i, o) =>
                           String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
@@ -351,7 +351,7 @@ export default function Cells4GPage() {
       <DryRunModal
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
-        title="Import Cell 4G tu Excel"
+        title="Import Cell 4G từ Excel"
         templateKey="cell-4g"
         dryRunFn={cells4gApi.dryRunExcel}
         importFn={cells4gApi.importExcel}

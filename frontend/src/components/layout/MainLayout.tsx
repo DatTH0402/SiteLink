@@ -31,26 +31,26 @@ export default function MainLayout() {
 
   const menuItems = [
     { key: '/',        icon: <DashboardOutlined />, label: 'Dashboard' },
-    { key: '/report',  icon: <BarChartOutlined />,  label: 'Bao cao tong hop' },
-    { key: '/sites',   icon: <DatabaseOutlined />,  label: 'Quan ly Site' },
+    { key: '/report',  icon: <BarChartOutlined />,  label: 'Báo cáo tổng hợp' },
+    { key: '/sites',   icon: <DatabaseOutlined />,  label: 'Quản lý Site' },
     {
       key: 'cells',
       icon: <TableOutlined />,
-      label: 'Quan ly Cell',
+      label: 'Quản lý Cell',
       children: [
         { key: '/cells/3g', label: 'Cell 3G' },
         { key: '/cells/4g', label: 'Cell 4G' },
         { key: '/cells/5g', label: 'Cell 5G' },
       ],
     },
-    { key: '/antenna', icon: <WifiOutlined />, label: 'Quan ly Antenna' },
+    { key: '/antenna', icon: <WifiOutlined />, label: 'Thư viện Antenna' },
     ...(user?.role === 'admin'
       ? [{
           key: 'admin',
           icon: <AuditOutlined />,
-          label: 'Quan tri',
+          label: 'Quản trị',
           children: [
-            { key: '/admin/users', label: 'Nguoi dung' },
+            { key: '/admin/users', label: 'Người dùng' },
             { key: '/admin/audit', label: 'Audit Log' },
           ],
         }]
@@ -61,7 +61,7 @@ export default function MainLayout() {
     items: [{
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: 'Dang xuat',
+      label: 'Đăng xuất',
       onClick: handleLogout,
     }],
   }
@@ -104,7 +104,7 @@ export default function MainLayout() {
               : <MenuFoldOutlined   onClick={() => setCollapsed(true)}
                                     style={{ fontSize: 18, cursor: 'pointer' }} />}
             <Typography.Text strong style={{ fontSize: 16 }}>
-              He thong quan ly du lieu toi uu
+              Hệ thống quản lý dữ liệu tối ưu
             </Typography.Text>
           </Space>
           <Dropdown menu={userMenu}>

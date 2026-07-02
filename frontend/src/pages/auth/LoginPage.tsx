@@ -37,7 +37,7 @@ export default function LoginPage() {
       setAuth(me, access_token)
       navigate('/')
     } catch {
-      setError('Ten dang nhap hoac mat khau khong dung')
+      setError('Tên đăng nhập hoặc mật khẩu không đúng')
     } finally {
       setLoading(false)
     }
@@ -53,7 +53,7 @@ export default function LoginPage() {
       // Redirect browser to Keycloak login
       window.location.href = url
     } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Khong the ket noi SSO')
+      setError(e?.response?.data?.detail || 'Không thể kết nối SSO')
       setSsoLoading(false)
     }
   }
@@ -75,7 +75,7 @@ export default function LoginPage() {
           <div style={{ fontSize: 48 }}>📡</div>
           <Typography.Title level={2} style={{ margin: 0 }}>SiteLink</Typography.Title>
           <Typography.Text type="secondary">
-            He thong quan ly du lieu toi uu
+            Hệ thống quản lý dữ liệu tối ưu
           </Typography.Text>
         </div>
 
@@ -108,7 +108,7 @@ export default function LoginPage() {
                 color: '#fff',
               }}
             >
-              Dang nhap bang SSO MobiFone
+              Đăng nhập bằng SSO MobiFone
             </Button>
             <Typography.Text
               type="secondary"
@@ -119,10 +119,10 @@ export default function LoginPage() {
                 marginBottom: 8,
               }}
             >
-              Su dung tai khoan MobiFone (@mobifone.vn)
+              Sử dụng tài khoản MobiFone (@mobifone.vn)
             </Typography.Text>
             <Divider plain style={{ fontSize: 12, color: '#999' }}>
-              hoac dang nhap bang tai khoan local
+              Hoặc đăng nhập bằng tài khoản local
             </Divider>
           </>
         )}
@@ -131,21 +131,21 @@ export default function LoginPage() {
         <Form layout="vertical" onFinish={onFinish} autoComplete="off">
           <Form.Item
             name="username"
-            rules={[{ required: true, message: 'Nhap ten dang nhap' }]}
+            rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập' }]}
           >
             <Input
               prefix={<UserOutlined />}
-              placeholder="Ten dang nhap"
+              placeholder="Tên đăng nhập"
               size="large"
             />
           </Form.Item>
           <Form.Item
             name="password"
-            rules={[{ required: true, message: 'Nhap mat khau' }]}
+            rules={[{ required: true, message: 'Nhập mật khẩu' }]}
           >
             <Input.Password
               prefix={<LockOutlined />}
-              placeholder="Mat khau"
+              placeholder="Mật khẩu"
               size="large"
             />
           </Form.Item>
@@ -157,7 +157,7 @@ export default function LoginPage() {
               size="large"
               loading={loading}
             >
-              Dang nhap Local
+              Đăng nhập Local
             </Button>
           </Form.Item>
         </Form>
@@ -166,7 +166,7 @@ export default function LoginPage() {
           type="secondary"
           style={{ display: 'block', textAlign: 'center', fontSize: 11 }}
         >
-          Truy cap tu: {window.location.host}
+          Truy cập từ: {window.location.host}
         </Typography.Text>
       </Card>
     </div>

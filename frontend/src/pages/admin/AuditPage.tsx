@@ -50,7 +50,7 @@ export default function AuditPage() {
 
   const columns = [
     {
-      title: 'Thoi gian',
+      title: 'Thời gian',
       dataIndex: 'timestamp',
       width: 160,
       sorter: (a: AuditLog, b: AuditLog) =>
@@ -66,7 +66,7 @@ export default function AuditPage() {
       render: (v: string) => <strong>{v}</strong>,
     },
     {
-      title: 'Ho ten',
+      title: 'Họ tên',
       dataIndex: 'full_name',
       width: 160,
       ellipsis: { showTitle: true },
@@ -95,7 +95,7 @@ export default function AuditPage() {
       ),
     },
     {
-      title: 'Bang',
+      title: 'Bảng',
       dataIndex: 'table_name',
       width: 120,
       render: (v: string) => <code style={{ fontSize: 11 }}>{v}</code>,
@@ -106,7 +106,7 @@ export default function AuditPage() {
       width: 90,
     },
     {
-      title: 'Du lieu cu',
+      title: 'Dữ liệu cũ',
       dataIndex: 'old_value',
       ellipsis: true,
       render: (v: string) =>
@@ -125,7 +125,7 @@ export default function AuditPage() {
         ) : '-',
     },
     {
-      title: 'Du lieu moi',
+      title: 'Dữ liệu mới',
       dataIndex: 'new_value',
       ellipsis: true,
       render: (v: string) =>
@@ -156,14 +156,14 @@ export default function AuditPage() {
           Audit Log
         </Typography.Title>
         <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-          Lam moi
+          Làm mới
         </Button>
       </Row>
 
       <Space style={{ marginBottom: 12 }} wrap>
         <Input
           prefix={<SearchOutlined />}
-          placeholder="Tim username / ho ten / email..."
+          placeholder="Tìm username / họ tên / email..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           allowClear
@@ -181,7 +181,7 @@ export default function AuditPage() {
           ))}
         </Select>
         <Select
-          placeholder="Bang du lieu"
+          placeholder="Bảng dữ liệu"
           allowClear
           style={{ width: 160 }}
           onChange={setTable}
@@ -199,7 +199,7 @@ export default function AuditPage() {
               setSearch('')
             }}
           >
-            Xoa loc
+            Xóa lọc
           </Button>
         )}
       </Space>
@@ -208,7 +208,7 @@ export default function AuditPage() {
         type="secondary"
         style={{ display: 'block', marginBottom: 8, fontSize: 12 }}
       >
-        Hien thi {logs.length} ban ghi
+        Hiển thị {logs.length} bản ghi
       </Typography.Text>
 
       <Table

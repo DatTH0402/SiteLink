@@ -30,35 +30,35 @@ export default function UsersPage() {
     try {
       if (editing) {
         await api.put(`/api/v1/users/${editing.id}`, values)
-        message.success('Cap nhat thanh cong')
+        message.success('Cập nhật thành công')
       } else {
         await api.post('/api/v1/users/', values)
-        message.success('Tao user thanh cong')
+        message.success('Tạo user thành công')
       }
       setModalOpen(false)
       load()
     } catch (e: any) {
-      message.error(e.response?.data?.detail || 'Loi')
+      message.error(e.response?.data?.detail || 'Lỗi')
     }
   }
 
   const handleDelete = async (id: number) => {
     await api.delete(`/api/v1/users/${id}`)
-    message.success('Da xoa')
+    message.success('Đã xóa user')
     load()
   }
 
   const columns = [
     { title: 'Username', dataIndex: 'username' },
     { title: 'Email',    dataIndex: 'email'    },
-    { title: 'Ho ten',   dataIndex: 'full_name' },
+    { title: 'Họ tên',   dataIndex: 'full_name' },
     {
       title: 'Role', dataIndex: 'role',
       render: (v: string) =>
         <Tag color={v === 'admin' ? 'red' : 'blue'}>{v.toUpperCase()}</Tag>,
     },
     {
-      title: 'Trang thai', dataIndex: 'is_active',
+      title: 'Trang thái', dataIndex: 'is_active',
       render: (v: boolean) =>
         <Tag color={v ? 'green' : 'default'}>{v ? 'Active' : 'Inactive'}</Tag>,
     },
@@ -67,11 +67,11 @@ export default function UsersPage() {
       render: (v: string) => <Tag>{v}</Tag>,
     },
     {
-      title: 'Hanh dong',
+      title: 'Hành động',
       render: (_: unknown, r: User) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
-          <Popconfirm title="Xoa user?" onConfirm={() => handleDelete(r.id)}>
+          <Popconfirm title="Xóa user?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -82,16 +82,16 @@ export default function UsersPage() {
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>Quan ly nguoi dung</Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>Quản lý người dùng</Typography.Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          Them user
+          Thêm user
         </Button>
       </Row>
 
       <Table columns={columns} dataSource={users} rowKey="id"
              loading={loading} size="small" pagination={{ pageSize: 20 }} />
 
-      <Modal title={editing ? 'Chinh sua user' : 'Them user moi'}
+      <Modal title={editing ? 'Chỉnh sửa user' : 'Thêm user mới'}
              open={modalOpen} onOk={handleSave}
              onCancel={() => setModalOpen(false)}>
         <Form form={form} layout="vertical">
@@ -103,11 +103,11 @@ export default function UsersPage() {
                      rules={[{ required: !editing, type: 'email' }]}>
             <Input />
           </Form.Item>
-          <Form.Item name="full_name" label="Ho ten">
+          <Form.Item name="full_name" label="Họ tên">
             <Input />
           </Form.Item>
           {!editing && (
-            <Form.Item name="password" label="Mat khau"
+            <Form.Item name="password" label="Mật khẩu"
                        rules={[{ required: true }]}>
               <Input.Password />
             </Form.Item>
@@ -118,7 +118,7 @@ export default function UsersPage() {
               <Select.Option value="admin">Admin</Select.Option>
             </Select>
           </Form.Item>
-          <Form.Item name="is_active" label="Trang thai">
+          <Form.Item name="is_active" label="Trạng thái">
             <Select>
               <Select.Option value={true}>Active</Select.Option>
               <Select.Option value={false}>Inactive</Select.Option>

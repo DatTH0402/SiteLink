@@ -41,9 +41,9 @@ export default function AntennaPage() {
     setExporting(true)
     try {
       await exportAntennas({ search: search || undefined })
-      message.success(`Xuat Excel thanh cong (${data.length} antennas)`)
+      message.success(`Xuất Excel thành công (${data.length} antennas)`)
     } catch (e: any) {
-      message.error(e?.message || 'Xuat that bai')
+      message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
 
@@ -58,29 +58,29 @@ export default function AntennaPage() {
     try {
       if (editing) {
         await updateAntenna(editing.id, values)
-        message.success('Cap nhat thanh cong')
+        message.success('Cập nhật thành công')
       } else {
         await createAntenna(values)
-        message.success('Tao antenna thanh cong')
+        message.success('Tạo antenna thành công')
       }
       setModalOpen(false); load()
     } catch (e: any) {
-      message.error(e.response?.data?.detail || 'Loi')
+      message.error(e.response?.data?.detail || 'Lỗi')
     }
   }
 
   const handleDelete = async (id: number) => {
-    await deleteAntenna(id); message.success('Da xoa'); load()
+    await deleteAntenna(id); message.success('Đã xóa'); load()
   }
 
   const columns: ColumnsType<AntennaFull> = [
     {
-      title: 'Hanh dong', key: 'action', fixed: 'left', width: 100,
+      title: 'Hành động', key: 'action', fixed: 'left', width: 100,
       render: (_: unknown, r: AntennaFull) => (
         <Space>
-          <Button size="small" onClick={() => openDetail(r)}>Chi tiet</Button>
+          <Button size="small" onClick={() => openDetail(r)}>Chi tiết</Button>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
-          <Popconfirm title="Xoa antenna nay?" onConfirm={() => handleDelete(r.id)}>
+          <Popconfirm title="Xóa antenna này?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -108,35 +108,35 @@ export default function AntennaPage() {
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Quan ly Antenna
+          Thư viện Antenna
         </Typography.Title>
         <Space>
-          <Tooltip title="Xuat du lieu hien tai ra Excel">
+          <Tooltip title="Xuất dữ liệu hện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting}
                     onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuat Excel ({data.length})
+              Xuất Excel ({data.length})
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
             Import Excel
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Them moi
+            Thêm mới
           </Button>
         </Space>
       </Row>
 
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="320px">
-          <Input prefix={<SearchOutlined />} placeholder="Tim ten antenna..."
+          <Input prefix={<SearchOutlined />} placeholder="Tìm tên antenna..."
                  value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
         </Col>
         <Col>
-          <Button onClick={() => setSearch('')}>Xoa loc</Button>
+          <Button onClick={() => setSearch('')}>Xóa lọc</Button>
         </Col>
         <Col>
-          <Button onClick={load} loading={loading}>Lam moi</Button>
+          <Button onClick={load} loading={loading}>Làm mới</Button>
         </Col>
       </Row>
 
@@ -176,14 +176,14 @@ export default function AntennaPage() {
       </Modal>
 
       {/* Create/Edit modal */}
-      <Modal title={editing ? 'Chinh sua Antenna' : 'Them Antenna moi'}
+      <Modal title={editing ? 'Chỉnh sửa Antenna' : 'Thêm Antenna mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={700} okText="Luu" destroyOnClose>
+             width={700} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={24}>
-              <Form.Item name="name" label="Name (dinh danh duy nhat)"
-                         rules={[{ required: true, message: 'Vui long nhap ten antenna' }]}>
+              <Form.Item name="name" label="Name (định danh duy nhất)"
+                         rules={[{ required: true, message: 'Vui lòng nhập tên antenna' }]}>
                 <Input disabled={Boolean(editing)} />
               </Form.Item>
             </Col>
@@ -248,7 +248,7 @@ export default function AntennaPage() {
               </Form.Item>
             </Col>
             <Col span={24}>
-              <Form.Item name="ghi_chu" label="Ghi chu">
+              <Form.Item name="ghi_chu" label="Ghi chú">
                 <Input.TextArea rows={2} />
               </Form.Item>
             </Col>
@@ -259,7 +259,7 @@ export default function AntennaPage() {
       <DryRunModal
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
-        title="Import Antenna tu Excel"
+        title="Import Antenna từ Excel"
         templateKey={undefined}
         dryRunFn={dryRunAntennaExcel}
         importFn={importAntennaExcel}
