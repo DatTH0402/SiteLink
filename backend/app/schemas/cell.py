@@ -40,6 +40,9 @@ class Cell3GCreate(Cell3GBase):
 
 
 class Cell3GUpdate(BaseModel):
+    # Allow renaming cell_name and site_name via form
+    cell_name:      Optional[str]   = None
+    site_name:      Optional[str]   = None
     site_name_old:  Optional[str]   = None
     cell_name_old:  Optional[str]   = None
     cell_vip:       Optional[str]   = None
@@ -81,6 +84,8 @@ class Cell4GCreate(Cell4GBase):
 
 
 class Cell4GUpdate(BaseModel):
+    cell_name:        Optional[str]   = None
+    site_name:        Optional[str]   = None
     site_name_old:    Optional[str]   = None
     cell_name_old:    Optional[str]   = None
     cell_vip:         Optional[str]   = None
@@ -122,6 +127,8 @@ class Cell5GCreate(Cell5GBase):
 
 
 class Cell5GUpdate(BaseModel):
+    cell_name:        Optional[str]   = None
+    site_name:        Optional[str]   = None
     site_name_old:    Optional[str]   = None
     cell_name_old:    Optional[str]   = None
     cell_vip:         Optional[str]   = None

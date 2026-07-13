@@ -4,7 +4,7 @@ import {
   DashboardOutlined, DatabaseOutlined, TableOutlined,
   BarChartOutlined, UserOutlined, AuditOutlined,
   LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  WifiOutlined,
+  WifiOutlined, HistoryOutlined,
 } from '@ant-design/icons'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
@@ -19,11 +19,8 @@ export default function MainLayout() {
   const { user, logout, idToken } = useAuthStore()
 
   const handleLogout = async () => {
-    // Call SSO logout if we have id_token
     if (idToken) {
-      try {
-        await ssoLogout(idToken)
-      } catch { /* ignore */ }
+      try { await ssoLogout(idToken) } catch { /* ignore */ }
     }
     logout()
     navigate('/login')
@@ -43,7 +40,8 @@ export default function MainLayout() {
         { key: '/cells/5g', label: 'Cell 5G' },
       ],
     },
-    { key: '/antenna', icon: <WifiOutlined />, label: 'Thư viện Antenna' },
+    { key: '/antenna',  icon: <WifiOutlined />,    label: 'Thư viện Antenna' },
+    { key: '/revision', icon: <HistoryOutlined />, label: 'Lịch sử thay đổi' },
     ...(user?.role === 'admin'
       ? [{
           key: 'admin',
@@ -115,8 +113,7 @@ export default function MainLayout() {
               <span>
                 {user?.full_name || user?.username}
                 {user?.auth_provider === 'sso' && (
-                  <span style={{ fontSize: 10, color: '#f5a623',
-                                 marginLeft: 4 }}>[SSO]</span>
+                  <span style={{ fontSize: 10, color: '#f5a623', marginLeft: 4 }}>[SSO]</span>
                 )}
               </span>
             </Space>

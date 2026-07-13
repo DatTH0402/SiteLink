@@ -13,6 +13,7 @@ from app.api.routes import (
 from app.api.routes import antenna   as antenna_router
 from app.api.routes import templates as templates_router
 from app.api.routes import export    as export_router
+from app.api.routes import revision  as revision_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -105,7 +106,7 @@ def _generate_templates():
 
 app = FastAPI(
     title="SiteLink API",
-    version="1.1.0",
+    version="1.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -118,7 +119,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve uploaded files (antenna specs, etc.) as static
 app.mount(
     "/uploads",
     StaticFiles(directory=UPLOAD_DIR),
@@ -145,6 +145,7 @@ app.include_router(audit.router,            prefix=f"{PREFIX}/audit",      tags=
 app.include_router(antenna_router.router,   prefix=f"{PREFIX}/antennas",   tags=["Antennas"])
 app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=["Templates"])
 app.include_router(export_router.router,    prefix=f"{PREFIX}/export",     tags=["Export"])
+app.include_router(revision_router.router,  prefix=f"{PREFIX}/revisions",  tags=["Revisions"])
 
 
 @app.get("/health")

@@ -12,6 +12,7 @@ from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
 from app.services.import_excel import parse_site_excel
+from app.services.revision import record_site_revision, _site_snapshot
 
 router = APIRouter()
 
@@ -36,10 +37,6 @@ async def dry_run_sites_excel(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """
-    Preview what would happen if this file were imported.
-    Returns counts + first few names in each bucket.  Nothing is written.
-    """
     content = await file.read()
     try:
         result = parse_site_excel(content, db=db, dry_run=True)
@@ -75,7 +72,7 @@ async def import_sites_excel(
 
     to_create = result["to_create"]
     to_update = result["to_update"]
-    errors    = list(result["errors"])   # copy – we may add runtime errors
+    errors    = list(result["errors"])
     created, updated = 0, 0
 
     # ── Create new sites ──────────────────────────────────────────────────
@@ -83,9 +80,16 @@ async def import_sites_excel(
         try:
             site = Site(**rec, created_by=current_user.id)
             db.add(site)
+            db.flush()   # get site.id before revision
+            record_site_revision(
+                db, site,
+                old_snapshot=None,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="excel",
+            )
             db.commit()
-            log_action(db, current_user, "CREATE", "sites", site.id,
-                       new_value=rec)
+            log_action(db, current_user, "CREATE", "sites", site.id, new_value=rec)
             created += 1
         except Exception as e:
             db.rollback()
@@ -94,23 +98,35 @@ async def import_sites_excel(
     # ── Update existing sites ─────────────────────────────────────────────
     for upd in to_update:
         try:
-            existing = db.query(Site).filter(
-                Site.id == upd["existing_id"]
-            ).first()
+            existing = db.query(Site).filter(Site.id == upd["existing_id"]).first()
             if not existing:
                 errors.append(f"Site '{upd['anchor']}' disappeared during import")
                 continue
-            old = {c.name: getattr(existing, c.name)
-                   for c in existing.__table__.columns}
-            changes = upd["changes"]
+            old_snap = _site_snapshot(existing)
+            old_name = existing.site_name
+            changes  = upd["changes"]
+
+            # Detect name change: if changes contain a new site_name different from current
+            new_site_name = changes.get("site_name")
+            site_name_old_ref = None
+            if new_site_name and new_site_name != old_name:
+                site_name_old_ref = old_name
+
             for k, v in changes.items():
-                if k == "site_name":
-                    continue          # anchor – never overwrite
                 if v is not None:
                     setattr(existing, k, v)
+            db.flush()
+            record_site_revision(
+                db, existing,
+                old_snapshot=old_snap,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="excel",
+                site_name_old_ref=site_name_old_ref,
+            )
             db.commit()
             log_action(db, current_user, "UPDATE", "sites",
-                       existing.id, old_value=old, new_value=changes)
+                       existing.id, old_value=old_snap, new_value=changes)
             updated += 1
         except Exception as e:
             db.rollback()
@@ -133,18 +149,12 @@ def list_sites(
     _=Depends(get_current_user),
 ):
     q = db.query(Site)
-    if search:
-        q = q.filter(Site.site_name.ilike(f"%{search}%"))
-    if mien:
-        q = q.filter(Site.mien == mien)
-    if tinh:
-        q = q.filter(Site.tinh == tinh)
-    if tram_3g is not None:
-        q = q.filter(Site.tram_3g == tram_3g)
-    if tram_4g is not None:
-        q = q.filter(Site.tram_4g == tram_4g)
-    if tram_5g is not None:
-        q = q.filter(Site.tram_5g == tram_5g)
+    if search: q = q.filter(Site.site_name.ilike(f"%{search}%"))
+    if mien:   q = q.filter(Site.mien == mien)
+    if tinh:   q = q.filter(Site.tinh == tinh)
+    if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
+    if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
+    if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
     return q.offset(skip).limit(limit).all()
 
 
@@ -154,16 +164,20 @@ def create_site(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    existing = db.query(Site).filter(
-        Site.site_name == payload.site_name
-    ).first()
+    existing = db.query(Site).filter(Site.site_name == payload.site_name).first()
     if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Site '{payload.site_name}' already exists",
-        )
+        raise HTTPException(status_code=400,
+                            detail=f"Site '{payload.site_name}' already exists")
     site = Site(**payload.model_dump(), created_by=current_user.id)
     db.add(site)
+    db.flush()
+    record_site_revision(
+        db, site,
+        old_snapshot=None,
+        changed_by_id=current_user.id,
+        changed_by_name=current_user.full_name or current_user.username,
+        change_source="form",
+    )
     db.commit()
     db.refresh(site)
     log_action(db, current_user, "CREATE", "sites", site.id,
@@ -174,11 +188,7 @@ def create_site(
 # ── Dynamic routes LAST ───────────────────────────────────────────────────────
 
 @router.get("/{site_id}", response_model=SiteRead)
-def get_site(
-    site_id: int,
-    db: Session = Depends(get_db),
-    _=Depends(get_current_user),
-):
+def get_site(site_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
     return _site_or_404(db, site_id)
 
 
@@ -190,13 +200,30 @@ def update_site(
     current_user: User = Depends(get_current_user),
 ):
     site = _site_or_404(db, site_id)
-    old  = {c.name: getattr(site, c.name) for c in site.__table__.columns}
-    for k, v in payload.model_dump(exclude_unset=True).items():
+    old_snap  = _site_snapshot(site)
+    old_name  = site.site_name
+    data      = payload.model_dump(exclude_unset=True)
+
+    new_site_name = data.get("site_name")
+    site_name_old_ref = None
+    if new_site_name and new_site_name != old_name:
+        site_name_old_ref = old_name
+
+    for k, v in data.items():
         setattr(site, k, v)
+    db.flush()
+    record_site_revision(
+        db, site,
+        old_snapshot=old_snap,
+        changed_by_id=current_user.id,
+        changed_by_name=current_user.full_name or current_user.username,
+        change_source="form",
+        site_name_old_ref=site_name_old_ref,
+    )
     db.commit()
     db.refresh(site)
     log_action(db, current_user, "UPDATE", "sites", site.id,
-               old_value=old, new_value=payload.model_dump(exclude_unset=True))
+               old_value=old_snap, new_value=data)
     return site
 
 
@@ -207,22 +234,15 @@ def delete_site(
     current_user: User = Depends(get_current_user),
 ):
     site = _site_or_404(db, site_id)
-
-    # ── Restriction: refuse if cells exist ───────────────────────────────
     cell_count = (
         db.query(Cell3G).filter(Cell3G.site_id == site_id).count()
         + db.query(Cell4G).filter(Cell4G.site_id == site_id).count()
         + db.query(Cell5G).filter(Cell5G.site_id == site_id).count()
     )
     if cell_count > 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Cannot delete. This site contains {cell_count} cell(s). "
-                f"Please delete the cells first or move them to another site."
-            ),
-        )
-
+        raise HTTPException(status_code=400,
+            detail=f"Cannot delete. This site contains {cell_count} cell(s). "
+                   f"Please delete the cells first.")
     db.delete(site)
     db.commit()
     log_action(db, current_user, "DELETE", "sites", site_id)

@@ -9,4 +9,5 @@ class Base(DeclarativeBase):
 from app.models import (  # noqa
     user, site, cell_3g, cell_4g, cell_5g,
     dropdown, audit_log, antenna,
+    site_revision, cell_revision,
 )

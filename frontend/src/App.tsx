@@ -17,6 +17,7 @@ import Cells5GPage     from '@/pages/cells/Cells5GPage'
 import AntennaPage     from '@/pages/antenna/AntennaPage'
 import UsersPage       from '@/pages/admin/UsersPage'
 import AuditPage       from '@/pages/admin/AuditPage'
+import RevisionPage    from '@/pages/revision/RevisionPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -44,7 +45,6 @@ export default function App() {
       <Toaster position="top-right" />
       <Routes>
         <Route path="/login"        element={<LoginPage />} />
-        {/* SSO callback – must be outside PrivateRoute */}
         <Route path="/sso/callback" element={<SsoCallbackPage />} />
         <Route
           path="/"
@@ -63,6 +63,7 @@ export default function App() {
           <Route path="cells/4g"     element={<Cells4GPage />} />
           <Route path="cells/5g"     element={<Cells5GPage />} />
           <Route path="antenna"      element={<AntennaPage />} />
+          <Route path="revision"     element={<RevisionPage />} />
           <Route path="admin/users"
                  element={<AdminRoute><UsersPage /></AdminRoute>} />
           <Route path="admin/audit"

@@ -2,6 +2,17 @@
 import_excel.py
 ==============
 Handles Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
+
+Name-change logic for cells (Excel import):
+  If a row has:
+    - cell_name_old == <an existing cell's current cell_name>
+    - cell_name     == <a new value>
+  Then it is treated as a NAME CHANGE update on that existing cell:
+    - existing.cell_name_old = existing.cell_name  (archive old name)
+    - existing.cell_name     = new cell_name        (apply new name)
+  This is captured in revision history.
+
+Same logic applies to site_name_old / site_name for sites.
 """
 
 from __future__ import annotations
@@ -48,7 +59,7 @@ class GeoCache:
         for r in rows:
             if r.ten_tinh:
                 k = _normalize(r.ten_tinh)
-                self.tinh_map[k]       = r.ten_tinh
+                self.tinh_map[k]           = r.ten_tinh
                 self.tinh_mien[r.ten_tinh] = r.mien or ""
             if r.ten_tinh and r.ten_phuong_xa:
                 self.xa_map[(_normalize(r.ten_tinh), _normalize(r.ten_phuong_xa))] = r.ten_phuong_xa
@@ -136,6 +147,12 @@ def _validate_azimuth(azi, row_num, label, errors):
 # ── Site import ───────────────────────────────────────────────────────────────
 
 def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[str, Any]:
+    """
+    Name-change detection for sites:
+    If a row has site_name_old == <existing site_name> AND site_name == <new value>,
+    it's treated as a rename: the existing site's site_name gets updated to the new value,
+    and site_name_old_ref is set to the old name for revision tracking.
+    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
     to_create: List[Dict] = []
@@ -186,11 +203,14 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         lat  = _validate_lat(raw_lat,  row_num, site_name, errors)
         long = _validate_lon(raw_long, row_num, site_name, errors)
 
+        # Read site_name_old from file (used for name-change detection)
+        file_site_name_old = _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)", "Site Name Old", "site_name_old")
+
         rec: Dict[str, Any] = {
             "mien":         mien,
             "tinh":         tinh_official,
             "phuong_xa":    phuong_xa_official,
-            "site_name_cu": _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)"),
+            "site_name_cu": file_site_name_old,
             "site_name":    site_name,
             "site_vip":     _v(row, "Site VIP", "site_vip"),
             "lat":          lat,
@@ -218,8 +238,31 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
 
         if db:
             existing = db.query(Site).filter(Site.site_name == site_name).first()
+
+            # Name-change detection:
+            # If site_name not found but site_name_old IS an existing site → rename
+            if not existing and file_site_name_old:
+                existing_by_old = db.query(Site).filter(
+                    Site.site_name == file_site_name_old
+                ).first()
+                if existing_by_old:
+                    # This is a rename: old name → new name
+                    rec["_site_name_old_ref"] = file_site_name_old  # for revision tracking
+                    to_update.append({
+                        "existing_id": existing_by_old.id,
+                        "anchor":      file_site_name_old,
+                        "changes":     rec,
+                        "is_rename":   True,
+                    })
+                    continue
+
             if existing:
-                to_update.append({"existing_id": existing.id, "anchor": site_name, "changes": rec})
+                to_update.append({
+                    "existing_id": existing.id,
+                    "anchor":      site_name,
+                    "changes":     rec,
+                    "is_rename":   False,
+                })
             else:
                 to_create.append(rec)
         else:
@@ -266,9 +309,11 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
         "tinh":          tinh_official,
         "phuong_xa":     phuong_xa_official,
         "site_name":     _v(row, "Site Name", "Site name", "site_name") or "",
-        "site_name_old": _v(row, "Site Name Old", "Site name old", "site_name_old", "Site Name (cũ)", "Site name (cu)"),
+        "site_name_old": _v(row, "Site Name Old", "Site name old", "site_name_old",
+                             "Site Name (cũ)", "Site name (cu)"),
         "cell_name":     cell_name,
-        "cell_name_old": _v(row, "Cell Name Old", "Cell name old", "cell_name_old", "Cell Name (cũ)"),
+        "cell_name_old": _v(row, "Cell Name Old", "Cell name old", "cell_name_old",
+                             "Cell Name (cũ)"),
         "cell_vip":      _v(row, "Cell VIP", "cell_vip"),
         "moran":         _v(row, "MORAN", "Moran", "moran"),
         "lat":           lat,
@@ -289,6 +334,16 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
 
 
 def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False) -> Dict[str, Any]:
+    """
+    Generic cell import with name-change detection.
+
+    Name-change resolution:
+    1. Primary lookup: find existing cell by (site_id, cell_name) – normal update
+    2. Name-change lookup: if cell_name_old is set and matches an existing cell's
+       current cell_name → treat as rename:
+         - Update existing cell: cell_name_old = old cell_name, cell_name = new value
+         - Also handles site_name_old for site renames
+    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
 
@@ -307,8 +362,10 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
         common    = _cell_common(row, geo=geo, errors_out=row_errors, row_num=row_num)
         errors.extend(row_errors)
 
-        cell_name = common.get("cell_name", "")
-        site_name = common.get("site_name", "")
+        cell_name     = common.get("cell_name", "")
+        cell_name_old = common.get("cell_name_old", "")
+        site_name     = common.get("site_name", "")
+        site_name_old = common.get("site_name_old", "")
 
         if not cell_name:
             errors.append(f"Row {row_num}: 'Cell Name' is empty – skipped")
@@ -320,9 +377,17 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
         extra = extra_fields_fn(row)
         rec   = {**common, **extra}
 
+        # ── Resolve site ─────────────────────────────────────────────────
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
+
+            # If site not found by current name, try site_name_old (site rename)
+            if not site_obj and site_name_old:
+                site_obj = db.query(Site).filter(Site.site_name == site_name_old).first()
+                if site_obj:
+                    # site was renamed: update site_name in rec for this cell too
+                    pass  # site_name stays as the new name in rec
 
         if site_obj:
             site_id = site_obj.id
@@ -330,12 +395,9 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
             site_id = None
         else:
             new_site_rec = {
-                "site_name": site_name,
-                "mien":      common.get("mien") or "",
-                "tinh":      common.get("tinh") or "",
-                "phuong_xa": common.get("phuong_xa"),
-                "lat":       common.get("lat"),
-                "long":      common.get("long"),
+                "site_name": site_name, "mien": common.get("mien") or "",
+                "tinh": common.get("tinh") or "", "phuong_xa": common.get("phuong_xa"),
+                "lat": common.get("lat"), "long": common.get("long"),
             }
             pending_new_sites[site_name] = new_site_rec
             sites_to_create.append(new_site_rec)
@@ -343,18 +405,40 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
 
         rec["site_id"] = site_id
 
+        # ── Resolve cell: normal lookup ──────────────────────────────────
         existing_cell = None
         if db and site_obj:
+            # 1. Look up by current cell_name
             existing_cell = db.query(Model).filter(
                 Model.site_id == site_obj.id,
                 Model.cell_name == cell_name,
             ).first()
+
+            # 2. Name-change: cell_name_old matches existing cell's current name
+            if not existing_cell and cell_name_old:
+                existing_by_old = db.query(Model).filter(
+                    Model.site_id == site_obj.id,
+                    Model.cell_name == cell_name_old,
+                ).first()
+                if existing_by_old:
+                    # This is a cell rename:
+                    # - new cell_name = what's in the "Cell Name" column
+                    # - cell_name_old = what was previously cell_name
+                    # rec already has cell_name = new name, cell_name_old = old name
+                    to_update.append({
+                        "existing_id": existing_by_old.id,
+                        "anchor":      f"{site_name}/{cell_name_old}",
+                        "changes":     rec,
+                        "is_rename":   True,
+                    })
+                    continue
 
         if existing_cell:
             to_update.append({
                 "existing_id": existing_cell.id,
                 "anchor":      f"{site_name}/{cell_name}",
                 "changes":     rec,
+                "is_rename":   False,
             })
         else:
             to_create.append(rec)

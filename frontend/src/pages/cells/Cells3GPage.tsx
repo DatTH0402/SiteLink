@@ -69,10 +69,6 @@ export default function Cells3GPage() {
     if (site) form.setFieldValue('site_name', site.site_name)
   }
 
-  const handleAntennaSelect = (antennaName: string) => {
-    form.setFieldsValue({ loai_anten: antennaName })
-  }
-
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
   const openEdit   = (r: Cell3G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
 
@@ -109,18 +105,12 @@ export default function Cells3GPage() {
     { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70  },
     { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
     { title: 'Phường/Xã',     dataIndex: 'phuong_xa',                    width: 160 },
-    // ── name columns in required order ──────────────────────────────────────
-    { title: 'Site Name Old', dataIndex: 'site_name_old', fixed: 'left', width: 200,
-      ellipsis: { showTitle: true } },
-    { title: 'Cell Name Old', dataIndex: 'cell_name_old', fixed: 'left', width: 200,
-      ellipsis: { showTitle: true } },
+    { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
-      ellipsis: { showTitle: true },
-      render: (v: string) => <strong>{v}</strong> },
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
-      ellipsis: { showTitle: true },
-      render: (v: string) => <strong>{v}</strong> },
-    // ────────────────────────────────────────────────────────────────────────
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN',         dataIndex: 'moran',         width: 120 },
@@ -133,8 +123,7 @@ export default function Cells3GPage() {
     { title: 'M-tilt',        dataIndex: 'm_tilt',        width: 80  },
     { title: 'E-Tilt',        dataIndex: 'e_tilt',        width: 80  },
     { title: 'Total Tilt',    dataIndex: 'total_tilt',    width: 100 },
-    { title: 'Loại Anten',    dataIndex: 'loai_anten',    width: 250,
-      ellipsis: { showTitle: true } },
+    { title: 'Loại Anten',    dataIndex: 'loai_anten',    width: 250, ellipsis: { showTitle: true } },
     { title: 'Chung anten',   dataIndex: 'chung_anten',   width: 120 },
     { title: 'Baseband',      dataIndex: 'baseband',      width: 120 },
     { title: 'RF',            dataIndex: 'rf',            width: 100 },
@@ -157,12 +146,8 @@ export default function Cells3GPage() {
               Xuất Excel ({data.length})
             </Button>
           </Tooltip>
-          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
-            Import Excel
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Thêm mới
-          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Thêm mới</Button>
         </Space>
       </Row>
 
@@ -172,82 +157,70 @@ export default function Cells3GPage() {
                  value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
         </Col>
         <Col>
-          <Select placeholder="Miền" allowClear style={{ width: 90 }}
-                  value={mien} onChange={setMien}>
-            {['MB','MT','MN'].map((m) =>
-              <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          <Select placeholder="Miền" allowClear style={{ width: 90 }} value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="180px">
           <Select placeholder="Tỉnh" allowClear showSearch style={{ width: '100%' }}
                   value={tinh} onChange={setTinh}
-                  filterOption={(i, o) =>
-                    String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-            {tinhOptions.map((t) =>
-              <Select.Option key={t} value={t}>{t}</Select.Option>)}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="160px">
           <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
                   value={vendor} onChange={setVendor}>
-            {vendorOptions.map((v) =>
-              <Select.Option key={v} value={v}>{v}</Select.Option>)}
+            {vendorOptions.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
         </Col>
         <Col>
-          <Button onClick={() => {
-            setSearch(''); setMien(undefined)
-            setTinh(undefined); setVendor(undefined)
-          }}>Xóa lọc</Button>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
+            Xóa lọc
+          </Button>
         </Col>
       </Row>
 
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading}
              size="small" scroll={{ x: scrollX, y: 600 }} bordered
-             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`,
-                           showSizeChanger: true }} />
+             pagination={{ pageSize: 50, showTotal: t => `${t} cells`, showSizeChanger: true }} />
 
       <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
              width={860} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
-            {/* ── Site ── */}
             <Col span={12}>
-              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
                 <Select showSearch optionFilterProp="children" allowClear
                         placeholder="Chọn site..." onChange={handleSiteSelect}
-                        filterOption={(i, o) =>
-                          String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {sites.map((s) =>
-                    <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                        disabled={Boolean(editing)}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
-            {/* site_name_old first, then site_name (auto) */}
             <Col span={12}>
               <Form.Item name="site_name_old" label="Site Name Old">
                 <Input placeholder="Tên site cũ (nếu có)" />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="site_name" label="Site Name (tự động điền)">
-                <Input readOnly style={{ background: '#f5f5f5' }} />
+              <Form.Item name="site_name" label="Site Name">
+                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
               </Form.Item>
             </Col>
-            {/* cell_name_old first, then cell_name */}
             <Col span={12}>
               <Form.Item name="cell_name_old" label="Cell Name Old">
                 <Input placeholder="Tên cell cũ (nếu có)" />
               </Form.Item>
             </Col>
+            {/* Cell Name is editable in both create and edit mode */}
             <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name"
-                         rules={[{ required: true }]}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
             </Col>
-            {/* rest of fields */}
             <Col span={6}>
               <Form.Item name="cell_vip" label="Cell VIP">
                 <Select allowClear>
@@ -265,17 +238,13 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
-                         rules={[{ validator: latValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5}
-                             placeholder="8.33 – 23.39" />
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)" rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="8.33 – 23.39" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="long" label="Long (102.14 – 109.47)"
-                         rules={[{ validator: lonValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5}
-                             placeholder="102.14 – 109.47" />
+              <Form.Item name="long" label="Long (102.14 – 109.47)" rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -289,7 +258,7 @@ export default function Cells3GPage() {
             <Col span={8}>
               <Form.Item name="vendor" label="Vendor">
                 <Select allowClear>
-                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v =>
                     <Select.Option key={v} value={v}>{v}</Select.Option>)}
                 </Select>
               </Form.Item>
@@ -300,8 +269,7 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
-                         rules={[{ validator: azimuthValidator }]}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)" rules={[{ validator: azimuthValidator }]}>
                 <InputNumber style={{ width: '100%' }} min={0} max={359} />
               </Form.Item>
             </Col>
@@ -323,18 +291,13 @@ export default function Cells3GPage() {
             <Col span={24}>
               <Form.Item name="loai_anten" label="Loại Anten">
                 <Select showSearch allowClear placeholder="Chọn loại anten..."
-                        onChange={handleAntennaSelect}
-                        filterOption={(i, o) =>
-                          String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {antennaList.map((a) =>
-                    <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="chung_anten" label="Chung anten">
-                <Input />
-              </Form.Item>
+              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
@@ -354,8 +317,7 @@ export default function Cells3GPage() {
             <Col span={8}>
               <Form.Item name="mimo" label="MIMO">
                 <Select allowClear>
-                  {['2x2','4x4','8x8'].map((m) =>
-                    <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
@@ -363,15 +325,10 @@ export default function Cells3GPage() {
         </Form>
       </Modal>
 
-      <DryRunModal
-        open={dryRunOpen}
-        onClose={() => setDryRunOpen(false)}
-        title="Import Cell 3G từ Excel"
-        templateKey="cell-3g"
-        dryRunFn={cells3gApi.dryRunExcel}
-        importFn={cells3gApi.importExcel}
-        onSuccess={load}
-      />
+      <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
+        title="Import Cell 3G từ Excel" templateKey="cell-3g"
+        dryRunFn={cells3gApi.dryRunExcel} importFn={cells3gApi.importExcel}
+        onSuccess={load} />
     </div>
   )
 }

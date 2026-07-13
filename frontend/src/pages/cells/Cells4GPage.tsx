@@ -32,8 +32,8 @@ export default function Cells4GPage() {
   const [dryRunOpen,  setDryRunOpen]  = useState(false)
   const [form] = Form.useForm()
 
-  const tinhOptions   = [...new Set(data.map((c) => c.tinh).filter(Boolean))].sort() as string[]
-  const vendorOptions = [...new Set(data.map((c) => c.vendor).filter(Boolean))].sort() as string[]
+  const tinhOptions   = [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
+  const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
 
   const load = async () => {
     setLoading(true)
@@ -54,23 +54,16 @@ export default function Cells4GPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells4G({
-        search: search || undefined, mien: mien || undefined,
-        tinh: tinh || undefined, vendor: vendor || undefined,
-      })
+      await exportCells4G({ search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined })
       message.success(`Xuất Excel thành công (${data.length} cells)`)
-    } catch (e: any) {
-      message.error(e?.message || 'Xuất thất bại')
+    } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
 
   const handleSiteSelect = (siteId: number) => {
-    const site = sites.find((s) => s.id === siteId)
+    const site = sites.find(s => s.id === siteId)
     if (site) form.setFieldValue('site_name', site.site_name)
-  }
-
-  const handleAntennaSelect = (antennaName: string) => {
-    form.setFieldsValue({ loai_anten: antennaName })
   }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
@@ -79,13 +72,8 @@ export default function Cells4GPage() {
   const handleSave = async () => {
     const values = await form.validateFields()
     try {
-      if (editing) {
-        await cells4gApi.update(editing.id, values)
-        message.success('Cập nhật thành công')
-      } else {
-        await cells4gApi.create(values)
-        message.success('Tạo cell thành công')
-      }
+      if (editing) { await cells4gApi.update(editing.id, values); message.success('Cập nhật thành công') }
+      else         { await cells4gApi.create(values);             message.success('Tạo cell thành công') }
       setModalOpen(false); load()
     } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
@@ -95,8 +83,7 @@ export default function Cells4GPage() {
   }
 
   const columns: ColumnsType<Cell4G> = [
-    {
-      title: 'Hành động', key: 'action', fixed: 'left', width: 90,
+    { title: 'Hành động', key: 'action', fixed: 'left', width: 90,
       render: (_: unknown, r: Cell4G) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
@@ -104,23 +91,16 @@ export default function Cells4GPage() {
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
-      ),
-    },
+      )},
     { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70  },
     { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
     { title: 'Phường/Xã',     dataIndex: 'phuong_xa',                    width: 160 },
-    // ── name columns in required order ──────────────────────────────────────
-    { title: 'Site Name Old', dataIndex: 'site_name_old', fixed: 'left', width: 200,
-      ellipsis: { showTitle: true } },
-    { title: 'Cell Name Old', dataIndex: 'cell_name_old', fixed: 'left', width: 200,
-      ellipsis: { showTitle: true } },
+    { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
-      ellipsis: { showTitle: true },
-      render: (v: string) => <strong>{v}</strong> },
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
-      ellipsis: { showTitle: true },
-      render: (v: string) => <strong>{v}</strong> },
-    // ────────────────────────────────────────────────────────────────────────
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN',            dataIndex: 'moran',            width: 120 },
@@ -133,8 +113,7 @@ export default function Cells4GPage() {
     { title: 'M-tilt',           dataIndex: 'm_tilt',           width: 80  },
     { title: 'E-Tilt',           dataIndex: 'e_tilt',           width: 80  },
     { title: 'Total Tilt',       dataIndex: 'total_tilt',       width: 100 },
-    { title: 'Loại Anten',       dataIndex: 'loai_anten',       width: 200,
-      ellipsis: { showTitle: true } },
+    { title: 'Loại Anten',       dataIndex: 'loai_anten',       width: 200, ellipsis: { showTitle: true } },
     { title: 'Chung anten',      dataIndex: 'chung_anten',      width: 120 },
     { title: 'Baseband',         dataIndex: 'baseband',         width: 120 },
     { title: 'RF',               dataIndex: 'rf',               width: 100 },
@@ -158,55 +137,42 @@ export default function Cells4GPage() {
               Xuất Excel ({data.length})
             </Button>
           </Tooltip>
-          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
-            Import Excel
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            Thêm mới
-          </Button>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Thêm mới</Button>
         </Space>
       </Row>
-
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="260px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
-                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+                 value={search} onChange={e => setSearch(e.target.value)} allowClear />
         </Col>
         <Col>
-          <Select placeholder="Miền" allowClear style={{ width: 90 }}
-                  value={mien} onChange={setMien}>
-            {['MB','MT','MN'].map((m) =>
-              <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          <Select placeholder="Miền" allowClear style={{ width: 90 }} value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="180px">
           <Select placeholder="Tỉnh" allowClear showSearch style={{ width: '100%' }}
                   value={tinh} onChange={setTinh}
-                  filterOption={(i, o) =>
-                    String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-            {tinhOptions.map((t) =>
-              <Select.Option key={t} value={t}>{t}</Select.Option>)}
+                  filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+            {tinhOptions.map(t => <Select.Option key={t} value={t}>{t}</Select.Option>)}
           </Select>
         </Col>
         <Col flex="160px">
           <Select placeholder="Vendor" allowClear style={{ width: '100%' }}
                   value={vendor} onChange={setVendor}>
-            {vendorOptions.map((v) =>
-              <Select.Option key={v} value={v}>{v}</Select.Option>)}
+            {vendorOptions.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
         </Col>
         <Col>
-          <Button onClick={() => {
-            setSearch(''); setMien(undefined)
-            setTinh(undefined); setVendor(undefined)
-          }}>Xóa lọc</Button>
+          <Button onClick={() => { setSearch(''); setMien(undefined); setTinh(undefined); setVendor(undefined) }}>
+            Xóa lọc
+          </Button>
         </Col>
       </Row>
-
       <Table columns={columns} dataSource={data} rowKey="id" loading={loading}
              size="small" scroll={{ x: scrollX, y: 600 }} bordered
-             pagination={{ pageSize: 50, showTotal: (t) => `${t} cells`,
-                           showSizeChanger: true }} />
+             pagination={{ pageSize: 50, showTotal: t => `${t} cells`, showSizeChanger: true }} />
 
       <Modal title={editing ? 'Chỉnh sửa Cell 4G' : 'Thêm Cell 4G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
@@ -214,13 +180,12 @@ export default function Cells4GPage() {
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
                 <Select showSearch optionFilterProp="children" allowClear
                         placeholder="Chọn site..." onChange={handleSiteSelect}
-                        filterOption={(i, o) =>
-                          String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {sites.map((s) =>
-                    <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                        disabled={Boolean(editing)}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
@@ -230,8 +195,8 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="site_name" label="Site Name (tự động điền)">
-                <Input readOnly style={{ background: '#f5f5f5' }} />
+              <Form.Item name="site_name" label="Site Name">
+                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -240,8 +205,7 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name"
-                         rules={[{ required: true }]}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
             </Col>
@@ -262,17 +226,13 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="lat" label="Lat (8.33 – 23.39)"
-                         rules={[{ validator: latValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5}
-                             placeholder="8.33 – 23.39" />
+              <Form.Item name="lat" label="Lat (8.33 – 23.39)" rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="long" label="Long (102.14 – 109.47)"
-                         rules={[{ validator: lonValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5}
-                             placeholder="102.14 – 109.47" />
+              <Form.Item name="long" label="Long (102.14 – 109.47)" rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -286,7 +246,7 @@ export default function Cells4GPage() {
             <Col span={8}>
               <Form.Item name="vendor" label="Vendor">
                 <Select allowClear>
-                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map((v) =>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v =>
                     <Select.Option key={v} value={v}>{v}</Select.Option>)}
                 </Select>
               </Form.Item>
@@ -297,67 +257,32 @@ export default function Cells4GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0 – 359)"
-                         rules={[{ validator: azimuthValidator }]}>
+              <Form.Item name="azimuth" label="Azimuth (0 – 359)" rules={[{ validator: azimuthValidator }]}>
                 <InputNumber style={{ width: '100%' }} min={0} max={359} />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="m_tilt" label="M-tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="e_tilt" label="E-Tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="total_tilt" label="Total Tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
+            <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col span={24}>
               <Form.Item name="loai_anten" label="Loại Anten">
                 <Select showSearch allowClear placeholder="Chọn loại anten..."
-                        onChange={handleAntennaSelect}
-                        filterOption={(i, o) =>
-                          String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {antennaList.map((a) =>
-                    <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={12}>
-              <Form.Item name="chung_anten" label="Chung anten">
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="rf" label="RF"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="pci" label="PCI"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="root_sequence_id" label="Root Sequence ID">
-                <Input />
-              </Form.Item>
-            </Col>
+            <Col span={12}><Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="pci" label="PCI"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item></Col>
             <Col span={8}>
               <Form.Item name="mimo" label="MIMO">
                 <Select allowClear>
-                  {['2x2','4x4','8x8'].map((m) =>
-                    <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
                 </Select>
               </Form.Item>
             </Col>
@@ -365,15 +290,10 @@ export default function Cells4GPage() {
         </Form>
       </Modal>
 
-      <DryRunModal
-        open={dryRunOpen}
-        onClose={() => setDryRunOpen(false)}
-        title="Import Cell 4G từ Excel"
-        templateKey="cell-4g"
-        dryRunFn={cells4gApi.dryRunExcel}
-        importFn={cells4gApi.importExcel}
-        onSuccess={load}
-      />
+      <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
+        title="Import Cell 4G từ Excel" templateKey="cell-4g"
+        dryRunFn={cells4gApi.dryRunExcel} importFn={cells4gApi.importExcel}
+        onSuccess={load} />
     </div>
   )
 }
