@@ -70,9 +70,7 @@ export default function Cells5GPage() {
   }
 
   const handleAntennaSelect = (antennaName: string) => {
-    const ant = antennaList.find((a) => a.name === antennaName)
-    if (!ant) return
-    form.setFieldsValue({ loai_anten: ant.name })
+    form.setFieldsValue({ loai_anten: antennaName })
   }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
@@ -98,9 +96,9 @@ export default function Cells5GPage() {
 
   const columns: ColumnsType<Cell5G> = [
     {
-      title: 'Hành động', key: 'action', fixed: 'left', width: 80,
+      title: 'Hành động', key: 'action', fixed: 'left', width: 90,
       render: (_: unknown, r: Cell5G) => (
-        <Space>
+        <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           <Popconfirm title="Xóa cell này?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
@@ -108,13 +106,21 @@ export default function Cells5GPage() {
         </Space>
       ),
     },
-    { title: 'Miền',      dataIndex: 'mien',      fixed: 'left', width: 70  },
-    { title: 'Tỉnh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
-    { title: 'Phường xã', dataIndex: 'phuong_xa',               width: 160 },
-    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
-      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
-      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70  },
+    { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
+    { title: 'Phường xã',     dataIndex: 'phuong_xa',                    width: 160 },
+    // ── name columns in required order ──────────────────────────────────────
+    { title: 'Site Name Old', dataIndex: 'site_name_old', fixed: 'left', width: 200,
+      ellipsis: { showTitle: true } },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', fixed: 'left', width: 200,
+      ellipsis: { showTitle: true } },
+    { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
+      ellipsis: { showTitle: true },
+      render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
+      ellipsis: { showTitle: true },
+      render: (v: string) => <strong>{v}</strong> },
+    // ────────────────────────────────────────────────────────────────────────
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN',            dataIndex: 'moran',            width: 120 },
@@ -146,8 +152,7 @@ export default function Cells5GPage() {
         <Typography.Title level={3} style={{ margin: 0 }}>Cell 5G</Typography.Title>
         <Space>
           <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
-            <Button icon={<DownloadOutlined />} loading={exporting}
-                    onClick={handleExport}
+            <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
               Xuất Excel ({data.length})
             </Button>
@@ -193,9 +198,7 @@ export default function Cells5GPage() {
           <Button onClick={() => {
             setSearch(''); setMien(undefined)
             setTinh(undefined); setVendor(undefined)
-          }}>
-            Xóa lọc
-          </Button>
+          }}>Xóa lọc</Button>
         </Col>
       </Row>
 
@@ -206,7 +209,7 @@ export default function Cells5GPage() {
 
       <Modal title={editing ? 'Chỉnh sửa Cell 5G' : 'Thêm Cell 5G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={800} okText="Lưu" destroyOnClose>
+             width={860} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
@@ -221,12 +224,23 @@ export default function Cells5GPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
+              <Form.Item name="site_name_old" label="Site Name Old">
+                <Input placeholder="Tên site cũ (nếu có)" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
               <Form.Item name="site_name" label="Site Name (tự động điền)">
                 <Input readOnly style={{ background: '#f5f5f5' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+              <Form.Item name="cell_name_old" label="Cell Name Old">
+                <Input placeholder="Tên cell cũ (nếu có)" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name"
+                         rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
             </Col>

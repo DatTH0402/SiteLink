@@ -17,6 +17,7 @@ class AntennaBase(BaseModel):
     weight:         Optional[str]   = None
     connector_type: Optional[str]   = None
     ghi_chu:        Optional[str]   = None
+    is_5g_aau:      bool            = False
 
 
 class AntennaCreate(AntennaBase):
@@ -38,10 +39,13 @@ class AntennaUpdate(BaseModel):
     weight:         Optional[str]   = None
     connector_type: Optional[str]   = None
     ghi_chu:        Optional[str]   = None
+    is_5g_aau:      Optional[bool]  = None
 
 
 class AntennaRead(AntennaBase):
-    id: int
+    id:             int
+    spec_file_name: Optional[str] = None
+    spec_file_path: Optional[str] = None
 
     class Config:
         from_attributes = True

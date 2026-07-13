@@ -70,9 +70,7 @@ export default function Cells3GPage() {
   }
 
   const handleAntennaSelect = (antennaName: string) => {
-    const ant = antennaList.find((a) => a.name === antennaName)
-    if (!ant) return
-    form.setFieldsValue({ loai_anten: ant.name })
+    form.setFieldsValue({ loai_anten: antennaName })
   }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
@@ -98,9 +96,9 @@ export default function Cells3GPage() {
 
   const columns: ColumnsType<Cell3G> = [
     {
-      title: 'Hành động', key: 'action', fixed: 'left', width: 80,
+      title: 'Hành động', key: 'action', fixed: 'left', width: 90,
       render: (_: unknown, r: Cell3G) => (
-        <Space>
+        <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           <Popconfirm title="Xóa cell này?" onConfirm={() => handleDelete(r.id)}>
             <Button size="small" danger icon={<DeleteOutlined />} />
@@ -108,13 +106,21 @@ export default function Cells3GPage() {
         </Space>
       ),
     },
-    { title: 'Miền',      dataIndex: 'mien',      fixed: 'left', width: 70  },
-    { title: 'Tỉnh',      dataIndex: 'tinh',      fixed: 'left', width: 160 },
-    { title: 'Phường/Xã', dataIndex: 'phuong_xa',               width: 160 },
-    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 240,
-      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 240,
-      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70  },
+    { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
+    { title: 'Phường/Xã',     dataIndex: 'phuong_xa',                    width: 160 },
+    // ── name columns in required order ──────────────────────────────────────
+    { title: 'Site Name Old', dataIndex: 'site_name_old', fixed: 'left', width: 200,
+      ellipsis: { showTitle: true } },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', fixed: 'left', width: 200,
+      ellipsis: { showTitle: true } },
+    { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
+      ellipsis: { showTitle: true },
+      render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
+      ellipsis: { showTitle: true },
+      render: (v: string) => <strong>{v}</strong> },
+    // ────────────────────────────────────────────────────────────────────────
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN',         dataIndex: 'moran',         width: 120 },
@@ -146,8 +152,7 @@ export default function Cells3GPage() {
         <Typography.Title level={3} style={{ margin: 0 }}>Cell 3G</Typography.Title>
         <Space>
           <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
-            <Button icon={<DownloadOutlined />} loading={exporting}
-                    onClick={handleExport}
+            <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
               Xuất Excel ({data.length})
             </Button>
@@ -193,9 +198,7 @@ export default function Cells3GPage() {
           <Button onClick={() => {
             setSearch(''); setMien(undefined)
             setTinh(undefined); setVendor(undefined)
-          }}>
-            Xóa lọc
-          </Button>
+          }}>Xóa lọc</Button>
         </Col>
       </Row>
 
@@ -206,13 +209,14 @@ export default function Cells3GPage() {
 
       <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={800} okText="Lưu" destroyOnClose>
+             width={860} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
+            {/* ── Site ── */}
             <Col span={12}>
               <Form.Item name="site_id" label="Site" rules={[{ required: true }]}>
                 <Select showSearch optionFilterProp="children" allowClear
-                        placeholder="Chon site..." onChange={handleSiteSelect}
+                        placeholder="Chọn site..." onChange={handleSiteSelect}
                         filterOption={(i, o) =>
                           String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
                   {sites.map((s) =>
@@ -220,16 +224,30 @@ export default function Cells3GPage() {
                 </Select>
               </Form.Item>
             </Col>
+            {/* site_name_old first, then site_name (auto) */}
             <Col span={12}>
-              <Form.Item name="site_name" label="Site Name (tu dong dien)">
+              <Form.Item name="site_name_old" label="Site Name Old">
+                <Input placeholder="Tên site cũ (nếu có)" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name (tự động điền)">
                 <Input readOnly style={{ background: '#f5f5f5' }} />
               </Form.Item>
             </Col>
+            {/* cell_name_old first, then cell_name */}
             <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+              <Form.Item name="cell_name_old" label="Cell Name Old">
+                <Input placeholder="Tên cell cũ (nếu có)" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name"
+                         rules={[{ required: true }]}>
                 <Input />
               </Form.Item>
             </Col>
+            {/* rest of fields */}
             <Col span={6}>
               <Form.Item name="cell_vip" label="Cell VIP">
                 <Select allowClear>
@@ -314,7 +332,9 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item>
+              <Form.Item name="chung_anten" label="Chung anten">
+                <Input />
+              </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>

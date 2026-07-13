@@ -44,7 +44,9 @@ export interface CellBase {
   tinh?: string
   phuong_xa?: string
   site_name: string
+  site_name_old?: string
   cell_name: string
+  cell_name_old?: string
   cell_vip?: string
   moran?: string
   lat?: number
@@ -139,6 +141,7 @@ export interface AntennaItem {
   weight?: string
   connector_type?: string
   ghi_chu?: string
+  is_5g_aau?: boolean
 }
 
 export interface ProvinceChartItem {
@@ -196,4 +199,7 @@ export interface AntennaFull {
   weight?: string
   connector_type?: string
   ghi_chu?: string
+  is_5g_aau: boolean
+  spec_file_name?: string
+  spec_file_path?: string
 }

@@ -6,9 +6,7 @@ Run once: python create_templates.py
 """
 import os
 import openpyxl
-from openpyxl.styles import (
-    PatternFill, Font, Alignment, Border, Side
-)
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -28,8 +26,8 @@ BORDER        = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 def style_header(ws, col_idx, value, required=False, width=20):
     cell = ws.cell(row=1, column=col_idx, value=value)
-    cell.fill  = REQUIRED_FILL if required else HEADER_FILL
-    cell.font  = REQUIRED_FONT if required else HEADER_FONT
+    cell.fill      = REQUIRED_FILL if required else HEADER_FILL
+    cell.font      = REQUIRED_FONT if required else HEADER_FONT
     cell.alignment = CENTER
     cell.border    = BORDER
     ws.column_dimensions[get_column_letter(col_idx)].width = width
@@ -59,9 +57,7 @@ def add_example_row(ws, row_idx, values):
 def finalize(ws, num_cols):
     ws.row_dimensions[1].height = 36
     ws.freeze_panes = "A3"
-    ws.auto_filter.ref = (
-        f"A1:{get_column_letter(num_cols)}1"
-    )
+    ws.auto_filter.ref = f"A1:{get_column_letter(num_cols)}1"
 
 
 # ── SITE template ─────────────────────────────────────────────────────────────
@@ -71,7 +67,6 @@ def create_site_template():
     ws.title = "Sites"
 
     columns = [
-        # (header, required, width)
         ("Mien",                         False, 10),
         ("Tinh",                         True,  22),
         ("Phuong xa",                    False, 22),
@@ -133,31 +128,34 @@ def create_cell3g_template():
     ws = wb.active
     ws.title = "Cells_3G"
 
+    # Column order: site_name_old, cell_name_old, site_name, cell_name (required)
     columns = [
-        ("Mien",          False, 10),
-        ("Tinh",          False, 22),
-        ("Phuong xa",     False, 22),
-        ("Site Name",     True,  25),
-        ("Cell Name",     True,  25),
-        ("Cell VIP",      False, 12),
-        ("MORAN",         False, 15),
-        ("Lat",           False, 14),
-        ("Long",          False, 14),
-        ("Vung phu song", False, 15),
-        ("Vendor",        False, 14),
-        ("Do cao anten",  False, 15),
-        ("Azimuth",       False, 12),
-        ("M-tilt",        False, 10),
-        ("E-Tilt",        False, 10),
-        ("Total Tilt",    False, 12),
-        ("Loai Anten",    False, 30),
-        ("Chung anten",   False, 18),
-        ("Baseband",      False, 18),
-        ("RF",            False, 14),
-        ("Cell ID",       False, 14),
-        ("ARFCN",         False, 12),
-        ("PSC",           False, 10),
-        ("MIMO",          False, 10),
+        ("Mien",           False, 10),
+        ("Tinh",           False, 22),
+        ("Phuong xa",      False, 22),
+        ("Site Name Old",  False, 25),   # new
+        ("Cell Name Old",  False, 25),   # new
+        ("Site Name",      True,  25),   # required
+        ("Cell Name",      True,  25),   # required
+        ("Cell VIP",       False, 12),
+        ("MORAN",          False, 15),
+        ("Lat",            False, 14),
+        ("Long",           False, 14),
+        ("Vung phu song",  False, 15),
+        ("Vendor",         False, 14),
+        ("Do cao anten",   False, 15),
+        ("Azimuth",        False, 12),
+        ("M-tilt",         False, 10),
+        ("E-Tilt",         False, 10),
+        ("Total Tilt",     False, 12),
+        ("Loai Anten",     False, 30),
+        ("Chung anten",    False, 18),
+        ("Baseband",       False, 18),
+        ("RF",             False, 14),
+        ("Cell ID",        False, 14),
+        ("ARFCN",          False, 12),
+        ("PSC",            False, 10),
+        ("MIMO",           False, 10),
     ]
 
     for i, (hdr, req, w) in enumerate(columns, start=1):
@@ -166,6 +164,7 @@ def create_cell3g_template():
     note = (
         "Ghi chu: Cot mau VANG la bat buoc. "
         "Site Name phai ton tai hoac se duoc tu dong tao. "
+        "Site Name Old / Cell Name Old: ten cu truoc khi doi (tuy chon). "
         "Lat: 8.33-23.39, Long: 102.14-109.47. "
         "Azimuth: 0-359. Vendor: Ericsson/Nokia/Huawei/ZTE/Samsung. "
         "Vung phu song: Indoor/Outdoor. MIMO: 2x2/4x4/8x8."
@@ -174,7 +173,9 @@ def create_cell3g_template():
 
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
-        "HN-001", "HN-001-3G-1", "", "MBF HOST",
+        "HN-001-OLD", "HN-001-3G-1-OLD",   # old names
+        "HN-001", "HN-001-3G-1",            # current names
+        "", "MBF HOST",
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei ATR4518R10v06", "3G", "BBU3910", "RRU3908",
@@ -198,8 +199,10 @@ def create_cell4g_template():
         ("Mien",             False, 10),
         ("Tinh",             False, 22),
         ("Phuong xa",        False, 22),
-        ("Site Name",        True,  25),
-        ("Cell Name",        True,  25),
+        ("Site Name Old",    False, 25),   # new
+        ("Cell Name Old",    False, 25),   # new
+        ("Site Name",        True,  25),   # required
+        ("Cell Name",        True,  25),   # required
         ("Cell VIP",         False, 12),
         ("MORAN",            False, 15),
         ("Lat",              False, 14),
@@ -228,6 +231,7 @@ def create_cell4g_template():
     note = (
         "Ghi chu: Cot mau VANG la bat buoc. "
         "Site Name phai ton tai hoac se duoc tu dong tao. "
+        "Site Name Old / Cell Name Old: ten cu truoc khi doi (tuy chon). "
         "Lat: 8.33-23.39, Long: 102.14-109.47. "
         "Azimuth: 0-359. Vendor: Ericsson/Nokia/Huawei/ZTE/Samsung. "
         "Vung phu song: Indoor/Outdoor. MIMO: 2x2/4x4/8x8."
@@ -236,7 +240,9 @@ def create_cell4g_template():
 
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
-        "HN-001", "HN-001-4G-1", "", "MBF HOST",
+        "HN-001-OLD", "HN-001-4G-1-OLD",
+        "HN-001", "HN-001-4G-1",
+        "", "MBF HOST",
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei ATR4518R10v06", "4G", "BBU5900", "RRU5258",
@@ -260,8 +266,10 @@ def create_cell5g_template():
         ("Mien",             False, 10),
         ("Tinh",             False, 22),
         ("Phuong xa",        False, 22),
-        ("Site Name",        True,  25),
-        ("Cell Name",        True,  25),
+        ("Site Name Old",    False, 25),   # new
+        ("Cell Name Old",    False, 25),   # new
+        ("Site Name",        True,  25),   # required
+        ("Cell Name",        True,  25),   # required
         ("Cell VIP",         False, 12),
         ("MORAN",            False, 15),
         ("Lat",              False, 14),
@@ -289,6 +297,7 @@ def create_cell5g_template():
     note = (
         "Ghi chu: Cot mau VANG la bat buoc. "
         "Site Name phai ton tai hoac se duoc tu dong tao. "
+        "Site Name Old / Cell Name Old: ten cu truoc khi doi (tuy chon). "
         "Lat: 8.33-23.39, Long: 102.14-109.47. "
         "Azimuth: 0-359. Vendor: Ericsson/Nokia/Huawei/ZTE/Samsung. "
         "Vung phu song: Indoor/Outdoor. MIMO: 2x2/4x4/8x8."
@@ -297,7 +306,9 @@ def create_cell5g_template():
 
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
-        "HN-001", "HN-001-5G-1", "", "MBF HOST",
+        "HN-001-OLD", "HN-001-5G-1-OLD",
+        "HN-001", "HN-001-5G-1",
+        "", "MBF HOST",
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei AAU5614", "BBU5900", "AAU5614",
