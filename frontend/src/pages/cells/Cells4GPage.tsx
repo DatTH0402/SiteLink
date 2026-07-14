@@ -17,6 +17,8 @@ import { getAntennaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
+const CHUNG_ANTEN_4G = ['4G', '2G/4G', '3G/4G', '2G/3G/4G', '4G/5G']
+
 export default function Cells4GPage() {
   const [data,        setData]        = useState<Cell4G[]>([])
   const [loading,     setLoading]     = useState(false)
@@ -48,7 +50,16 @@ export default function Cells4GPage() {
   useEffect(() => {
     load()
     getSites({ limit: 2000 }).then(setSites)
-    getAntennaList().then(setAntennaList)
+    getAntennaList().then((list: AntennaItem[]) => {
+      const sorted = [...list].sort((a, b) => {
+        const aIsUnknown = a.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || a.name.toUpperCase().includes('CHUA XAC DINH')
+        const bIsUnknown = b.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || b.name.toUpperCase().includes('CHUA XAC DINH')
+        if (aIsUnknown) return -1
+        if (bIsUnknown) return 1
+        return 0
+      })
+      setAntennaList(sorted)
+    })
   }, [search, mien, tinh, vendor])
 
   const handleExport = async () => {
@@ -272,7 +283,13 @@ export default function Cells4GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={12}><Form.Item name="chung_anten" label="Chung anten"><Input /></Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten">
+                <Select allowClear placeholder="Chọn chung anten...">
+                  {CHUNG_ANTEN_4G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>

@@ -38,7 +38,18 @@ export default function AntennaPage() {
     try {
       const params: Record<string, unknown> = { limit: 2000 }
       if (search) params.search = search
-      setData(await getAntennas(params))
+      const raw = await getAntennas(params)
+      // Move "CHƯA XÁC ĐỊNH" to first position
+      const sorted = [...raw].sort((a, b) => {
+        const aU = a.name.toUpperCase()
+        const bU = b.name.toUpperCase()
+        const aFirst = aU.includes('CHƯA XÁC ĐỊNH') || aU.includes('CHUA XAC DINH')
+        const bFirst = bU.includes('CHƯA XÁC ĐỊNH') || bU.includes('CHUA XAC DINH')
+        if (aFirst) return -1
+        if (bFirst) return 1
+        return 0
+      })
+      setData(sorted)
     } finally { setLoading(false) }
   }
 
