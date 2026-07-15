@@ -36,7 +36,7 @@ class Cell5G(Base):
     nr_arfcn         = Column(String(50))
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
-    mimo             = Column(String(20))
+    mimo             = Column(String(100))
     created_at       = Column(DateTime(timezone=True),
                               default=lambda: datetime.now(timezone.utc))
     updated_at       = Column(DateTime(timezone=True),
