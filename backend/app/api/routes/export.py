@@ -1,5 +1,5 @@
 """
-export.py  –  Excel export endpoints (Sites, Cells 3G/4G/5G, Antennas)
+export.py – Excel export endpoints (Sites, Cells 3G/4G/5G, Antennas)
 Token can be passed as Bearer header OR ?token= query param.
 """
 from __future__ import annotations
@@ -71,7 +71,6 @@ def _stream(wb, filename):
 
 
 from fastapi.security import OAuth2PasswordBearer
-
 oauth2_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
@@ -91,8 +90,6 @@ def get_optional_user(
         raise HTTPException(status_code=401, detail="User inactive")
     return user
 
-
-# ── Sites ─────────────────────────────────────────────────────────────────────
 
 @router.get("/sites")
 def export_sites(
@@ -146,8 +143,6 @@ def export_sites(
     return _stream(wb, "Sites_Export.xlsx")
 
 
-# ── Cells 3G ──────────────────────────────────────────────────────────────────
-
 @router.get("/cells-3g")
 def export_cells_3g(
     search:        Optional[str] = Query(None),
@@ -175,7 +170,10 @@ def export_cells_3g(
         ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
         ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
         ("Loai Anten", 30), ("Chung anten", 18), ("Baseband", 18), ("RF", 14),
-        ("Cell ID", 14), ("ARFCN", 12), ("PSC", 10), ("MIMO", 10),
+        ("Cell ID", 14), ("UARFCN", 12), ("LAC", 10), ("RAC", 10),
+        ("PSC", 10), ("MIMO", 10), ("URAId", 10),
+        ("Cell max power (dBm)", 20), ("CPICH power (dBm)", 18),
+        ("BBUname", 16), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
 
@@ -188,7 +186,10 @@ def export_cells_3g(
             c.vung_phu_song, c.vendor, c.do_cao_anten,
             c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
             c.loai_anten, c.chung_anten, c.baseband, c.rf,
-            c.cell_id, c.arfcn, c.psc, c.mimo,
+            c.cell_id, c.uarfcn, c.lac, c.rac,
+            c.psc, c.mimo, c.ura_id,
+            c.cell_max_power, c.cpich_power,
+            c.bbu_name, c.cell_status,
         ]
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
@@ -197,8 +198,6 @@ def export_cells_3g(
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_3G_Export.xlsx")
 
-
-# ── Cells 4G ──────────────────────────────────────────────────────────────────
 
 @router.get("/cells-4g")
 def export_cells_4g(
@@ -227,7 +226,10 @@ def export_cells_4g(
         ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
         ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
         ("Loai Anten", 30), ("Chung anten", 18), ("Baseband", 18), ("RF", 14),
-        ("Cell ID", 14), ("EARFCN", 12), ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10),
+        ("EnodeB ID", 14), ("Cell ID", 14), ("EARFCN", 12), ("TAC", 10),
+        ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10), ("Bandwidth", 12),
+        ("Cell max power (dBm)", 20), ("ECI", 12),
+        ("BBUname", 16), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
 
@@ -240,7 +242,10 @@ def export_cells_4g(
             c.vung_phu_song, c.vendor, c.do_cao_anten,
             c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
             c.loai_anten, c.chung_anten, c.baseband, c.rf,
-            c.cell_id, c.earfcn, c.pci, c.root_sequence_id, c.mimo,
+            c.enodeb_id, c.cell_id, c.earfcn, c.tac,
+            c.pci, c.root_sequence_id, c.mimo, c.bandwidth,
+            c.cell_max_power, c.eci,
+            c.bbu_name, c.cell_status,
         ]
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
@@ -249,8 +254,6 @@ def export_cells_4g(
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_4G_Export.xlsx")
 
-
-# ── Cells 5G ──────────────────────────────────────────────────────────────────
 
 @router.get("/cells-5g")
 def export_cells_5g(
@@ -279,7 +282,11 @@ def export_cells_5g(
         ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
         ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
         ("Loai Anten", 30), ("Baseband", 18), ("RF", 14),
-        ("Cell ID", 14), ("NR-ARFCN", 12), ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10),
+        ("gNodeB ID", 14), ("Cell ID", 14), ("TAC", 10),
+        ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10),
+        ("SSB-ARFCN", 12), ("Center-ARFCN", 14), ("GSCN", 10),
+        ("Bandwidth (MHz)", 14), ("Cell max power (dBm)", 20), ("NCI", 12),
+        ("BBUname", 16), ("MU-MIMO", 10), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
 
@@ -292,7 +299,11 @@ def export_cells_5g(
             c.vung_phu_song, c.vendor, c.do_cao_anten,
             c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
             c.loai_anten, c.baseband, c.rf,
-            c.cell_id, c.nr_arfcn, c.pci, c.root_sequence_id, c.mimo,
+            c.gnodeb_id, c.cell_id, c.tac,
+            c.pci, c.root_sequence_id, c.mimo,
+            c.ssb_arfcn, c.center_arfcn, c.gscn,
+            c.bandwidth, c.cell_max_power, c.nci,
+            c.bbu_name, c.mu_mimo, c.cell_status,
         ]
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
@@ -301,8 +312,6 @@ def export_cells_5g(
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_5G_Export.xlsx")
 
-
-# ── Antennas ──────────────────────────────────────────────────────────────────
 
 @router.get("/antennas")
 def export_antennas(

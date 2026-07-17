@@ -97,9 +97,9 @@ export default function Cells5GPage() {
     { title: 'Phường xã',     dataIndex: 'phuong_xa',                    width: 160 },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
@@ -116,12 +116,22 @@ export default function Cells5GPage() {
     { title: 'Loại Anten',       dataIndex: 'loai_anten',       width: 250, ellipsis: { showTitle: true } },
     { title: 'Baseband',         dataIndex: 'baseband',         width: 120 },
     { title: 'RF',               dataIndex: 'rf',               width: 100 },
+    { title: 'gNodeB ID',        dataIndex: 'gnodeb_id',        width: 110 },
     { title: 'Cell ID',          dataIndex: 'cell_id',          width: 100 },
-    { title: 'NR-ARFCN',         dataIndex: 'nr_arfcn',         width: 100 },
+    { title: 'TAC',              dataIndex: 'tac',              width: 80  },
     { title: 'PCI',              dataIndex: 'pci',              width: 80  },
     { title: 'Root Sequence ID', dataIndex: 'root_sequence_id', width: 150 },
     { title: 'MIMO', dataIndex: 'mimo', width: 80,
       render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+    { title: 'SSB-ARFCN',        dataIndex: 'ssb_arfcn',        width: 110 },
+    { title: 'Center-ARFCN',     dataIndex: 'center_arfcn',     width: 120 },
+    { title: 'GSCN',             dataIndex: 'gscn',             width: 90  },
+    { title: 'Bandwidth (MHz)',   dataIndex: 'bandwidth',        width: 130 },
+    { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 165 },
+    { title: 'NCI',              dataIndex: 'nci',              width: 120 },
+    { title: 'BBUname',          dataIndex: 'bbu_name',         width: 130 },
+    { title: 'MU-MIMO',          dataIndex: 'mu_mimo',          width: 100 },
+    { title: 'Cell status',      dataIndex: 'cell_status',      width: 140 },
   ]
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
@@ -175,123 +185,74 @@ export default function Cells5GPage() {
 
       <Modal title={editing ? 'Chỉnh sửa Cell 5G' : 'Thêm Cell 5G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={860} okText="Lưu" destroyOnClose>
+             width={900} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
-                <Select showSearch optionFilterProp="children" allowClear
-                        placeholder="Chọn site..." onChange={handleSiteSelect}
-                        disabled={Boolean(editing)}
-                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="site_name_old" label="Site Name Old">
-                <Input placeholder="Tên site cũ (nếu có)" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="site_name" label="Site Name">
-                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="cell_name_old" label="Cell Name Old">
-                <Input placeholder="Tên cell cũ (nếu có)" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="cell_vip" label="Cell VIP">
-                <Select allowClear>
-                  <Select.Option value="VIP">VIP</Select.Option>
-                  <Select.Option value="VVIP">VVIP</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="moran" label="MORAN">
-                <Select allowClear>
-                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
-                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="lat" label="Lat (8.33 – 23.39)" rules={[{ validator: latValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="long" label="Long (102.14 – 109.47)" rules={[{ validator: lonValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-                <Select allowClear>
-                  <Select.Option value="Indoor">Indoor</Select.Option>
-                  <Select.Option value="Outdoor">Outdoor</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="vendor" label="Vendor">
-                <Select allowClear>
-                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v =>
-                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="do_cao_anten" label="Độ cao anten (m)">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0 – 359)" rules={[{ validator: azimuthValidator }]}>
-                <InputNumber style={{ width: '100%' }} min={0} max={359} />
-              </Form.Item>
-            </Col>
+            <Col span={12}><Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
+              <Select showSearch optionFilterProp="children" allowClear placeholder="Chọn site..."
+                      onChange={handleSiteSelect} disabled={Boolean(editing)}
+                      filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+              </Select>
+            </Form.Item></Col>
+            <Col span={12}><Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item></Col>
+            <Col span={12}><Form.Item name="site_name" label="Site Name">
+              <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
+            </Form.Item></Col>
+            <Col span={12}><Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item></Col>
+            <Col span={12}><Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={6}><Form.Item name="cell_vip" label="Cell VIP">
+              <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={6}><Form.Item name="moran" label="MORAN">
+              <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
+              <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="vendor" label="Vendor">
+              <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
             <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={24}>
-              <Form.Item name="loai_anten" label="Loại Anten">
-                <Select showSearch allowClear placeholder="Chọn loại anten..."
-                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
+            <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
+              <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+              </Select>
+            </Form.Item></Col>
             <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="gnodeb_id" label="gNodeB ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="nr_arfcn" label="NR-ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="tac" label="TAC"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="pci" label="PCI"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item></Col>
-            <Col span={8}>
-              <Form.Item name="mimo" label="MIMO">
-                <Select allowClear>
-                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
+            <Col span={8}><Form.Item name="mimo" label="MIMO">
+              <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="ssb_arfcn" label="SSB-ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="center_arfcn" label="Center-ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="gscn" label="GSCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="bandwidth" label="Bandwidth (MHz)"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="nci" label="NCI"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="mu_mimo" label="MU-MIMO">
+              <Select allowClear><Select.Option value="Yes">Yes</Select.Option><Select.Option value="No">No</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={16}><Form.Item name="cell_status" label="Cell status (at dump time)"><Input /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 5G từ Excel" templateKey="cell-5g"
-        dryRunFn={cells5gApi.dryRunExcel} importFn={cells5gApi.importExcel}
-        onSuccess={load} />
+        dryRunFn={cells5gApi.dryRunExcel} importFn={cells5gApi.importExcel} onSuccess={load} />
     </div>
   )
 }

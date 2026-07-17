@@ -32,11 +32,21 @@ class Cell5G(Base):
     loai_anten       = Column(String(200))
     baseband         = Column(String(100))
     rf               = Column(String(100))
+    gnodeb_id        = Column(String(50))   # gNodeB ID
     cell_id          = Column(String(50))
-    nr_arfcn         = Column(String(50))
+    tac              = Column(String(50))   # Tracking Area Code
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
     mimo             = Column(String(100))
+    ssb_arfcn        = Column(String(50))   # SSB-ARFCN
+    center_arfcn     = Column(String(50))   # Center-ARFCN
+    gscn             = Column(String(50))   # GSCN
+    bandwidth        = Column(String(50))   # Bandwidth (MHz)
+    cell_max_power   = Column(String(50))   # Cell max power (dBm)
+    nci              = Column(String(50))   # NR Cell Identity
+    bbu_name         = Column(String(100))  # BBU name
+    mu_mimo          = Column(String(20))   # MU-MIMO
+    cell_status      = Column(String(100))  # Cell status at dump time
     created_at       = Column(DateTime(timezone=True),
                               default=lambda: datetime.now(timezone.utc))
     updated_at       = Column(DateTime(timezone=True),

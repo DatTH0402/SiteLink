@@ -33,11 +33,18 @@ class Cell4G(Base):
     chung_anten      = Column(String(100))
     baseband         = Column(String(100))
     rf               = Column(String(100))
+    enodeb_id        = Column(String(50))   # eNodeB ID
     cell_id          = Column(String(50))
     earfcn           = Column(String(50))
+    tac              = Column(String(50))   # Tracking Area Code
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
     mimo             = Column(String(20))
+    bandwidth        = Column(String(50))   # Bandwidth (MHz)
+    cell_max_power   = Column(String(50))   # Cell max power (dBm)
+    eci              = Column(String(50))   # E-UTRAN Cell Identifier
+    bbu_name         = Column(String(100))  # BBU name
+    cell_status      = Column(String(100))  # Cell status at dump time
     created_at       = Column(DateTime(timezone=True),
                               default=lambda: datetime.now(timezone.utc))
     updated_at       = Column(DateTime(timezone=True),

@@ -1,20 +1,6 @@
 """
-import_excel.py
-==============
-Handles Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
-
-Name-change logic for cells (Excel import):
-  If a row has:
-    - cell_name_old == <an existing cell's current cell_name>
-    - cell_name     == <a new value>
-  Then it is treated as a NAME CHANGE update on that existing cell:
-    - existing.cell_name_old = existing.cell_name  (archive old name)
-    - existing.cell_name     = new cell_name        (apply new name)
-  This is captured in revision history.
-
-Same logic applies to site_name_old / site_name for sites.
+import_excel.py – Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
 """
-
 from __future__ import annotations
 
 import io
@@ -145,14 +131,7 @@ def _validate_azimuth(azi, row_num, label, errors):
 
 
 # ── Site import ───────────────────────────────────────────────────────────────
-
 def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[str, Any]:
-    """
-    Name-change detection for sites:
-    If a row has site_name_old == <existing site_name> AND site_name == <new value>,
-    it's treated as a rename: the existing site's site_name gets updated to the new value,
-    and site_name_old_ref is set to the old name for revision tracking.
-    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
     to_create: List[Dict] = []
@@ -203,65 +182,54 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         lat  = _validate_lat(raw_lat,  row_num, site_name, errors)
         long = _validate_lon(raw_long, row_num, site_name, errors)
 
-        # Read site_name_old from file (used for name-change detection)
-        file_site_name_old = _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)", "Site Name Old", "site_name_old")
+        file_site_name_old = _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)",
+                                 "Site Name Old", "site_name_old")
 
         rec: Dict[str, Any] = {
-            "mien":         mien,
-            "tinh":         tinh_official,
-            "phuong_xa":    phuong_xa_official,
-            "site_name_cu": file_site_name_old,
-            "site_name":    site_name,
-            "site_vip":     _v(row, "Site VIP", "site_vip"),
-            "lat":          lat,
-            "long":         long,
-            "tram_2g":      _bool(row, "Trạm 2G", "Tram 2G", "tram_2g"),
-            "tram_3g":      _bool(row, "Trạm 3G", "Tram 3G", "tram_3g"),
-            "tram_4g":      _bool(row, "Trạm 4G", "Tram 4G", "tram_4g"),
-            "tram_5g":      _bool(row, "Trạm 5G", "Tram 5G", "tram_5g"),
-            "repeater":     _bool(row, "Repeater", "repeater"),
-            "booster":      _bool(row, "Booster",  "booster"),
-            "node_truyen_dan_only": _bool(row, "Node truyền dẫn only", "Node truyen dan only", "node_truyen_dan_only"),
-            "tram_phu_song_tsca":   _bool(row, "Trạm phủ sóng TSCA", "Tram phu song TSCA", "tram_phu_song_tsca"),
+            "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
+            "site_name_cu": file_site_name_old, "site_name": site_name,
+            "site_vip": _v(row, "Site VIP", "site_vip"),
+            "lat": lat, "long": long,
+            "tram_2g": _bool(row, "Trạm 2G", "Tram 2G", "tram_2g"),
+            "tram_3g": _bool(row, "Trạm 3G", "Tram 3G", "tram_3g"),
+            "tram_4g": _bool(row, "Trạm 4G", "Tram 4G", "tram_4g"),
+            "tram_5g": _bool(row, "Trạm 5G", "Tram 5G", "tram_5g"),
+            "repeater": _bool(row, "Repeater", "repeater"),
+            "booster":  _bool(row, "Booster",  "booster"),
+            "node_truyen_dan_only": _bool(row, "Node truyền dẫn only",
+                                          "Node truyen dan only", "node_truyen_dan_only"),
+            "tram_phu_song_tsca": _bool(row, "Trạm phủ sóng TSCA",
+                                        "Tram phu song TSCA", "tram_phu_song_tsca"),
             "phan_loai_tram": _v(row, "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
                                   "Phan loai tram", "phan_loai_tram"),
             "moran_3g": _v(row, "TRẠM MORAN 3G (VNPT HOST, MBF HOST)", "MORAN 3G", "moran_3g"),
             "moran_4g": _v(row, "TRẠM MORAN 4G (VNPT HOST, MBF HOST)", "MORAN 4G", "moran_4g"),
             "moran_5g": _v(row, "TRẠM MORAN 5G (VNPT HOST, MBF HOST)", "MORAN 5G", "moran_5g"),
-            "ma_ptm":   _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
+            "ma_ptm": _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
             "do_cao_dinh_cot_anten": _float(row, "Độ cao đỉnh cột anten (m) đến mặt đất",
-                                             "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
-            "do_cao_cot_anten":      _float(row, "Độ cao cột anten", "Do cao cot anten", "do_cao_cot_anten"),
+                                            "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
+            "do_cao_cot_anten": _float(row, "Độ cao cột anten", "Do cao cot anten",
+                                       "do_cao_cot_anten"),
             "dia_chi": _v(row, "Địa chỉ", "Dia chi", "dia_chi"),
             "ghi_chu": _v(row, "Ghi chú", "Ghi chu", "ghi_chu"),
         }
 
         if db:
             existing = db.query(Site).filter(Site.site_name == site_name).first()
-
-            # Name-change detection:
-            # If site_name not found but site_name_old IS an existing site → rename
             if not existing and file_site_name_old:
                 existing_by_old = db.query(Site).filter(
-                    Site.site_name == file_site_name_old
-                ).first()
+                    Site.site_name == file_site_name_old).first()
                 if existing_by_old:
-                    # This is a rename: old name → new name
-                    rec["_site_name_old_ref"] = file_site_name_old  # for revision tracking
+                    rec["_site_name_old_ref"] = file_site_name_old
                     to_update.append({
-                        "existing_id": existing_by_old.id,
-                        "anchor":      file_site_name_old,
-                        "changes":     rec,
-                        "is_rename":   True,
+                        "existing_id": existing_by_old.id, "anchor": file_site_name_old,
+                        "changes": rec, "is_rename": True,
                     })
                     continue
-
             if existing:
                 to_update.append({
-                    "existing_id": existing.id,
-                    "anchor":      site_name,
-                    "changes":     rec,
-                    "is_rename":   False,
+                    "existing_id": existing.id, "anchor": site_name,
+                    "changes": rec, "is_rename": False,
                 })
             else:
                 to_create.append(rec)
@@ -272,7 +240,6 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
 
 
 # ── Cell common ───────────────────────────────────────────────────────────────
-
 def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
     raw_tinh   = _v(row, "Tỉnh", "Tinh", "tinh")
     raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
@@ -305,9 +272,7 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
     azi = _validate_azimuth(raw_azi, row_num, label, errors_out or [])
 
     return {
-        "mien":          mien,
-        "tinh":          tinh_official,
-        "phuong_xa":     phuong_xa_official,
+        "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
         "site_name":     _v(row, "Site Name", "Site name", "site_name") or "",
         "site_name_old": _v(row, "Site Name Old", "Site name old", "site_name_old",
                              "Site Name (cũ)", "Site name (cu)"),
@@ -316,34 +281,26 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
                              "Cell Name (cũ)"),
         "cell_vip":      _v(row, "Cell VIP", "cell_vip"),
         "moran":         _v(row, "MORAN", "Moran", "moran"),
-        "lat":           lat,
-        "long":          lon,
+        "lat": lat, "long": lon,
         "vung_phu_song": _v(row, "Vùng phủ sóng", "Vung phu song", "vung_phu_song"),
         "vendor":        _v(row, "Vendor", "vendor"),
         "do_cao_anten":  _float(row, "Độ cao anten", "Do cao anten", "do_cao_anten"),
-        "azimuth":       azi,
-        "m_tilt":        _float(row, "M-tilt", "M-Tilt", "m_tilt"),
-        "e_tilt":        _float(row, "E-Tilt", "E-tilt", "e_tilt"),
-        "total_tilt":    _float(row, "Total Tilt", "Total tilt", "total_tilt"),
-        "loai_anten":    _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
-        "baseband":      _v(row, "Baseband", "baseband"),
-        "rf":            _v(row, "RF", "rf"),
-        "cell_id":       _v(row, "Cell ID", "cell_id"),
-        "mimo":          _v(row, "MIMO", "mimo"),
+        "azimuth": azi,
+        "m_tilt":   _float(row, "M-tilt", "M-Tilt", "m_tilt"),
+        "e_tilt":   _float(row, "E-Tilt", "E-tilt", "e_tilt"),
+        "total_tilt": _float(row, "Total Tilt", "Total tilt", "total_tilt"),
+        "loai_anten": _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
+        "baseband":   _v(row, "Baseband", "baseband"),
+        "rf":         _v(row, "RF", "rf"),
+        "cell_id":    _v(row, "Cell ID", "cell_id"),
+        "mimo":       _v(row, "MIMO", "mimo"),
+        "bbu_name":   _v(row, "BBUname", "BBU Name", "bbu_name"),
+        "cell_status": _v(row, "Cell status (at dump time)", "Cell status", "cell_status"),
+        "cell_max_power": _v(row, "Cell max power (dBm)", "Cell max power", "cell_max_power"),
     }
 
 
 def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False) -> Dict[str, Any]:
-    """
-    Generic cell import with name-change detection.
-
-    Name-change resolution:
-    1. Primary lookup: find existing cell by (site_id, cell_name) – normal update
-    2. Name-change lookup: if cell_name_old is set and matches an existing cell's
-       current cell_name → treat as rename:
-         - Update existing cell: cell_name_old = old cell_name, cell_name = new value
-         - Also handles site_name_old for site renames
-    """
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
 
@@ -377,17 +334,11 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
         extra = extra_fields_fn(row)
         rec   = {**common, **extra}
 
-        # ── Resolve site ─────────────────────────────────────────────────
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
-
-            # If site not found by current name, try site_name_old (site rename)
             if not site_obj and site_name_old:
                 site_obj = db.query(Site).filter(Site.site_name == site_name_old).first()
-                if site_obj:
-                    # site was renamed: update site_name in rec for this cell too
-                    pass  # site_name stays as the new name in rec
 
         if site_obj:
             site_id = site_obj.id
@@ -405,31 +356,23 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
 
         rec["site_id"] = site_id
 
-        # ── Resolve cell: normal lookup ──────────────────────────────────
         existing_cell = None
         if db and site_obj:
-            # 1. Look up by current cell_name
             existing_cell = db.query(Model).filter(
                 Model.site_id == site_obj.id,
                 Model.cell_name == cell_name,
             ).first()
 
-            # 2. Name-change: cell_name_old matches existing cell's current name
             if not existing_cell and cell_name_old:
                 existing_by_old = db.query(Model).filter(
                     Model.site_id == site_obj.id,
                     Model.cell_name == cell_name_old,
                 ).first()
                 if existing_by_old:
-                    # This is a cell rename:
-                    # - new cell_name = what's in the "Cell Name" column
-                    # - cell_name_old = what was previously cell_name
-                    # rec already has cell_name = new name, cell_name_old = old name
                     to_update.append({
                         "existing_id": existing_by_old.id,
                         "anchor":      f"{site_name}/{cell_name_old}",
-                        "changes":     rec,
-                        "is_rename":   True,
+                        "changes":     rec, "is_rename": True,
                     })
                     continue
 
@@ -437,18 +380,15 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
             to_update.append({
                 "existing_id": existing_cell.id,
                 "anchor":      f"{site_name}/{cell_name}",
-                "changes":     rec,
-                "is_rename":   False,
+                "changes":     rec, "is_rename": False,
             })
         else:
             to_create.append(rec)
 
     return {
-        "to_create":       to_create,
-        "to_update":       to_update,
+        "to_create": to_create, "to_update": to_update,
         "sites_to_create": sites_to_create,
-        "errors":          errors,
-        "dry_run":         dry_run,
+        "errors": errors, "dry_run": dry_run,
     }
 
 
@@ -468,7 +408,12 @@ def parse_cell3g_excel(file_bytes, db=None, dry_run=False):
         return {
             "chung_anten": _v(row, "Chung anten", "chung_anten"),
             "arfcn":       _v(row, "ARFCN", "arfcn"),
-            "psc":         _v(row, "PSC",   "psc"),
+            "uarfcn":      _v(row, "UARFCN", "uarfcn"),
+            "lac":         _v(row, "LAC", "lac"),
+            "rac":         _v(row, "RAC", "rac"),
+            "psc":         _v(row, "PSC", "psc"),
+            "ura_id":      _v(row, "URAId", "URA ID", "ura_id"),
+            "cpich_power": _v(row, "CPICH power (dBm)", "CPICH power", "cpich_power"),
         }
     return _parse_cell_excel(file_bytes, Cell3G, extra, db=db, dry_run=dry_run)
 
@@ -478,9 +423,13 @@ def parse_cell4g_excel(file_bytes, db=None, dry_run=False):
     def extra(row):
         return {
             "chung_anten":      _v(row, "Chung anten",     "chung_anten"),
+            "enodeb_id":        _v(row, "EnodeB ID",       "enodeb_id"),
             "earfcn":           _v(row, "EARFCN",           "earfcn"),
+            "tac":              _v(row, "TAC",              "tac"),
             "pci":              _v(row, "PCI",              "pci"),
             "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
+            "bandwidth":        _v(row, "Bandwitdh", "Bandwidth", "bandwidth"),
+            "eci":              _v(row, "ECI",              "eci"),
         }
     return _parse_cell_excel(file_bytes, Cell4G, extra, db=db, dry_run=dry_run)
 
@@ -489,8 +438,15 @@ def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_5g import Cell5G
     def extra(row):
         return {
-            "nr_arfcn":         _v(row, "NR-ARFCN",        "nr_arfcn"),
+            "gnodeb_id":        _v(row, "gNodeB ID",       "gnodeb_id"),
+            "tac":              _v(row, "TAC",              "tac"),
             "pci":              _v(row, "PCI",              "pci"),
             "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
+            "ssb_arfcn":        _v(row, "SSB-ARFCN",        "ssb_arfcn"),
+            "center_arfcn":     _v(row, "Center-ARFCN",     "center_arfcn"),
+            "gscn":             _v(row, "GSCN",             "gscn"),
+            "bandwidth":        _v(row, "Bandwidth (MHz)", "Bandwidth", "bandwidth"),
+            "nci":              _v(row, "NCI",              "nci"),
+            "mu_mimo":          _v(row, "MU-MIMO",          "mu_mimo"),
         }
     return _parse_cell_excel(file_bytes, Cell5G, extra, db=db, dry_run=dry_run)

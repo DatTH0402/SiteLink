@@ -51,13 +51,10 @@ export default function Cells3GPage() {
     load()
     getSites({ limit: 2000 }).then(setSites)
     getAntennaList().then((list: AntennaItem[]) => {
-      // Move "CHƯA XÁC ĐỊNH" to first position
       const sorted = [...list].sort((a, b) => {
-        const aIsUnknown = a.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || a.name.toUpperCase().includes('CHUA XAC DINH')
-        const bIsUnknown = b.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || b.name.toUpperCase().includes('CHUA XAC DINH')
-        if (aIsUnknown) return -1
-        if (bIsUnknown) return 1
-        return 0
+        const aU = a.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || a.name.toUpperCase().includes('CHUA XAC DINH')
+        const bU = b.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || b.name.toUpperCase().includes('CHUA XAC DINH')
+        if (aU) return -1; if (bU) return 1; return 0
       })
       setAntennaList(sorted)
     })
@@ -66,13 +63,10 @@ export default function Cells3GPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells3G({
-        search: search || undefined, mien: mien || undefined,
-        tinh: tinh || undefined, vendor: vendor || undefined,
-      })
+      await exportCells3G({ search: search || undefined, mien: mien || undefined,
+        tinh: tinh || undefined, vendor: vendor || undefined })
       message.success(`Xuất Excel thành công (${data.length} cells)`)
-    } catch (e: any) {
-      message.error(e?.message || 'Xuất thất bại')
+    } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
 
@@ -87,13 +81,8 @@ export default function Cells3GPage() {
   const handleSave = async () => {
     const values = await form.validateFields()
     try {
-      if (editing) {
-        await cells3gApi.update(editing.id, values)
-        message.success('Cập nhật thành công')
-      } else {
-        await cells3gApi.create(values)
-        message.success('Tạo cell thành công')
-      }
+      if (editing) { await cells3gApi.update(editing.id, values); message.success('Cập nhật thành công') }
+      else         { await cells3gApi.create(values);             message.success('Tạo cell thành công') }
       setModalOpen(false); load()
     } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
@@ -103,8 +92,7 @@ export default function Cells3GPage() {
   }
 
   const columns: ColumnsType<Cell3G> = [
-    {
-      title: 'Hành động', key: 'action', fixed: 'left', width: 90,
+    { title: 'Hành động', key: 'action', fixed: 'left', width: 90,
       render: (_: unknown, r: Cell3G) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
@@ -112,16 +100,15 @@ export default function Cells3GPage() {
             <Button size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
-      ),
-    },
+      )},
     { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70  },
     { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
     { title: 'Phường/Xã',     dataIndex: 'phuong_xa',                    width: 160 },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Site Name',     dataIndex: 'site_name',     fixed: 'left', width: 220,
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name',     dataIndex: 'cell_name',     fixed: 'left', width: 220,
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
@@ -140,10 +127,17 @@ export default function Cells3GPage() {
     { title: 'Baseband',      dataIndex: 'baseband',      width: 120 },
     { title: 'RF',            dataIndex: 'rf',            width: 100 },
     { title: 'Cell ID',       dataIndex: 'cell_id',       width: 100 },
-    { title: 'ARFCN',         dataIndex: 'arfcn',         width: 90  },
+    { title: 'UARFCN',        dataIndex: 'uarfcn',        width: 100 },
+    { title: 'LAC',           dataIndex: 'lac',           width: 80  },
+    { title: 'RAC',           dataIndex: 'rac',           width: 80  },
     { title: 'PSC',           dataIndex: 'psc',           width: 80  },
     { title: 'MIMO', dataIndex: 'mimo', width: 80,
       render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+    { title: 'URAId',              dataIndex: 'ura_id',        width: 80  },
+    { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 160 },
+    { title: 'CPICH power (dBm)',  dataIndex: 'cpich_power',   width: 150 },
+    { title: 'BBUname',            dataIndex: 'bbu_name',      width: 130 },
+    { title: 'Cell status',        dataIndex: 'cell_status',   width: 140 },
   ]
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
@@ -199,7 +193,7 @@ export default function Cells3GPage() {
 
       <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
-             width={860} okText="Lưu" destroyOnClose>
+             width={900} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}>
@@ -212,138 +206,67 @@ export default function Cells3GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={12}>
-              <Form.Item name="site_name_old" label="Site Name Old">
-                <Input placeholder="Tên site cũ (nếu có)" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="site_name" label="Site Name">
-                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="cell_name_old" label="Cell Name Old">
-                <Input placeholder="Tên cell cũ (nếu có)" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="cell_vip" label="Cell VIP">
-                <Select allowClear>
-                  <Select.Option value="VIP">VIP</Select.Option>
-                  <Select.Option value="VVIP">VVIP</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="moran" label="MORAN">
-                <Select allowClear>
-                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
-                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="lat" label="Lat (8.33 – 23.39)" rules={[{ validator: latValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} placeholder="8.33 – 23.39" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="long" label="Long (102.14 – 109.47)" rules={[{ validator: lonValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} placeholder="102.14 – 109.47" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-                <Select allowClear>
-                  <Select.Option value="Indoor">Indoor</Select.Option>
-                  <Select.Option value="Outdoor">Outdoor</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="vendor" label="Vendor">
-                <Select allowClear>
-                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v =>
-                    <Select.Option key={v} value={v}>{v}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="do_cao_anten" label="Độ cao anten (m)">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0 – 359)" rules={[{ validator: azimuthValidator }]}>
-                <InputNumber style={{ width: '100%' }} min={0} max={359} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="m_tilt" label="M-tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="e_tilt" label="E-Tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="total_tilt" label="Total Tilt">
-                <InputNumber style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={24}>
-              <Form.Item name="loai_anten" label="Loại Anten">
-                <Select showSearch allowClear placeholder="Chọn loại anten..."
-                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="chung_anten" label="Chung anten">
-                <Select allowClear placeholder="Chọn chung anten...">
-                  {CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="baseband" label="Baseband"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="rf" label="RF"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="arfcn" label="ARFCN"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="psc" label="PSC"><Input /></Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="mimo" label="MIMO">
-                <Select allowClear>
-                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
+            <Col span={12}><Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item></Col>
+            <Col span={12}><Form.Item name="site_name" label="Site Name">
+              <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
+            </Form.Item></Col>
+            <Col span={12}><Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item></Col>
+            <Col span={12}><Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={6}><Form.Item name="cell_vip" label="Cell VIP">
+              <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={6}><Form.Item name="moran" label="MORAN">
+              <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}>
+              <InputNumber style={{ width: '100%' }} precision={5} />
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}>
+              <InputNumber style={{ width: '100%' }} precision={5} />
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
+              <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="vendor" label="Vendor">
+              <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}>
+              <InputNumber style={{ width: '100%' }} min={0} max={359} />
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
+              <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+              </Select>
+            </Form.Item></Col>
+            <Col span={12}><Form.Item name="chung_anten" label="Chung anten">
+              <Select allowClear>{CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="uarfcn" label="UARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="lac" label="LAC"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="rac" label="RAC"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="psc" label="PSC"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="mimo" label="MIMO">
+              <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="ura_id" label="URAId"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cpich_power" label="CPICH power (dBm)"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
+            <Col span={16}><Form.Item name="cell_status" label="Cell status (at dump time)"><Input /></Form.Item></Col>
           </Row>
         </Form>
       </Modal>
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 3G từ Excel" templateKey="cell-3g"
-        dryRunFn={cells3gApi.dryRunExcel} importFn={cells3gApi.importExcel}
-        onSuccess={load} />
+        dryRunFn={cells3gApi.dryRunExcel} importFn={cells3gApi.importExcel} onSuccess={load} />
     </div>
   )
 }

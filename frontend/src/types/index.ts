@@ -63,25 +63,44 @@ export interface CellBase {
   rf?: string
   cell_id?: string
   mimo?: string
+  bbu_name?: string
+  cell_status?: string
+  cell_max_power?: string
 }
 
 export interface Cell3G extends CellBase {
   chung_anten?: string
   arfcn?: string
+  uarfcn?: string
+  lac?: string
+  rac?: string
   psc?: string
+  ura_id?: string
+  cpich_power?: string
 }
 
 export interface Cell4G extends CellBase {
   chung_anten?: string
+  enodeb_id?: string
   earfcn?: string
+  tac?: string
   pci?: string
   root_sequence_id?: string
+  bandwidth?: string
+  eci?: string
 }
 
 export interface Cell5G extends CellBase {
-  nr_arfcn?: string
+  gnodeb_id?: string
+  tac?: string
   pci?: string
   root_sequence_id?: string
+  ssb_arfcn?: string
+  center_arfcn?: string
+  gscn?: string
+  bandwidth?: string
+  nci?: string
+  mu_mimo?: string
 }
 
 export interface ReportRow {

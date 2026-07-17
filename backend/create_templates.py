@@ -3,12 +3,6 @@ create_templates.py
 -------------------
 Generates Excel template files for import.
 Run once: python create_templates.py
-
-Features:
-- Drop-down lists for enumerated columns (Cell VIP, MORAN, Vendor, etc.)
-- Data validation for numeric columns (Lat, Long, Azimuth)
-- No guide/note row – templates start with headers on row 1, data from row 2
-- "CHƯA XÁC ĐỊNH" is listed first in Loai Anten if present
 """
 import os
 import openpyxl
@@ -28,83 +22,53 @@ LEFT          = Alignment(horizontal="left",   vertical="center", wrap_text=True
 THIN          = Side(style="thin", color="BFBFBF")
 BORDER        = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-# ── Validation constants ───────────────────────────────────────────────────────
 VN_LAT_MIN, VN_LAT_MAX = 8.33,   23.39
 VN_LON_MIN, VN_LON_MAX = 102.14, 109.47
 AZI_MIN,    AZI_MAX    = 0,       359
 
-# ── Drop-list values ───────────────────────────────────────────────────────────
-MIEN_LIST        = ["MB", "MT", "MN"]
-CELL_VIP_LIST    = ["VIP", "VVIP"]
-MORAN_LIST       = ["VNPT HOST", "MBF HOST"]
-VENDOR_LIST      = ["Ericsson", "Nokia", "Huawei", "ZTE", "Samsung"]
-VUNG_PHU_SONG    = ["Indoor", "Outdoor"]
-MIMO_LIST        = ["2x2", "4x4", "8x8"]
-SITE_VIP_LIST    = ["VIP", "VVIP"]
-PHAN_LOAI_LIST   = ["IBC", "Macro outdoor", "IBC + Outdoor", "Smallcell", "miniDAS"]
-CHUNG_ANTEN_3G   = ["3G", "3G/4G", "2G/3G/4G", "3G/4G/5G", "3G/5G"]
-CHUNG_ANTEN_4G   = ["4G", "2G/4G", "3G/4G", "2G/3G/4G", "4G/5G"]
-BOOL_LIST        = ["x", ""]   # for checkbox-style columns
+MIEN_LIST     = ["MB", "MT", "MN"]
+CELL_VIP_LIST = ["VIP", "VVIP"]
+MORAN_LIST    = ["VNPT HOST", "MBF HOST"]
+VENDOR_LIST   = ["Ericsson", "Nokia", "Huawei", "ZTE", "Samsung"]
+VUNG_PHU_SONG = ["Indoor", "Outdoor"]
+MIMO_LIST     = ["2x2", "4x4", "8x8"]
+SITE_VIP_LIST = ["VIP", "VVIP"]
+PHAN_LOAI_LIST = ["IBC", "Macro outdoor", "IBC + Outdoor", "Smallcell", "miniDAS"]
+CHUNG_ANTEN_3G = ["3G", "3G/4G", "2G/3G/4G", "3G/4G/5G", "3G/5G"]
+CHUNG_ANTEN_4G = ["4G", "2G/4G", "3G/4G", "2G/3G/4G", "4G/5G"]
+BOOL_LIST      = ["x", ""]
+MU_MIMO_LIST   = ["Yes", "No"]
 
 
-def _list_formula(values: list) -> str:
-    """Build an Excel list formula from a Python list."""
-    joined = ",".join(f'"{v}"' for v in values)
-    return f'"{",".join(values)}"'
-
-
-def _dv_list(ws, col_letter: str, values: list,
-             start_row: int = 2, end_row: int = 1000,
-             error_msg: str = "Vui lòng chọn từ danh sách"):
-    """Add a dropdown DataValidation to a column."""
+def _dv_list(ws, col_letter, values, start_row=2, end_row=1000, error_msg="Vui lòng chọn từ danh sách"):
     joined = ",".join(values)
     dv = DataValidation(
-        type="list",
-        formula1=f'"{joined}"',
-        allow_blank=True,
-        showDropDown=False,  # False = show the arrow button
+        type="list", formula1=f'"{joined}"',
+        allow_blank=True, showDropDown=False,
         showErrorMessage=True,
-        errorTitle="Giá trị không hợp lệ",
-        error=error_msg,
+        errorTitle="Giá trị không hợp lệ", error=error_msg,
     )
     dv.sqref = f"{col_letter}{start_row}:{col_letter}{end_row}"
     ws.add_data_validation(dv)
 
 
-def _dv_decimal(ws, col_letter: str,
-                min_val: float, max_val: float,
-                start_row: int = 2, end_row: int = 1000,
-                error_msg: str = "Giá trị ngoài phạm vi"):
-    """Add a decimal-range DataValidation to a column."""
+def _dv_decimal(ws, col_letter, min_val, max_val, start_row=2, end_row=1000, error_msg="Giá trị ngoài phạm vi"):
     dv = DataValidation(
-        type="decimal",
-        operator="between",
-        formula1=str(min_val),
-        formula2=str(max_val),
-        allow_blank=True,
-        showErrorMessage=True,
-        errorStyle="warning",   # warning = allow override; "stop" = block
-        errorTitle="Giá trị ngoài phạm vi",
-        error=error_msg,
+        type="decimal", operator="between",
+        formula1=str(min_val), formula2=str(max_val),
+        allow_blank=True, showErrorMessage=True,
+        errorStyle="warning", errorTitle="Giá trị ngoài phạm vi", error=error_msg,
     )
     dv.sqref = f"{col_letter}{start_row}:{col_letter}{end_row}"
     ws.add_data_validation(dv)
 
 
-def _dv_whole(ws, col_letter: str,
-              min_val: int, max_val: int,
-              start_row: int = 2, end_row: int = 1000,
-              error_msg: str = "Giá trị ngoài phạm vi"):
+def _dv_whole(ws, col_letter, min_val, max_val, start_row=2, end_row=1000, error_msg="Giá trị ngoài phạm vi"):
     dv = DataValidation(
-        type="whole",
-        operator="between",
-        formula1=str(min_val),
-        formula2=str(max_val),
-        allow_blank=True,
-        showErrorMessage=True,
-        errorStyle="warning",
-        errorTitle="Giá trị ngoài phạm vi",
-        error=error_msg,
+        type="whole", operator="between",
+        formula1=str(min_val), formula2=str(max_val),
+        allow_blank=True, showErrorMessage=True,
+        errorStyle="warning", errorTitle="Giá trị ngoài phạm vi", error=error_msg,
     )
     dv.sqref = f"{col_letter}{start_row}:{col_letter}{end_row}"
     ws.add_data_validation(dv)
@@ -128,7 +92,7 @@ def add_example_row(ws, row_idx, values):
 
 def finalize(ws, num_cols):
     ws.row_dimensions[1].height = 36
-    ws.freeze_panes = f"A2"
+    ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(num_cols)}1"
 
 
@@ -139,67 +103,53 @@ def create_site_template():
     ws.title = "Sites"
 
     columns = [
-        # (header, required, width)
-        ("Mien",                         False, 10),   # col 1  A
-        ("Tinh",                         True,  22),   # col 2  B
-        ("Phuong xa",                    False, 22),   # col 3  C
-        ("Site name (cu)",               False, 22),   # col 4  D
-        ("Site name",                    True,  25),   # col 5  E
-        ("Site VIP",                     False, 12),   # col 6  F
-        ("Lat",                          False, 14),   # col 7  G
-        ("Long",                         False, 14),   # col 8  H
-        ("Tram 2G",                      False, 10),   # col 9  I
-        ("Tram 3G",                      False, 10),   # col 10 J
-        ("Tram 4G",                      False, 10),   # col 11 K
-        ("Tram 5G",                      False, 10),   # col 12 L
-        ("Repeater",                     False, 10),   # col 13 M
-        ("Booster",                      False, 10),   # col 14 N
-        ("Node truyen dan only",         False, 20),   # col 15 O
-        ("Tram phu song TSCA",           False, 18),   # col 16 P
-        ("Phan loai tram",               False, 22),   # col 17 Q
-        ("MORAN 3G",                     False, 15),   # col 18 R
-        ("MORAN 4G",                     False, 15),   # col 19 S
-        ("MORAN 5G",                     False, 15),   # col 20 T
-        ("Ma PTM",                       False, 14),   # col 21 U
-        ("Do cao dinh cot anten",        False, 22),   # col 22 V
-        ("Do cao cot anten",             False, 20),   # col 23 W
-        ("Dia chi",                      False, 30),   # col 24 X
-        ("Ghi chu",                      False, 30),   # col 25 Y
+        ("Mien",                         False, 10),
+        ("Tinh",                         True,  22),
+        ("Phuong xa",                    False, 22),
+        ("Site name (cu)",               False, 22),
+        ("Site name",                    True,  25),
+        ("Site VIP",                     False, 12),
+        ("Lat",                          False, 14),
+        ("Long",                         False, 14),
+        ("Tram 2G",                      False, 10),
+        ("Tram 3G",                      False, 10),
+        ("Tram 4G",                      False, 10),
+        ("Tram 5G",                      False, 10),
+        ("Repeater",                     False, 10),
+        ("Booster",                      False, 10),
+        ("Node truyen dan only",         False, 20),
+        ("Tram phu song TSCA",           False, 18),
+        ("Phan loai tram",               False, 22),
+        ("MORAN 3G",                     False, 15),
+        ("MORAN 4G",                     False, 15),
+        ("MORAN 5G",                     False, 15),
+        ("Ma PTM",                       False, 14),
+        ("Do cao dinh cot anten",        False, 22),
+        ("Do cao cot anten",             False, 20),
+        ("Dia chi",                      False, 30),
+        ("Ghi chu",                      False, 30),
     ]
 
     for i, (hdr, req, w) in enumerate(columns, start=1):
         style_header(ws, i, hdr, required=req, width=w)
 
     num_cols = len(columns)
-
-    # ── Data validations ───────────────────────────────────────────────
-    # Mien (col A=1)
-    _dv_list(ws, "A", MIEN_LIST, error_msg="Chọn: MB, MT hoặc MN")
-    # Site VIP (col F=6)
-    _dv_list(ws, "F", SITE_VIP_LIST, error_msg="Chọn: VIP hoặc VVIP")
-    # Lat (col G=7)
-    _dv_decimal(ws, "G", VN_LAT_MIN, VN_LAT_MAX,
-                error_msg=f"Latitude phải trong khoảng {VN_LAT_MIN}–{VN_LAT_MAX} (Việt Nam)")
-    # Long (col H=8)
-    _dv_decimal(ws, "H", VN_LON_MIN, VN_LON_MAX,
-                error_msg=f"Longitude phải trong khoảng {VN_LON_MIN}–{VN_LON_MAX} (Việt Nam)")
-    # Boolean columns: Tram 2G..TSCA (cols I-P = 9-16)
+    _dv_list(ws, "A", MIEN_LIST)
+    _dv_list(ws, "F", SITE_VIP_LIST)
+    _dv_decimal(ws, "G", VN_LAT_MIN, VN_LAT_MAX)
+    _dv_decimal(ws, "H", VN_LON_MIN, VN_LON_MAX)
     for col_letter in ["I","J","K","L","M","N","O","P"]:
-        _dv_list(ws, col_letter, BOOL_LIST, error_msg='Nhập "x" nếu có, để trống nếu không')
-    # Phan loai tram (col Q=17)
-    _dv_list(ws, "Q", PHAN_LOAI_LIST, error_msg="Chọn từ danh sách phân loại trạm")
-    # MORAN 3G/4G/5G (cols R,S,T = 18,19,20)
+        _dv_list(ws, col_letter, BOOL_LIST)
+    _dv_list(ws, "Q", PHAN_LOAI_LIST)
     for col_letter in ["R","S","T"]:
-        _dv_list(ws, col_letter, MORAN_LIST, error_msg="Chọn: VNPT HOST hoặc MBF HOST")
+        _dv_list(ws, col_letter, MORAN_LIST)
 
-    # ── Example row (row 2) ────────────────────────────────────────────
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa", "HN-001-OLD",
         "HN-001", "VIP", 21.0285, 105.8542,
         "x", "x", "x", "x", "", "", "", "",
         "Macro outdoor", "MBF HOST", "MBF HOST", "",
-        "PTM-001", 35.5, 30.0,
-        "So 1, Duong ABC, Quan Cau Giay, Ha Noi", ""
+        "PTM-001", 35.5, 30.0, "So 1, Duong ABC, Ha Noi", ""
     ]
     add_example_row(ws, 2, example)
     finalize(ws, num_cols)
@@ -210,38 +160,48 @@ def create_site_template():
 
 
 # ── CELL 3G template ──────────────────────────────────────────────────────────
+# Required columns per spec:
+# Baseband | RF | Cell ID | UARFCN | LAC | RAC | PSC | MIMO |
+# URAId | Cell max power (dBm) | CPICH power (dBm) | BBUname | Cell status (at dump time)
 def create_cell3g_template():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Cells_3G"
 
     columns = [
-        ("Mien",           False, 10),   #  1 A
-        ("Tinh",           False, 22),   #  2 B
-        ("Phuong xa",      False, 22),   #  3 C
-        ("Site Name Old",  False, 25),   #  4 D
-        ("Cell Name Old",  False, 25),   #  5 E
-        ("Site Name",      True,  25),   #  6 F
-        ("Cell Name",      True,  25),   #  7 G
-        ("Cell VIP",       False, 12),   #  8 H
-        ("MORAN",          False, 15),   #  9 I
-        ("Lat",            False, 14),   # 10 J
-        ("Long",           False, 14),   # 11 K
-        ("Vung phu song",  False, 15),   # 12 L
-        ("Vendor",         False, 14),   # 13 M
-        ("Do cao anten",   False, 15),   # 14 N
-        ("Azimuth",        False, 12),   # 15 O
-        ("M-tilt",         False, 10),   # 16 P
-        ("E-Tilt",         False, 10),   # 17 Q
-        ("Total Tilt",     False, 12),   # 18 R
-        ("Loai Anten",     False, 30),   # 19 S
-        ("Chung anten",    False, 18),   # 20 T
-        ("Baseband",       False, 18),   # 21 U
-        ("RF",             False, 14),   # 22 V
-        ("Cell ID",        False, 14),   # 23 W
-        ("ARFCN",          False, 12),   # 24 X
-        ("PSC",            False, 10),   # 25 Y
-        ("MIMO",           False, 10),   # 26 Z
+        ("Mien",                       False, 10),   #  1  A
+        ("Tinh",                       False, 22),   #  2  B
+        ("Phuong xa",                  False, 22),   #  3  C
+        ("Site Name Old",              False, 25),   #  4  D
+        ("Cell Name Old",              False, 25),   #  5  E
+        ("Site Name",                  True,  25),   #  6  F
+        ("Cell Name",                  True,  25),   #  7  G
+        ("Cell VIP",                   False, 12),   #  8  H
+        ("MORAN",                      False, 15),   #  9  I
+        ("Lat",                        False, 14),   # 10  J
+        ("Long",                       False, 14),   # 11  K
+        ("Vung phu song",              False, 15),   # 12  L
+        ("Vendor",                     False, 14),   # 13  M
+        ("Do cao anten",               False, 15),   # 14  N
+        ("Azimuth",                    False, 12),   # 15  O
+        ("M-tilt",                     False, 10),   # 16  P
+        ("E-Tilt",                     False, 10),   # 17  Q
+        ("Total Tilt",                 False, 12),   # 18  R
+        ("Loai Anten",                 False, 30),   # 19  S
+        ("Chung anten",                False, 18),   # 20  T
+        ("Baseband",                   False, 18),   # 21  U
+        ("RF",                         False, 14),   # 22  V
+        ("Cell ID",                    False, 14),   # 23  W
+        ("UARFCN",                     False, 12),   # 24  X
+        ("LAC",                        False, 10),   # 25  Y
+        ("RAC",                        False, 10),   # 26  Z
+        ("PSC",                        False, 10),   # 27  AA
+        ("MIMO",                       False, 10),   # 28  AB
+        ("URAId",                      False, 10),   # 29  AC
+        ("Cell max power (dBm)",       False, 20),   # 30  AD
+        ("CPICH power (dBm)",          False, 18),   # 31  AE
+        ("BBUname",                    False, 16),   # 32  AF
+        ("Cell status (at dump time)", False, 24),   # 33  AG
     ]
 
     for i, (hdr, req, w) in enumerate(columns, start=1):
@@ -249,32 +209,17 @@ def create_cell3g_template():
 
     num_cols = len(columns)
 
-    # ── Data validations ───────────────────────────────────────────────
     _dv_list(ws, "A", MIEN_LIST)
-    # Cell VIP (H=8)
     _dv_list(ws, "H", CELL_VIP_LIST)
-    # MORAN (I=9)
-    _dv_list(ws, "I", MORAN_LIST, error_msg="Chọn: VNPT HOST hoặc MBF HOST")
-    # Lat (J=10)
-    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX,
-                error_msg=f"Latitude phải trong khoảng {VN_LAT_MIN}–{VN_LAT_MAX}")
-    # Long (K=11)
-    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX,
-                error_msg=f"Longitude phải trong khoảng {VN_LON_MIN}–{VN_LON_MAX}")
-    # Vung phu song (L=12)
+    _dv_list(ws, "I", MORAN_LIST)
+    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX)
+    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX)
     _dv_list(ws, "L", VUNG_PHU_SONG)
-    # Vendor (M=13)
     _dv_list(ws, "M", VENDOR_LIST)
-    # Azimuth (O=15)
-    _dv_whole(ws, "O", AZI_MIN, AZI_MAX,
-              error_msg=f"Azimuth phải trong khoảng {AZI_MIN}–{AZI_MAX}")
-    # Chung anten (T=20)
-    _dv_list(ws, "T", CHUNG_ANTEN_3G,
-             error_msg="Chọn: " + ", ".join(CHUNG_ANTEN_3G))
-    # MIMO (Z=26)
-    _dv_list(ws, "Z", MIMO_LIST)
+    _dv_whole(ws, "O", AZI_MIN, AZI_MAX)
+    _dv_list(ws, "T", CHUNG_ANTEN_3G)
+    _dv_list(ws, "AB", MIMO_LIST)
 
-    # ── Example row ────────────────────────────────────────────────────
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
         "HN-001-OLD", "HN-001-3G-1-OLD",
@@ -283,7 +228,17 @@ def create_cell3g_template():
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei ATR4518R10v06", "3G", "BBU3910", "RRU3908",
-        "12345", "10562", "100", "2x2"
+        "12345",      # Cell ID
+        "10562",      # UARFCN
+        "1234",       # LAC
+        "10",         # RAC
+        "100",        # PSC
+        "2x2",        # MIMO
+        "1",          # URAId
+        "43",         # Cell max power (dBm)
+        "33",         # CPICH power (dBm)
+        "BBU-HN-001", # BBUname
+        "Active",     # Cell status
     ]
     add_example_row(ws, 2, example)
     finalize(ws, num_cols)
@@ -294,39 +249,49 @@ def create_cell3g_template():
 
 
 # ── CELL 4G template ──────────────────────────────────────────────────────────
+# Required columns per spec:
+# Baseband | RF | EnodeB ID | Cell ID | EARFCN | TAC | PCI | Root Sequence ID |
+# MIMO | Bandwidth | Cell max power (dBm) | ECI | BBUname | Cell status (at dump time)
 def create_cell4g_template():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Cells_4G"
 
     columns = [
-        ("Mien",             False, 10),   #  1 A
-        ("Tinh",             False, 22),   #  2 B
-        ("Phuong xa",        False, 22),   #  3 C
-        ("Site Name Old",    False, 25),   #  4 D
-        ("Cell Name Old",    False, 25),   #  5 E
-        ("Site Name",        True,  25),   #  6 F
-        ("Cell Name",        True,  25),   #  7 G
-        ("Cell VIP",         False, 12),   #  8 H
-        ("MORAN",            False, 15),   #  9 I
-        ("Lat",              False, 14),   # 10 J
-        ("Long",             False, 14),   # 11 K
-        ("Vung phu song",    False, 15),   # 12 L
-        ("Vendor",           False, 14),   # 13 M
-        ("Do cao anten",     False, 15),   # 14 N
-        ("Azimuth",          False, 12),   # 15 O
-        ("M-tilt",           False, 10),   # 16 P
-        ("E-Tilt",           False, 10),   # 17 Q
-        ("Total Tilt",       False, 12),   # 18 R
-        ("Loai Anten",       False, 30),   # 19 S
-        ("Chung anten",      False, 18),   # 20 T
-        ("Baseband",         False, 18),   # 21 U
-        ("RF",               False, 14),   # 22 V
-        ("Cell ID",          False, 14),   # 23 W
-        ("EARFCN",           False, 12),   # 24 X
-        ("PCI",              False, 10),   # 25 Y
-        ("Root Sequence ID", False, 18),   # 26 Z
-        ("MIMO",             False, 10),   # 27 AA
+        ("Mien",                       False, 10),   #  1  A
+        ("Tinh",                       False, 22),   #  2  B
+        ("Phuong xa",                  False, 22),   #  3  C
+        ("Site Name Old",              False, 25),   #  4  D
+        ("Cell Name Old",              False, 25),   #  5  E
+        ("Site Name",                  True,  25),   #  6  F
+        ("Cell Name",                  True,  25),   #  7  G
+        ("Cell VIP",                   False, 12),   #  8  H
+        ("MORAN",                      False, 15),   #  9  I
+        ("Lat",                        False, 14),   # 10  J
+        ("Long",                       False, 14),   # 11  K
+        ("Vung phu song",              False, 15),   # 12  L
+        ("Vendor",                     False, 14),   # 13  M
+        ("Do cao anten",               False, 15),   # 14  N
+        ("Azimuth",                    False, 12),   # 15  O
+        ("M-tilt",                     False, 10),   # 16  P
+        ("E-Tilt",                     False, 10),   # 17  Q
+        ("Total Tilt",                 False, 12),   # 18  R
+        ("Loai Anten",                 False, 30),   # 19  S
+        ("Chung anten",                False, 18),   # 20  T
+        ("Baseband",                   False, 18),   # 21  U
+        ("RF",                         False, 14),   # 22  V
+        ("EnodeB ID",                  False, 14),   # 23  W
+        ("Cell ID",                    False, 14),   # 24  X
+        ("EARFCN",                     False, 12),   # 25  Y
+        ("TAC",                        False, 10),   # 26  Z
+        ("PCI",                        False, 10),   # 27  AA
+        ("Root Sequence ID",           False, 18),   # 28  AB
+        ("MIMO",                       False, 10),   # 29  AC
+        ("Bandwitdh",                  False, 12),   # 30  AD  (matches spec spelling)
+        ("Cell max power (dBm)",       False, 20),   # 31  AE
+        ("ECI",                        False, 12),   # 32  AF
+        ("BBUname",                    False, 16),   # 33  AG
+        ("Cell status (at dump time)", False, 24),   # 34  AH
     ]
 
     for i, (hdr, req, w) in enumerate(columns, start=1):
@@ -334,25 +299,17 @@ def create_cell4g_template():
 
     num_cols = len(columns)
 
-    # ── Data validations ───────────────────────────────────────────────
     _dv_list(ws, "A", MIEN_LIST)
     _dv_list(ws, "H", CELL_VIP_LIST)
-    _dv_list(ws, "I", MORAN_LIST, error_msg="Chọn: VNPT HOST hoặc MBF HOST")
-    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX,
-                error_msg=f"Latitude phải trong khoảng {VN_LAT_MIN}–{VN_LAT_MAX}")
-    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX,
-                error_msg=f"Longitude phải trong khoảng {VN_LON_MIN}–{VN_LON_MAX}")
+    _dv_list(ws, "I", MORAN_LIST)
+    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX)
+    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX)
     _dv_list(ws, "L", VUNG_PHU_SONG)
     _dv_list(ws, "M", VENDOR_LIST)
-    _dv_whole(ws, "O", AZI_MIN, AZI_MAX,
-              error_msg=f"Azimuth phải trong khoảng {AZI_MIN}–{AZI_MAX}")
-    # Chung anten (T=20) – 4G list
-    _dv_list(ws, "T", CHUNG_ANTEN_4G,
-             error_msg="Chọn: " + ", ".join(CHUNG_ANTEN_4G))
-    # MIMO (AA=27)
-    _dv_list(ws, "AA", MIMO_LIST)
+    _dv_whole(ws, "O", AZI_MIN, AZI_MAX)
+    _dv_list(ws, "T", CHUNG_ANTEN_4G)
+    _dv_list(ws, "AC", MIMO_LIST)
 
-    # ── Example row ────────────────────────────────────────────────────
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
         "HN-001-OLD", "HN-001-4G-1-OLD",
@@ -361,7 +318,18 @@ def create_cell4g_template():
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei ATR4518R10v06", "4G", "BBU5900", "RRU5258",
-        "67890", "1825", "100", "0", "4x4"
+        "12345",      # EnodeB ID
+        "67890",      # Cell ID
+        "1825",       # EARFCN
+        "1234",       # TAC
+        "100",        # PCI
+        "0",          # Root Sequence ID
+        "4x4",        # MIMO
+        "20",         # Bandwidth
+        "46",         # Cell max power (dBm)
+        "1234567890", # ECI
+        "BBU-HN-001", # BBUname
+        "Active",     # Cell status
     ]
     add_example_row(ws, 2, example)
     finalize(ws, num_cols)
@@ -372,38 +340,52 @@ def create_cell4g_template():
 
 
 # ── CELL 5G template ──────────────────────────────────────────────────────────
+# Required columns per spec:
+# Baseband | RF | gNodeB ID | Cell ID | TAC | PCI | Root Sequence ID | MIMO |
+# SSB-ARFCN | Center-ARFCN | GSCN | Bandwidth (MHz) | Cell max power (dBm) |
+# NCI | BBUname | MU-MIMO | Cell status (at dump time)
 def create_cell5g_template():
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Cells_5G"
 
     columns = [
-        ("Mien",             False, 10),   #  1 A
-        ("Tinh",             False, 22),   #  2 B
-        ("Phuong xa",        False, 22),   #  3 C
-        ("Site Name Old",    False, 25),   #  4 D
-        ("Cell Name Old",    False, 25),   #  5 E
-        ("Site Name",        True,  25),   #  6 F
-        ("Cell Name",        True,  25),   #  7 G
-        ("Cell VIP",         False, 12),   #  8 H
-        ("MORAN",            False, 15),   #  9 I
-        ("Lat",              False, 14),   # 10 J
-        ("Long",             False, 14),   # 11 K
-        ("Vung phu song",    False, 15),   # 12 L
-        ("Vendor",           False, 14),   # 13 M
-        ("Do cao anten",     False, 15),   # 14 N
-        ("Azimuth",          False, 12),   # 15 O
-        ("M-tilt",           False, 10),   # 16 P
-        ("E-Tilt",           False, 10),   # 17 Q
-        ("Total Tilt",       False, 12),   # 18 R
-        ("Loai Anten",       False, 30),   # 19 S
-        ("Baseband",         False, 18),   # 20 T
-        ("RF",               False, 14),   # 21 U
-        ("Cell ID",          False, 14),   # 22 V
-        ("NR-ARFCN",         False, 12),   # 23 W
-        ("PCI",              False, 10),   # 24 X
-        ("Root Sequence ID", False, 18),   # 25 Y
-        ("MIMO",             False, 10),   # 26 Z
+        ("Mien",                       False, 10),   #  1  A
+        ("Tinh",                       False, 22),   #  2  B
+        ("Phuong xa",                  False, 22),   #  3  C
+        ("Site Name Old",              False, 25),   #  4  D
+        ("Cell Name Old",              False, 25),   #  5  E
+        ("Site Name",                  True,  25),   #  6  F
+        ("Cell Name",                  True,  25),   #  7  G
+        ("Cell VIP",                   False, 12),   #  8  H
+        ("MORAN",                      False, 15),   #  9  I
+        ("Lat",                        False, 14),   # 10  J
+        ("Long",                       False, 14),   # 11  K
+        ("Vung phu song",              False, 15),   # 12  L
+        ("Vendor",                     False, 14),   # 13  M
+        ("Do cao anten",               False, 15),   # 14  N
+        ("Azimuth",                    False, 12),   # 15  O
+        ("M-tilt",                     False, 10),   # 16  P
+        ("E-Tilt",                     False, 10),   # 17  Q
+        ("Total Tilt",                 False, 12),   # 18  R
+        ("Loai Anten",                 False, 30),   # 19  S
+        ("Baseband",                   False, 18),   # 20  T
+        ("RF",                         False, 14),   # 21  U
+        ("gNodeB ID",                  False, 14),   # 22  V
+        ("Cell ID",                    False, 14),   # 23  W
+        ("TAC",                        False, 10),   # 24  X
+        ("PCI",                        False, 10),   # 25  Y
+        ("Root Sequence ID",           False, 18),   # 26  Z
+        ("MIMO",                       False, 10),   # 27  AA
+        ("SSB-ARFCN",                  False, 12),   # 28  AB
+        ("Center-ARFCN",               False, 14),   # 29  AC
+        ("GSCN",                       False, 10),   # 30  AD
+        ("Bandwidth (MHz)",            False, 14),   # 31  AE
+        ("Cell max power (dBm)",       False, 20),   # 32  AF
+        ("NCI",                        False, 12),   # 33  AG
+        ("BBUname",                    False, 16),   # 34  AH
+        ("MU-MIMO",                    False, 10),   # 35  AI
+        ("Cell status (at dump time)", False, 24),   # 36  AJ
     ]
 
     for i, (hdr, req, w) in enumerate(columns, start=1):
@@ -411,23 +393,17 @@ def create_cell5g_template():
 
     num_cols = len(columns)
 
-    # ── Data validations ───────────────────────────────────────────────
     _dv_list(ws, "A", MIEN_LIST)
     _dv_list(ws, "H", CELL_VIP_LIST)
-    _dv_list(ws, "I", MORAN_LIST, error_msg="Chọn: VNPT HOST hoặc MBF HOST")
-    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX,
-                error_msg=f"Latitude phải trong khoảng {VN_LAT_MIN}–{VN_LAT_MAX}")
-    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX,
-                error_msg=f"Longitude phải trong khoảng {VN_LON_MIN}–{VN_LON_MAX}")
+    _dv_list(ws, "I", MORAN_LIST)
+    _dv_decimal(ws, "J", VN_LAT_MIN, VN_LAT_MAX)
+    _dv_decimal(ws, "K", VN_LON_MIN, VN_LON_MAX)
     _dv_list(ws, "L", VUNG_PHU_SONG)
     _dv_list(ws, "M", VENDOR_LIST)
-    _dv_whole(ws, "O", AZI_MIN, AZI_MAX,
-              error_msg=f"Azimuth phải trong khoảng {AZI_MIN}–{AZI_MAX}")
-    # MIMO (Z=26)
-    _dv_list(ws, "Z", MIMO_LIST)
-    # Note: 5G has no Chung anten column
+    _dv_whole(ws, "O", AZI_MIN, AZI_MAX)
+    _dv_list(ws, "AA", MIMO_LIST)
+    _dv_list(ws, "AI", MU_MIMO_LIST)
 
-    # ── Example row ────────────────────────────────────────────────────
     example = [
         "MB", "Ha Noi", "Phuong Trung Hoa",
         "HN-001-OLD", "HN-001-5G-1-OLD",
@@ -436,7 +412,21 @@ def create_cell5g_template():
         21.0285, 105.8542, "Outdoor", "Huawei",
         30.0, 45, 2.0, 0.0, 2.0,
         "Huawei AAU5614", "BBU5900", "AAU5614",
-        "11111", "627264", "100", "0", "8x8"
+        "12345",       # gNodeB ID
+        "11111",       # Cell ID
+        "1234",        # TAC
+        "100",         # PCI
+        "0",           # Root Sequence ID
+        "8x8",         # MIMO
+        "627264",      # SSB-ARFCN
+        "630048",      # Center-ARFCN
+        "7999",        # GSCN
+        "100",         # Bandwidth (MHz)
+        "46",          # Cell max power (dBm)
+        "123456789",   # NCI
+        "BBU-HN-001",  # BBUname
+        "Yes",         # MU-MIMO
+        "Active",      # Cell status
     ]
     add_example_row(ws, 2, example)
     finalize(ws, num_cols)
