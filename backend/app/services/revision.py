@@ -1,5 +1,10 @@
 """
 revision.py – Service layer for revision history snapshots.
+
+Rules:
+  - CREATE (old_snapshot is None)  → always record (revision_no=1).
+  - UPDATE with changes            → record with diff.
+  - UPDATE with NO changes         → skip entirely (return None).
 """
 from __future__ import annotations
 
@@ -17,12 +22,15 @@ from app.models.cell_5g import Cell5G
 
 
 def _diff(old: Dict, new: Dict) -> Dict:
+    """Return {field: [old_val, new_val]} for every field that changed."""
     result = {}
     all_keys = set(old) | set(new)
     for k in all_keys:
         ov = old.get(k)
         nv = new.get(k)
-        if ov != nv:
+        # Normalise: treat None and "" as equivalent so that a DB NULL
+        # vs an empty-string from Excel does not produce a false diff.
+        if (ov or None) != (nv or None):
             result[k] = [ov, nv]
     return result
 
@@ -51,6 +59,10 @@ def _next_rev_no_cell5g(db: Session, cell_id_ref: int) -> int:
     return (result or 0) + 1
 
 
+# ── Snapshot helpers ──────────────────────────────────────────────────────────
+# IMPORTANT: every column that the user can edit MUST appear here.
+# Missing columns → _diff() never sees them change → revision silently skipped.
+
 def _site_snapshot(site: Site) -> Dict[str, Any]:
     return {
         "mien": site.mien, "tinh": site.tinh, "phuong_xa": site.phuong_xa,
@@ -62,7 +74,8 @@ def _site_snapshot(site: Site) -> Dict[str, Any]:
         "node_truyen_dan_only": site.node_truyen_dan_only,
         "tram_phu_song_tsca": site.tram_phu_song_tsca,
         "phan_loai_tram": site.phan_loai_tram,
-        "moran_3g": site.moran_3g, "moran_4g": site.moran_4g, "moran_5g": site.moran_5g,
+        "moran_3g": site.moran_3g, "moran_4g": site.moran_4g,
+        "moran_5g": site.moran_5g,
         "ma_ptm": site.ma_ptm,
         "do_cao_dinh_cot_anten": site.do_cao_dinh_cot_anten,
         "do_cao_cot_anten": site.do_cao_cot_anten,
@@ -80,7 +93,8 @@ def _cell3g_snapshot(cell: Cell3G) -> Dict[str, Any]:
         "lat": cell.lat, "long": cell.long,
         "vung_phu_song": cell.vung_phu_song, "vendor": cell.vendor,
         "do_cao_anten": cell.do_cao_anten, "azimuth": cell.azimuth,
-        "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt, "total_tilt": cell.total_tilt,
+        "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt,
+        "total_tilt": cell.total_tilt,
         "loai_anten": cell.loai_anten, "chung_anten": cell.chung_anten,
         "baseband": cell.baseband, "rf": cell.rf, "cell_id": cell.cell_id,
         "arfcn": cell.arfcn, "uarfcn": cell.uarfcn,
@@ -100,7 +114,8 @@ def _cell4g_snapshot(cell: Cell4G) -> Dict[str, Any]:
         "lat": cell.lat, "long": cell.long,
         "vung_phu_song": cell.vung_phu_song, "vendor": cell.vendor,
         "do_cao_anten": cell.do_cao_anten, "azimuth": cell.azimuth,
-        "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt, "total_tilt": cell.total_tilt,
+        "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt,
+        "total_tilt": cell.total_tilt,
         "loai_anten": cell.loai_anten, "chung_anten": cell.chung_anten,
         "baseband": cell.baseband, "rf": cell.rf,
         "enodeb_id": cell.enodeb_id, "cell_id": cell.cell_id,
@@ -113,36 +128,76 @@ def _cell4g_snapshot(cell: Cell4G) -> Dict[str, Any]:
 
 
 def _cell5g_snapshot(cell: Cell5G) -> Dict[str, Any]:
+    """
+    Must include EVERY editable column of Cell5G.
+    Previously missing fields caused _diff() to return {} on real updates,
+    which made record_cell5g_revision() silently return None.
+    """
     return {
-        "site_name": cell.site_name, "site_name_old": cell.site_name_old,
-        "cell_name": cell.cell_name, "cell_name_old": cell.cell_name_old,
-        "mien": cell.mien, "tinh": cell.tinh, "phuong_xa": cell.phuong_xa,
-        "cell_vip": cell.cell_vip, "moran": cell.moran,
-        "lat": cell.lat, "long": cell.long,
-        "vung_phu_song": cell.vung_phu_song, "vendor": cell.vendor,
-        "do_cao_anten": cell.do_cao_anten, "azimuth": cell.azimuth,
-        "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt, "total_tilt": cell.total_tilt,
-        "loai_anten": cell.loai_anten,
-        "baseband": cell.baseband, "rf": cell.rf,
-        "gnodeb_id": cell.gnodeb_id, "cell_id": cell.cell_id,
-        "tac": cell.tac, "pci": cell.pci,
-        "root_sequence_id": cell.root_sequence_id, "mimo": cell.mimo,
-        "ssb_arfcn": cell.ssb_arfcn, "center_arfcn": cell.center_arfcn,
-        "gscn": cell.gscn, "bandwidth": cell.bandwidth,
-        "cell_max_power": cell.cell_max_power, "nci": cell.nci,
-        "bbu_name": cell.bbu_name, "mu_mimo": cell.mu_mimo,
-        "cell_status": cell.cell_status,
+        # identity / naming
+        "site_name":        cell.site_name,
+        "site_name_old":    cell.site_name_old,
+        "cell_name":        cell.cell_name,
+        "cell_name_old":    cell.cell_name_old,
+        # location
+        "mien":             cell.mien,
+        "tinh":             cell.tinh,
+        "phuong_xa":        cell.phuong_xa,
+        # classification
+        "cell_vip":         cell.cell_vip,
+        "moran":            cell.moran,
+        "lat":              cell.lat,
+        "long":             cell.long,
+        "vung_phu_song":    cell.vung_phu_song,
+        "vendor":           cell.vendor,
+        # antenna
+        "do_cao_anten":     cell.do_cao_anten,
+        "azimuth":          cell.azimuth,
+        "m_tilt":           cell.m_tilt,
+        "e_tilt":           cell.e_tilt,
+        "total_tilt":       cell.total_tilt,
+        "loai_anten":       cell.loai_anten,
+        # hardware
+        "baseband":         cell.baseband,
+        "rf":               cell.rf,
+        # 5G-specific RF parameters
+        "gnodeb_id":        cell.gnodeb_id,
+        "cell_id":          cell.cell_id,
+        "tac":              cell.tac,
+        "pci":              cell.pci,
+        "root_sequence_id": cell.root_sequence_id,
+        "mimo":             cell.mimo,
+        "ssb_arfcn":        cell.ssb_arfcn,
+        "center_arfcn":     cell.center_arfcn,
+        "gscn":             cell.gscn,
+        "bandwidth":        cell.bandwidth,
+        "cell_max_power":   cell.cell_max_power,
+        "nci":              cell.nci,
+        "bbu_name":         cell.bbu_name,
+        "mu_mimo":          cell.mu_mimo,
+        "cell_status":      cell.cell_status,
     }
 
+
+# ── Public record_* functions ─────────────────────────────────────────────────
+# Return value:
+#   Revision object – revision was written to DB (add but not yet committed)
+#   None            – skipped because nothing changed (update with empty diff)
 
 def record_site_revision(
     db: Session, site: Site, old_snapshot: Optional[Dict],
     changed_by_id: Optional[int], changed_by_name: Optional[str],
     change_source: str = "form", change_note: Optional[str] = None,
     site_name_old_ref: Optional[str] = None,
-) -> SiteRevision:
+) -> Optional[SiteRevision]:
     new_snap = _site_snapshot(site)
-    diff = _diff(old_snapshot, new_snap) if old_snapshot else {}
+    if old_snapshot is None:
+        diff: Dict = {}
+    else:
+        diff = _diff(old_snapshot, new_snap)
+        if not diff:
+            return None
+
     rev = SiteRevision(
         site_id=site.id, site_name=site.site_name,
         revision_no=_next_rev_no_site(db, site.id),
@@ -158,8 +213,8 @@ def record_site_revision(
         node_truyen_dan_only=site.node_truyen_dan_only,
         tram_phu_song_tsca=site.tram_phu_song_tsca,
         phan_loai_tram=site.phan_loai_tram,
-        moran_3g=site.moran_3g, moran_4g=site.moran_4g, moran_5g=site.moran_5g,
-        ma_ptm=site.ma_ptm,
+        moran_3g=site.moran_3g, moran_4g=site.moran_4g,
+        moran_5g=site.moran_5g, ma_ptm=site.ma_ptm,
         do_cao_dinh_cot_anten=site.do_cao_dinh_cot_anten,
         do_cao_cot_anten=site.do_cao_cot_anten,
         dia_chi=site.dia_chi, ghi_chu=site.ghi_chu,
@@ -173,9 +228,15 @@ def record_cell3g_revision(
     db: Session, cell: Cell3G, old_snapshot: Optional[Dict],
     changed_by_id: Optional[int], changed_by_name: Optional[str],
     change_source: str = "form", change_note: Optional[str] = None,
-) -> Cell3GRevision:
+) -> Optional[Cell3GRevision]:
     new_snap = _cell3g_snapshot(cell)
-    diff = _diff(old_snapshot, new_snap) if old_snapshot else {}
+    if old_snapshot is None:
+        diff: Dict = {}
+    else:
+        diff = _diff(old_snapshot, new_snap)
+        if not diff:
+            return None
+
     rev = Cell3GRevision(
         cell_id_ref=cell.id, site_id=cell.site_id,
         site_name=cell.site_name, cell_name=cell.cell_name,
@@ -206,9 +267,15 @@ def record_cell4g_revision(
     db: Session, cell: Cell4G, old_snapshot: Optional[Dict],
     changed_by_id: Optional[int], changed_by_name: Optional[str],
     change_source: str = "form", change_note: Optional[str] = None,
-) -> Cell4GRevision:
+) -> Optional[Cell4GRevision]:
     new_snap = _cell4g_snapshot(cell)
-    diff = _diff(old_snapshot, new_snap) if old_snapshot else {}
+    if old_snapshot is None:
+        diff: Dict = {}
+    else:
+        diff = _diff(old_snapshot, new_snap)
+        if not diff:
+            return None
+
     rev = Cell4GRevision(
         cell_id_ref=cell.id, site_id=cell.site_id,
         site_name=cell.site_name, cell_name=cell.cell_name,
@@ -240,9 +307,15 @@ def record_cell5g_revision(
     db: Session, cell: Cell5G, old_snapshot: Optional[Dict],
     changed_by_id: Optional[int], changed_by_name: Optional[str],
     change_source: str = "form", change_note: Optional[str] = None,
-) -> Cell5GRevision:
+) -> Optional[Cell5GRevision]:
     new_snap = _cell5g_snapshot(cell)
-    diff = _diff(old_snapshot, new_snap) if old_snapshot else {}
+    if old_snapshot is None:
+        diff: Dict = {}
+    else:
+        diff = _diff(old_snapshot, new_snap)
+        if not diff:
+            return None
+
     rev = Cell5GRevision(
         cell_id_ref=cell.id, site_id=cell.site_id,
         site_name=cell.site_name, cell_name=cell.cell_name,

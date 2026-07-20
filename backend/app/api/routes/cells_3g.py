@@ -109,8 +109,9 @@ async def import_excel(
         raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
 
     errors  = list(result["errors"])
-    created, updated, sites_auto_created = 0, 0, 0
+    created, updated, skipped, sites_auto_created = 0, 0, 0, 0
 
+    # ── Creates ───────────────────────────────────────────────────────────────
     for rec in result["to_create"]:
         try:
             site_id = _ensure_site(db, rec, current_user)
@@ -121,6 +122,7 @@ async def import_excel(
                           created_by=current_user.id)
             db.add(cell)
             db.flush()
+            # old_snapshot=None → always recorded as "create new"
             record_cell3g_revision(
                 db, cell, old_snapshot=None,
                 changed_by_id=current_user.id,
@@ -133,40 +135,55 @@ async def import_excel(
             db.rollback()
             errors.append(f"Create cell '{rec.get('cell_name')}': {e}")
 
+    # ── Updates ───────────────────────────────────────────────────────────────
     for upd in result["to_update"]:
         try:
             existing = db.query(Cell3G).filter(Cell3G.id == upd["existing_id"]).first()
             if not existing:
                 errors.append(f"Cell '{upd['anchor']}' disappeared during import")
                 continue
+
+            # Snapshot BEFORE any changes
             old_snap  = _cell3g_snapshot(existing)
             changes   = upd["changes"]
             is_rename = upd.get("is_rename", False)
+
             for k, v in changes.items():
-                # On rename, allow cell_name update; skip site_id always
                 if k == "site_id":
                     continue
                 if k == "cell_name" and not is_rename:
                     continue
-                if k.startswith("_"):   # internal keys like _site_name_old_ref
+                if k.startswith("_"):
                     continue
                 if v is not None and hasattr(existing, k):
                     setattr(existing, k, v)
+
             db.flush()
-            record_cell3g_revision(
+
+            # record_cell3g_revision returns None when nothing changed → skip
+            rev = record_cell3g_revision(
                 db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="excel",
             )
             db.commit()
-            updated += 1
+
+            if rev is None:
+                skipped += 1
+            else:
+                updated += 1
         except Exception as e:
             db.rollback()
             errors.append(f"Update cell '{upd['anchor']}': {e}")
 
-    return {"created": created, "updated": updated,
-            "sites_auto_created": sites_auto_created, "errors": errors}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped_no_change": skipped,
+        "sites_auto_created": sites_auto_created,
+        "errors": errors,
+    }
 
 
 @router.get("/{cell_id}", response_model=Cell3GRead)

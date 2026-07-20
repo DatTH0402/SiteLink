@@ -95,7 +95,7 @@ async def import_excel(
         raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
 
     errors  = list(result["errors"])
-    created, updated, sites_auto_created = 0, 0, 0
+    created, updated, skipped, sites_auto_created = 0, 0, 0, 0
 
     for rec in result["to_create"]:
         try:
@@ -122,24 +122,39 @@ async def import_excel(
             existing = db.query(Cell4G).filter(Cell4G.id == upd["existing_id"]).first()
             if not existing:
                 errors.append(f"Cell '{upd['anchor']}' disappeared"); continue
+
             old_snap = _cell4g_snapshot(existing)
             changes  = upd["changes"]
+            is_rename = upd.get("is_rename", False)
+
             for k, v in changes.items():
-                if k in ("cell_name", "site_id"): continue
+                if k == "site_id": continue
+                if k == "cell_name" and not is_rename: continue
+                if k.startswith("_"): continue
                 if v is not None and hasattr(existing, k): setattr(existing, k, v)
+
             db.flush()
-            record_cell4g_revision(db, existing, old_snapshot=old_snap,
+            rev = record_cell4g_revision(db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="excel")
             db.commit()
-            updated += 1
+
+            if rev is None:
+                skipped += 1
+            else:
+                updated += 1
         except Exception as e:
             db.rollback()
             errors.append(f"Update cell '{upd['anchor']}': {e}")
 
-    return {"created": created, "updated": updated,
-            "sites_auto_created": sites_auto_created, "errors": errors}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped_no_change": skipped,
+        "sites_auto_created": sites_auto_created,
+        "errors": errors,
+    }
 
 
 @router.get("/{cell_id}", response_model=Cell4GRead)

@@ -1,5 +1,27 @@
 """
 import_excel.py – Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
+
+Key fix (dry-run / import shows wrong "create" for existing cells):
+  The exported Excel file contains columns:
+    "Site Name"  (current site_name)
+    "Site Name Old" (site_name_old – may be non-empty)
+    "Cell Name"  (current cell_name)
+    "Cell Name Old" (cell_name_old – may be non-empty)
+
+  Previous lookup strategy:
+    1. find site by site_name  →  if not found try site_name_old
+    2. find cell by (site_id, cell_name)
+
+  Problem: if site lookup returns None (e.g. site_name slightly differs or
+  site_name_old populated), the cell is pushed to to_create.
+
+  New lookup strategy (most-specific first, broadest last):
+    1. find site by exact site_name
+    2. find site by site_name_old (rename case)
+    3. cell lookup by (site_id, cell_name)          ← primary
+    4. cell lookup by cell_name alone (no site_id)  ← fallback when site
+       could not be resolved but cell_name is unique enough
+    5. cell lookup by (site_id, cell_name_old)      ← rename case
 """
 from __future__ import annotations
 
@@ -48,7 +70,9 @@ class GeoCache:
                 self.tinh_map[k]           = r.ten_tinh
                 self.tinh_mien[r.ten_tinh] = r.mien or ""
             if r.ten_tinh and r.ten_phuong_xa:
-                self.xa_map[(_normalize(r.ten_tinh), _normalize(r.ten_phuong_xa))] = r.ten_phuong_xa
+                self.xa_map[
+                    (_normalize(r.ten_tinh), _normalize(r.ten_phuong_xa))
+                ] = r.ten_phuong_xa
 
     def resolve_tinh(self, raw: Optional[str]) -> Optional[str]:
         if not raw:
@@ -200,16 +224,21 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                                           "Node truyen dan only", "node_truyen_dan_only"),
             "tram_phu_song_tsca": _bool(row, "Trạm phủ sóng TSCA",
                                         "Tram phu song TSCA", "tram_phu_song_tsca"),
-            "phan_loai_tram": _v(row, "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
-                                  "Phan loai tram", "phan_loai_tram"),
-            "moran_3g": _v(row, "TRẠM MORAN 3G (VNPT HOST, MBF HOST)", "MORAN 3G", "moran_3g"),
-            "moran_4g": _v(row, "TRẠM MORAN 4G (VNPT HOST, MBF HOST)", "MORAN 4G", "moran_4g"),
-            "moran_5g": _v(row, "TRẠM MORAN 5G (VNPT HOST, MBF HOST)", "MORAN 5G", "moran_5g"),
+            "phan_loai_tram": _v(row,
+                "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
+                "Phan loai tram", "phan_loai_tram"),
+            "moran_3g": _v(row, "TRẠM MORAN 3G (VNPT HOST, MBF HOST)",
+                           "MORAN 3G", "moran_3g"),
+            "moran_4g": _v(row, "TRẠM MORAN 4G (VNPT HOST, MBF HOST)",
+                           "MORAN 4G", "moran_4g"),
+            "moran_5g": _v(row, "TRẠM MORAN 5G (VNPT HOST, MBF HOST)",
+                           "MORAN 5G", "moran_5g"),
             "ma_ptm": _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
-            "do_cao_dinh_cot_anten": _float(row, "Độ cao đỉnh cột anten (m) đến mặt đất",
-                                            "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
-            "do_cao_cot_anten": _float(row, "Độ cao cột anten", "Do cao cot anten",
-                                       "do_cao_cot_anten"),
+            "do_cao_dinh_cot_anten": _float(row,
+                "Độ cao đỉnh cột anten (m) đến mặt đất",
+                "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
+            "do_cao_cot_anten": _float(row, "Độ cao cột anten",
+                                       "Do cao cot anten", "do_cao_cot_anten"),
             "dia_chi": _v(row, "Địa chỉ", "Dia chi", "dia_chi"),
             "ghi_chu": _v(row, "Ghi chú", "Ghi chu", "ghi_chu"),
         }
@@ -222,7 +251,8 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 if existing_by_old:
                     rec["_site_name_old_ref"] = file_site_name_old
                     to_update.append({
-                        "existing_id": existing_by_old.id, "anchor": file_site_name_old,
+                        "existing_id": existing_by_old.id,
+                        "anchor": file_site_name_old,
                         "changes": rec, "is_rename": True,
                     })
                     continue
@@ -236,10 +266,13 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         else:
             to_create.append(rec)
 
-    return {"to_create": to_create, "to_update": to_update, "errors": errors, "dry_run": dry_run}
+    return {
+        "to_create": to_create, "to_update": to_update,
+        "errors": errors, "dry_run": dry_run,
+    }
 
 
-# ── Cell common ───────────────────────────────────────────────────────────────
+# ── Cell common field extractor ───────────────────────────────────────────────
 def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
     raw_tinh   = _v(row, "Tỉnh", "Tinh", "tinh")
     raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
@@ -249,7 +282,9 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
         tinh_official = geo.resolve_tinh(raw_tinh)
         if not tinh_official:
             if errors_out is not None:
-                errors_out.append(f"Row {row_num}: Province '{raw_tinh}' not found in DB – stored as-is")
+                errors_out.append(
+                    f"Row {row_num}: Province '{raw_tinh}' not found in DB – stored as-is"
+                )
             tinh_official = raw_tinh
         mien = geo.mien_for(tinh_official) or raw_mien or ""
         phuong_xa_official: Optional[str] = None
@@ -286,28 +321,32 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
         "vendor":        _v(row, "Vendor", "vendor"),
         "do_cao_anten":  _float(row, "Độ cao anten", "Do cao anten", "do_cao_anten"),
         "azimuth": azi,
-        "m_tilt":   _float(row, "M-tilt", "M-Tilt", "m_tilt"),
-        "e_tilt":   _float(row, "E-Tilt", "E-tilt", "e_tilt"),
-        "total_tilt": _float(row, "Total Tilt", "Total tilt", "total_tilt"),
-        "loai_anten": _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
-        "baseband":   _v(row, "Baseband", "baseband"),
-        "rf":         _v(row, "RF", "rf"),
-        "cell_id":    _v(row, "Cell ID", "cell_id"),
-        "mimo":       _v(row, "MIMO", "mimo"),
-        "bbu_name":   _v(row, "BBUname", "BBU Name", "bbu_name"),
-        "cell_status": _v(row, "Cell status (at dump time)", "Cell status", "cell_status"),
+        "m_tilt":        _float(row, "M-tilt", "M-Tilt", "m_tilt"),
+        "e_tilt":        _float(row, "E-Tilt", "E-tilt", "e_tilt"),
+        "total_tilt":    _float(row, "Total Tilt", "Total tilt", "total_tilt"),
+        "loai_anten":    _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
+        "baseband":      _v(row, "Baseband", "baseband"),
+        "rf":            _v(row, "RF", "rf"),
+        "cell_id":       _v(row, "Cell ID", "cell_id"),
+        "mimo":          _v(row, "MIMO", "mimo"),
+        "bbu_name":      _v(row, "BBUname", "BBU Name", "bbu_name"),
+        "cell_status":   _v(row, "Cell status (at dump time)", "Cell status", "cell_status"),
         "cell_max_power": _v(row, "Cell max power (dBm)", "Cell max power", "cell_max_power"),
     }
 
 
-def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False) -> Dict[str, Any]:
+# ── Core cell Excel parser ────────────────────────────────────────────────────
+def _parse_cell_excel(
+    file_bytes, Model, extra_fields_fn, db=None, dry_run=False
+) -> Dict[str, Any]:
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
 
-    to_create:        List[Dict] = []
-    to_update:        List[Dict] = []
-    sites_to_create:  List[Dict] = []
-    errors:           List[str]  = []
+    to_create:         List[Dict] = []
+    to_update:         List[Dict] = []
+    sites_to_create:   List[Dict] = []
+    errors:            List[str]  = []
+    # track site names we know are new (not in DB) within this import batch
     pending_new_sites: Dict[str, Dict] = {}
 
     from app.models.site import Site
@@ -316,7 +355,7 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
         row_num    = int(str(i)) + 2
         row_errors: List[str] = []
 
-        common    = _cell_common(row, geo=geo, errors_out=row_errors, row_num=row_num)
+        common       = _cell_common(row, geo=geo, errors_out=row_errors, row_num=row_num)
         errors.extend(row_errors)
 
         cell_name     = common.get("cell_name", "")
@@ -334,21 +373,31 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
         extra = extra_fields_fn(row)
         rec   = {**common, **extra}
 
+        # ── Site resolution ───────────────────────────────────────────────────
+        # Priority:
+        #   1. exact match on current site_name
+        #   2. match on site_name_old (covers renamed-site exports)
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
             if not site_obj and site_name_old:
-                site_obj = db.query(Site).filter(Site.site_name == site_name_old).first()
+                site_obj = db.query(Site).filter(
+                    Site.site_name == site_name_old).first()
 
         if site_obj:
             site_id = site_obj.id
         elif site_name in pending_new_sites:
+            # already queued as new in this batch
             site_id = None
         else:
+            # genuinely new site
             new_site_rec = {
-                "site_name": site_name, "mien": common.get("mien") or "",
-                "tinh": common.get("tinh") or "", "phuong_xa": common.get("phuong_xa"),
-                "lat": common.get("lat"), "long": common.get("long"),
+                "site_name": site_name,
+                "mien":      common.get("mien") or "",
+                "tinh":      common.get("tinh") or "",
+                "phuong_xa": common.get("phuong_xa"),
+                "lat":       common.get("lat"),
+                "long":      common.get("long"),
             }
             pending_new_sites[site_name] = new_site_rec
             sites_to_create.append(new_site_rec)
@@ -356,39 +405,72 @@ def _parse_cell_excel(file_bytes, Model, extra_fields_fn, db=None, dry_run=False
 
         rec["site_id"] = site_id
 
+        # ── Cell resolution ───────────────────────────────────────────────────
+        # Priority:
+        #   1. (site_id, cell_name)       – exact, most reliable
+        #   2. (site_id, cell_name_old)   – rename: old name in file
+        #   3. cell_name alone            – fallback when site_id unknown yet
+        #                                   but cell_name should be unique
         existing_cell = None
-        if db and site_obj:
-            existing_cell = db.query(Model).filter(
-                Model.site_id == site_obj.id,
-                Model.cell_name == cell_name,
-            ).first()
 
-            if not existing_cell and cell_name_old:
-                existing_by_old = db.query(Model).filter(
+        if db:
+            if site_obj:
+                # ── Primary: exact (site_id, cell_name) ──────────────────────
+                existing_cell = db.query(Model).filter(
                     Model.site_id == site_obj.id,
-                    Model.cell_name == cell_name_old,
+                    Model.cell_name == cell_name,
                 ).first()
-                if existing_by_old:
-                    to_update.append({
-                        "existing_id": existing_by_old.id,
-                        "anchor":      f"{site_name}/{cell_name_old}",
-                        "changes":     rec, "is_rename": True,
-                    })
-                    continue
+
+                # ── Rename: (site_id, cell_name_old) → new cell_name ─────────
+                if not existing_cell and cell_name_old:
+                    existing_by_old = db.query(Model).filter(
+                        Model.site_id == site_obj.id,
+                        Model.cell_name == cell_name_old,
+                    ).first()
+                    if existing_by_old:
+                        to_update.append({
+                            "existing_id": existing_by_old.id,
+                            "anchor":      f"{site_name}/{cell_name_old}",
+                            "changes":     rec,
+                            "is_rename":   True,
+                        })
+                        continue
+
+            else:
+                # site not in DB yet – try to find cell by name only
+                # (handles re-import of exported file where site lookup failed
+                #  because site_name in DB differs slightly, but cell_name is
+                #  unique across the table)
+                existing_cell = db.query(Model).filter(
+                    Model.cell_name == cell_name,
+                ).first()
+
+                if not existing_cell and cell_name_old:
+                    existing_cell = db.query(Model).filter(
+                        Model.cell_name == cell_name_old,
+                    ).first()
+
+                if existing_cell:
+                    # We found the cell – use its actual site_id so the
+                    # update does not inadvertently move it to a new site
+                    rec["site_id"] = existing_cell.site_id
 
         if existing_cell:
             to_update.append({
                 "existing_id": existing_cell.id,
                 "anchor":      f"{site_name}/{cell_name}",
-                "changes":     rec, "is_rename": False,
+                "changes":     rec,
+                "is_rename":   False,
             })
         else:
             to_create.append(rec)
 
     return {
-        "to_create": to_create, "to_update": to_update,
+        "to_create":       to_create,
+        "to_update":       to_update,
         "sites_to_create": sites_to_create,
-        "errors": errors, "dry_run": dry_run,
+        "errors":          errors,
+        "dry_run":         dry_run,
     }
 
 
