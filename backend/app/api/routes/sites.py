@@ -75,15 +75,13 @@ async def import_sites_excel(
     errors    = list(result["errors"])
     created, updated = 0, 0
 
-    # ── Create new sites ──────────────────────────────────────────────────
     for rec in to_create:
         try:
             site = Site(**rec, created_by=current_user.id)
             db.add(site)
-            db.flush()   # get site.id before revision
+            db.flush()
             record_site_revision(
-                db, site,
-                old_snapshot=None,
+                db, site, old_snapshot=None,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="excel",
@@ -95,7 +93,6 @@ async def import_sites_excel(
             db.rollback()
             errors.append(f"Create '{rec.get('site_name')}': {e}")
 
-    # ── Update existing sites ─────────────────────────────────────────────
     for upd in to_update:
         try:
             existing = db.query(Site).filter(Site.id == upd["existing_id"]).first()
@@ -106,7 +103,6 @@ async def import_sites_excel(
             old_name = existing.site_name
             changes  = upd["changes"]
 
-            # Detect name change: if changes contain a new site_name different from current
             new_site_name = changes.get("site_name")
             site_name_old_ref = None
             if new_site_name and new_site_name != old_name:
@@ -117,8 +113,7 @@ async def import_sites_excel(
                     setattr(existing, k, v)
             db.flush()
             record_site_revision(
-                db, existing,
-                old_snapshot=old_snap,
+                db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="excel",
@@ -140,8 +135,8 @@ def list_sites(
     skip: int = 0,
     limit: int = 500,
     search:  Optional[str]  = Query(None),
-    mien:    Optional[str]  = Query(None),
-    tinh:    Optional[str]  = Query(None),
+    mien:    Optional[List[str]] = Query(None),
+    tinh:    Optional[List[str]] = Query(None),
     tram_3g: Optional[bool] = Query(None),
     tram_4g: Optional[bool] = Query(None),
     tram_5g: Optional[bool] = Query(None),
@@ -150,12 +145,97 @@ def list_sites(
 ):
     q = db.query(Site)
     if search: q = q.filter(Site.site_name.ilike(f"%{search}%"))
-    if mien:   q = q.filter(Site.mien == mien)
-    if tinh:   q = q.filter(Site.tinh == tinh)
+    if mien:   q = q.filter(Site.mien.in_(mien))
+    if tinh:   q = q.filter(Site.tinh.in_(tinh))
     if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
     if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
     if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
     return q.offset(skip).limit(limit).all()
+
+
+@router.post("/bulk-delete")
+def bulk_delete_sites(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ids = payload.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="No IDs provided")
+
+    errors = []
+    deleted = 0
+    for site_id in ids:
+        site = db.query(Site).filter(Site.id == site_id).first()
+        if not site:
+            errors.append(f"Site id={site_id} not found")
+            continue
+        cell_count = (
+            db.query(Cell3G).filter(Cell3G.site_id == site_id).count()
+            + db.query(Cell4G).filter(Cell4G.site_id == site_id).count()
+            + db.query(Cell5G).filter(Cell5G.site_id == site_id).count()
+        )
+        if cell_count > 0:
+            errors.append(f"Site '{site.site_name}' has {cell_count} cell(s) – skipped")
+            continue
+        try:
+            db.delete(site)
+            db.commit()
+            log_action(db, current_user, "DELETE", "sites", site_id)
+            deleted += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Site id={site_id}: {e}")
+
+    return {"deleted": deleted, "errors": errors}
+
+
+@router.post("/bulk-update")
+def bulk_update_sites(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ids     = payload.get("ids", [])
+    changes = payload.get("changes", {})
+    if not ids:
+        raise HTTPException(status_code=400, detail="No IDs provided")
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    # Remove protected fields
+    for f in ("id", "site_name", "created_by", "created_at", "updated_at"):
+        changes.pop(f, None)
+
+    errors  = []
+    updated = 0
+    for site_id in ids:
+        site = db.query(Site).filter(Site.id == site_id).first()
+        if not site:
+            errors.append(f"Site id={site_id} not found")
+            continue
+        try:
+            old_snap = _site_snapshot(site)
+            for k, v in changes.items():
+                if hasattr(site, k):
+                    setattr(site, k, v)
+            db.flush()
+            record_site_revision(
+                db, site, old_snapshot=old_snap,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="form",
+                change_note="Bulk update",
+            )
+            db.commit()
+            log_action(db, current_user, "UPDATE", "sites", site_id,
+                       old_value=old_snap, new_value=changes)
+            updated += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Site id={site_id}: {e}")
+
+    return {"updated": updated, "errors": errors}
 
 
 @router.post("/", response_model=SiteRead, status_code=201)
@@ -172,8 +252,7 @@ def create_site(
     db.add(site)
     db.flush()
     record_site_revision(
-        db, site,
-        old_snapshot=None,
+        db, site, old_snapshot=None,
         changed_by_id=current_user.id,
         changed_by_name=current_user.full_name or current_user.username,
         change_source="form",
@@ -184,8 +263,6 @@ def create_site(
                new_value=payload.model_dump())
     return site
 
-
-# ── Dynamic routes LAST ───────────────────────────────────────────────────────
 
 @router.get("/{site_id}", response_model=SiteRead)
 def get_site(site_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
@@ -213,8 +290,7 @@ def update_site(
         setattr(site, k, v)
     db.flush()
     record_site_revision(
-        db, site,
-        old_snapshot=old_snap,
+        db, site, old_snapshot=old_snap,
         changed_by_id=current_user.id,
         changed_by_name=current_user.full_name or current_user.username,
         change_source="form",

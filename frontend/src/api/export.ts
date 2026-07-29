@@ -1,10 +1,7 @@
 /**
- * export.ts
- * ---------
- * Downloads exported Excel files from the backend.
- * Uses fetch + Blob so Authorization header can be sent.
- * Active filters are passed as query params so the export
- * matches exactly what the user sees on screen.
+ * export.ts – Downloads exported Excel files from the backend.
+ * Multi-value filter arrays are serialized as repeated query params:
+ *   tinh=HN&tinh=HCM  (not tinh[]=HN&tinh[]=HCM)
  */
 
 function getToken(): string {
@@ -29,65 +26,67 @@ async function downloadBlob(url: string, filename: string): Promise<void> {
   URL.revokeObjectURL(link.href)
 }
 
-function buildQS(params: Record<string, string | undefined>): string {
+type FilterValue = string | string[] | undefined | null
+
+function buildQS(params: Record<string, FilterValue>): string {
   const qs = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.append(k, v)
+    if (v === undefined || v === null) return
+    if (Array.isArray(v)) {
+      v.forEach((item) => { if (item) qs.append(k, item) })
+    } else if (v !== '') {
+      qs.append(k, v)
+    }
   })
   const s = qs.toString()
   return s ? `?${s}` : ''
 }
 
-// ── Sites ─────────────────────────────────────────────────────────────────────
 export function exportSites(filters: {
   search?: string
-  mien?:   string
-  tinh?:   string
+  mien?:   string[]
+  tinh?:   string[]
 }) {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/sites${qs}`, 'Sites_Export.xlsx')
 }
 
-// ── Cells 3G ──────────────────────────────────────────────────────────────────
 export function exportCells3G(filters: {
   search?:        string
-  mien?:          string
-  tinh?:          string
-  vendor?:        string
-  mimo?:          string
-  vung_phu_song?: string
+  mien?:          string[]
+  tinh?:          string[]
+  vendor?:        string[]
+  mimo?:          string[]
+  vung_phu_song?: string[]
 }) {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/cells-3g${qs}`, 'Cells_3G_Export.xlsx')
 }
 
-// ── Cells 4G ──────────────────────────────────────────────────────────────────
 export function exportCells4G(filters: {
   search?:        string
-  mien?:          string
-  tinh?:          string
-  vendor?:        string
-  mimo?:          string
-  vung_phu_song?: string
+  mien?:          string[]
+  tinh?:          string[]
+  vendor?:        string[]
+  mimo?:          string[]
+  vung_phu_song?: string[]
 }) {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/cells-4g${qs}`, 'Cells_4G_Export.xlsx')
 }
 
-// ── Cells 5G ──────────────────────────────────────────────────────────────────
 export function exportCells5G(filters: {
   search?:        string
-  mien?:          string
-  tinh?:          string
-  vendor?:        string
-  mimo?:          string
-  vung_phu_song?: string
+  mien?:          string[]
+  tinh?:          string[]
+  vendor?:        string[]
+  mimo?:          string[]
+  vung_phu_song?: string[]
 }) {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/cells-5g${qs}`, 'Cells_5G_Export.xlsx')
 }
 
-// ── Antennas ──────────────────────────────────────────────────────────────────
 export function exportAntennas(filters: {
   search?: string
   band?:   string

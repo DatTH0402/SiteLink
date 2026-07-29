@@ -16,7 +16,12 @@ export const updateSite = (id: number, data: Partial<Site>) =>
 export const deleteSite = (id: number) =>
   api.delete(`/api/v1/sites/${id}`)
 
-/** Step-1: preview – nothing written to DB */
+export const bulkDeleteSites = (ids: number[]) =>
+  api.post<{ deleted: number; errors: string[] }>('/api/v1/sites/bulk-delete', { ids }).then((r) => r.data)
+
+export const bulkUpdateSites = (ids: number[], changes: Record<string, unknown>) =>
+  api.post<{ updated: number; errors: string[] }>('/api/v1/sites/bulk-update', { ids, changes }).then((r) => r.data)
+
 export const dryRunSitesExcel = (file: File) => {
   const form = new FormData()
   form.append('file', file)
@@ -25,7 +30,6 @@ export const dryRunSitesExcel = (file: File) => {
     .then((r) => r.data)
 }
 
-/** Step-2: actual import */
 export const importSitesExcel = (file: File) => {
   const form = new FormData()
   form.append('file', file)

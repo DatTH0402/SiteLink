@@ -1,11 +1,12 @@
 """
 export.py – Excel export endpoints (Sites, Cells 3G/4G/5G, Antennas)
 Token can be passed as Bearer header OR ?token= query param.
+Multi-value filters: tinh, mien, vendor, mimo, vung_phu_song accept repeated params.
 """
 from __future__ import annotations
 
 import io
-from typing import Optional
+from typing import List, Optional
 
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
@@ -41,10 +42,8 @@ def _make_wb(headers):
     ws.freeze_panes = "A2"
     for col_idx, (header, width) in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.fill      = HEADER_FILL
-        cell.font      = HEADER_FONT
-        cell.alignment = CENTER
-        cell.border    = BORDER
+        cell.fill = HEADER_FILL; cell.font = HEADER_FONT
+        cell.alignment = CENTER; cell.border = BORDER
         ws.column_dimensions[get_column_letter(col_idx)].width = width
     return wb, ws
 
@@ -53,16 +52,13 @@ def _style_row(ws, row_idx, num_cols, alternate):
     fill = ALT_FILL if alternate else None
     for col_idx in range(1, num_cols + 1):
         cell = ws.cell(row=row_idx, column=col_idx)
-        cell.alignment = LEFT
-        cell.border    = BORDER
-        if fill:
-            cell.fill = fill
+        cell.alignment = LEFT; cell.border = BORDER
+        if fill: cell.fill = fill
 
 
 def _stream(wb, filename):
     buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+    wb.save(buf); buf.seek(0)
     return StreamingResponse(
         iter([buf.read()]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -93,19 +89,19 @@ def get_optional_user(
 
 @router.get("/sites")
 def export_sites(
-    search:  Optional[str]  = Query(None),
-    mien:    Optional[str]  = Query(None),
-    tinh:    Optional[str]  = Query(None),
-    tram_3g: Optional[bool] = Query(None),
-    tram_4g: Optional[bool] = Query(None),
-    tram_5g: Optional[bool] = Query(None),
-    db:      Session        = Depends(get_db),
-    _:       User           = Depends(get_optional_user),
+    search:  Optional[str]        = Query(None),
+    mien:    Optional[List[str]]  = Query(None),
+    tinh:    Optional[List[str]]  = Query(None),
+    tram_3g: Optional[bool]       = Query(None),
+    tram_4g: Optional[bool]       = Query(None),
+    tram_5g: Optional[bool]       = Query(None),
+    db:      Session              = Depends(get_db),
+    _:       User                 = Depends(get_optional_user),
 ):
     q = db.query(Site)
     if search:  q = q.filter(Site.site_name.ilike(f"%{search}%"))
-    if mien:    q = q.filter(Site.mien == mien)
-    if tinh:    q = q.filter(Site.tinh == tinh)
+    if mien:    q = q.filter(Site.mien.in_(mien))
+    if tinh:    q = q.filter(Site.tinh.in_(tinh))
     if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
     if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
     if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
@@ -122,9 +118,7 @@ def export_sites(
         ("Do cao cot anten (m)", 20), ("Dia chi", 30), ("Ghi chu", 30),
     ]
     wb, ws = _make_wb(headers)
-
     def b(val): return "x" if val else ""
-
     for idx, s in enumerate(sites, start=1):
         row = idx + 1
         values = [
@@ -138,31 +132,29 @@ def export_sites(
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
         _style_row(ws, row, len(headers), idx % 2 == 0)
-
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Sites_Export.xlsx")
 
 
 @router.get("/cells-3g")
 def export_cells_3g(
-    search:        Optional[str] = Query(None),
-    mien:          Optional[str] = Query(None),
-    tinh:          Optional[str] = Query(None),
-    vendor:        Optional[str] = Query(None),
-    mimo:          Optional[str] = Query(None),
-    vung_phu_song: Optional[str] = Query(None),
+    search:        Optional[str]       = Query(None),
+    mien:          Optional[List[str]] = Query(None),
+    tinh:          Optional[List[str]] = Query(None),
+    vendor:        Optional[List[str]] = Query(None),
+    mimo:          Optional[List[str]] = Query(None),
+    vung_phu_song: Optional[List[str]] = Query(None),
     db:    Session = Depends(get_db),
     _:     User    = Depends(get_optional_user),
 ):
     q = db.query(Cell3G)
     if search:        q = q.filter(Cell3G.cell_name.ilike(f"%{search}%") | Cell3G.site_name.ilike(f"%{search}%"))
-    if mien:          q = q.filter(Cell3G.mien == mien)
-    if tinh:          q = q.filter(Cell3G.tinh == tinh)
-    if vendor:        q = q.filter(Cell3G.vendor == vendor)
-    if mimo:          q = q.filter(Cell3G.mimo == mimo)
-    if vung_phu_song: q = q.filter(Cell3G.vung_phu_song == vung_phu_song)
+    if mien:          q = q.filter(Cell3G.mien.in_(mien))
+    if tinh:          q = q.filter(Cell3G.tinh.in_(tinh))
+    if vendor:        q = q.filter(Cell3G.vendor.in_(vendor))
+    if mimo:          q = q.filter(Cell3G.mimo.in_(mimo))
+    if vung_phu_song: q = q.filter(Cell3G.vung_phu_song.in_(vung_phu_song))
     cells = q.order_by(Cell3G.mien, Cell3G.tinh, Cell3G.site_name, Cell3G.cell_name).all()
-
     headers = [
         ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
         ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
@@ -176,7 +168,6 @@ def export_cells_3g(
         ("BBUname", 16), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
-
     for idx, c in enumerate(cells, start=1):
         row = idx + 1
         values = [
@@ -188,37 +179,34 @@ def export_cells_3g(
             c.loai_anten, c.chung_anten, c.baseband, c.rf,
             c.cell_id, c.uarfcn, c.lac, c.rac,
             c.psc, c.mimo, c.ura_id,
-            c.cell_max_power, c.cpich_power,
-            c.bbu_name, c.cell_status,
+            c.cell_max_power, c.cpich_power, c.bbu_name, c.cell_status,
         ]
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
         _style_row(ws, row, len(headers), idx % 2 == 0)
-
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_3G_Export.xlsx")
 
 
 @router.get("/cells-4g")
 def export_cells_4g(
-    search:        Optional[str] = Query(None),
-    mien:          Optional[str] = Query(None),
-    tinh:          Optional[str] = Query(None),
-    vendor:        Optional[str] = Query(None),
-    mimo:          Optional[str] = Query(None),
-    vung_phu_song: Optional[str] = Query(None),
+    search:        Optional[str]       = Query(None),
+    mien:          Optional[List[str]] = Query(None),
+    tinh:          Optional[List[str]] = Query(None),
+    vendor:        Optional[List[str]] = Query(None),
+    mimo:          Optional[List[str]] = Query(None),
+    vung_phu_song: Optional[List[str]] = Query(None),
     db:    Session = Depends(get_db),
     _:     User    = Depends(get_optional_user),
 ):
     q = db.query(Cell4G)
     if search:        q = q.filter(Cell4G.cell_name.ilike(f"%{search}%") | Cell4G.site_name.ilike(f"%{search}%"))
-    if mien:          q = q.filter(Cell4G.mien == mien)
-    if tinh:          q = q.filter(Cell4G.tinh == tinh)
-    if vendor:        q = q.filter(Cell4G.vendor == vendor)
-    if mimo:          q = q.filter(Cell4G.mimo == mimo)
-    if vung_phu_song: q = q.filter(Cell4G.vung_phu_song == vung_phu_song)
+    if mien:          q = q.filter(Cell4G.mien.in_(mien))
+    if tinh:          q = q.filter(Cell4G.tinh.in_(tinh))
+    if vendor:        q = q.filter(Cell4G.vendor.in_(vendor))
+    if mimo:          q = q.filter(Cell4G.mimo.in_(mimo))
+    if vung_phu_song: q = q.filter(Cell4G.vung_phu_song.in_(vung_phu_song))
     cells = q.order_by(Cell4G.mien, Cell4G.tinh, Cell4G.site_name, Cell4G.cell_name).all()
-
     headers = [
         ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
         ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
@@ -232,7 +220,6 @@ def export_cells_4g(
         ("BBUname", 16), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
-
     for idx, c in enumerate(cells, start=1):
         row = idx + 1
         values = [
@@ -244,37 +231,34 @@ def export_cells_4g(
             c.loai_anten, c.chung_anten, c.baseband, c.rf,
             c.enodeb_id, c.cell_id, c.earfcn, c.tac,
             c.pci, c.root_sequence_id, c.mimo, c.bandwidth,
-            c.cell_max_power, c.eci,
-            c.bbu_name, c.cell_status,
+            c.cell_max_power, c.eci, c.bbu_name, c.cell_status,
         ]
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
         _style_row(ws, row, len(headers), idx % 2 == 0)
-
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_4G_Export.xlsx")
 
 
 @router.get("/cells-5g")
 def export_cells_5g(
-    search:        Optional[str] = Query(None),
-    mien:          Optional[str] = Query(None),
-    tinh:          Optional[str] = Query(None),
-    vendor:        Optional[str] = Query(None),
-    mimo:          Optional[str] = Query(None),
-    vung_phu_song: Optional[str] = Query(None),
+    search:        Optional[str]       = Query(None),
+    mien:          Optional[List[str]] = Query(None),
+    tinh:          Optional[List[str]] = Query(None),
+    vendor:        Optional[List[str]] = Query(None),
+    mimo:          Optional[List[str]] = Query(None),
+    vung_phu_song: Optional[List[str]] = Query(None),
     db:    Session = Depends(get_db),
     _:     User    = Depends(get_optional_user),
 ):
     q = db.query(Cell5G)
     if search:        q = q.filter(Cell5G.cell_name.ilike(f"%{search}%") | Cell5G.site_name.ilike(f"%{search}%"))
-    if mien:          q = q.filter(Cell5G.mien == mien)
-    if tinh:          q = q.filter(Cell5G.tinh == tinh)
-    if vendor:        q = q.filter(Cell5G.vendor == vendor)
-    if mimo:          q = q.filter(Cell5G.mimo == mimo)
-    if vung_phu_song: q = q.filter(Cell5G.vung_phu_song == vung_phu_song)
+    if mien:          q = q.filter(Cell5G.mien.in_(mien))
+    if tinh:          q = q.filter(Cell5G.tinh.in_(tinh))
+    if vendor:        q = q.filter(Cell5G.vendor.in_(vendor))
+    if mimo:          q = q.filter(Cell5G.mimo.in_(mimo))
+    if vung_phu_song: q = q.filter(Cell5G.vung_phu_song.in_(vung_phu_song))
     cells = q.order_by(Cell5G.mien, Cell5G.tinh, Cell5G.site_name, Cell5G.cell_name).all()
-
     headers = [
         ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
         ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
@@ -289,7 +273,6 @@ def export_cells_5g(
         ("BBUname", 16), ("MU-MIMO", 10), ("Cell status (at dump time)", 24),
     ]
     wb, ws = _make_wb(headers)
-
     for idx, c in enumerate(cells, start=1):
         row = idx + 1
         values = [
@@ -308,7 +291,6 @@ def export_cells_5g(
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
         _style_row(ws, row, len(headers), idx % 2 == 0)
-
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Cells_5G_Export.xlsx")
 
@@ -326,7 +308,6 @@ def export_antennas(
     if band:      q = q.filter(Antenna.band.ilike(f"%{band}%"))
     if is_5g_aau is not None: q = q.filter(Antenna.is_5g_aau == is_5g_aau)
     antennas = q.order_by(Antenna.name).all()
-
     headers = [
         ("STT", 6), ("Name", 35), ("Band", 20), ("5G AAU", 10),
         ("No of Ports", 12), ("No of Beam", 12), ("Horizontal BW", 14),
@@ -336,7 +317,6 @@ def export_antennas(
         ("Spec File", 30), ("Ghi chu", 30),
     ]
     wb, ws = _make_wb(headers)
-
     for idx, a in enumerate(antennas, start=1):
         row = idx + 1
         values = [
@@ -348,6 +328,5 @@ def export_antennas(
         for col_idx, val in enumerate(values, start=1):
             ws.cell(row=row, column=col_idx, value=val)
         _style_row(ws, row, len(headers), idx % 2 == 0)
-
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Antennas_Export.xlsx")

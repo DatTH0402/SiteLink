@@ -9,6 +9,12 @@ export interface SiteImportResult {
   errors: string[]
 }
 
+export interface BulkResult {
+  deleted?: number
+  updated?: number
+  errors: string[]
+}
+
 function makeCellApi<T>(tech: string) {
   return {
     list: (params?: Record<string, unknown>) =>
@@ -26,7 +32,12 @@ function makeCellApi<T>(tech: string) {
     remove: (id: number) =>
       api.delete(`/api/v1/cells-${tech}/${id}`),
 
-    /** Step-1: preview – nothing written to DB */
+    bulkDelete: (ids: number[]) =>
+      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-delete`, { ids }).then((r) => r.data),
+
+    bulkUpdate: (ids: number[], changes: Record<string, unknown>) =>
+      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-update`, { ids, changes }).then((r) => r.data),
+
     dryRunExcel: (file: File) => {
       const form = new FormData()
       form.append('file', file)
@@ -35,7 +46,6 @@ function makeCellApi<T>(tech: string) {
         .then((r) => r.data)
     },
 
-    /** Step-2: actual import */
     importExcel: (file: File) => {
       const form = new FormData()
       form.append('file', file)
