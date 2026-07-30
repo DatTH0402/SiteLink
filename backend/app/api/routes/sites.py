@@ -1,3 +1,4 @@
+import traceback
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
@@ -15,6 +16,51 @@ from app.services.import_excel import parse_site_excel
 from app.services.revision import record_site_revision, _site_snapshot
 
 router = APIRouter()
+
+_SITE_BOOL_FIELDS = frozenset({
+    'tram_2g', 'tram_3g', 'tram_4g', 'tram_5g',
+    'repeater', 'booster', 'node_truyen_dan_only', 'tram_phu_song_tsca',
+})
+
+
+def _to_bool(value) -> bool:
+    """Robustly convert any value to Python bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        if value.lower() in ('true', 'yes', '1', 'on'):
+            return True
+        if value.lower() in ('false', 'no', '0', 'off', ''):
+            return False
+    if value is None:
+        return False
+    # Last resort
+    return bool(value)
+
+
+def _sanitize_site(obj: Site) -> None:
+    """
+    Ensure all boolean columns on a Site ORM object hold real Python booleans.
+    Call this AFTER setattr() and BEFORE flush/snapshot to prevent SQLAlchemy
+    from passing strings to psycopg2's boolean adapter.
+    """
+    for field in _SITE_BOOL_FIELDS:
+        raw = getattr(obj, field, None)
+        if not isinstance(raw, bool):
+            setattr(obj, field, _to_bool(raw))
+
+
+def _sanitize_changes(changes: dict) -> dict:
+    """Coerce boolean-field values in a changes dict to real Python booleans."""
+    out = {}
+    for k, v in changes.items():
+        if k in _SITE_BOOL_FIELDS:
+            out[k] = _to_bool(v)
+        else:
+            out[k] = v
+    return out
 
 
 def _site_or_404(db: Session, site_id: int) -> Site:
@@ -111,6 +157,7 @@ async def import_sites_excel(
             for k, v in changes.items():
                 if v is not None:
                     setattr(existing, k, v)
+            _sanitize_site(existing)
             db.flush()
             record_site_revision(
                 db, existing, old_snapshot=old_snap,
@@ -134,12 +181,12 @@ async def import_sites_excel(
 def list_sites(
     skip: int = 0,
     limit: int = 500,
-    search:  Optional[str]  = Query(None),
+    search:  Optional[str]       = Query(None),
     mien:    Optional[List[str]] = Query(None),
     tinh:    Optional[List[str]] = Query(None),
-    tram_3g: Optional[bool] = Query(None),
-    tram_4g: Optional[bool] = Query(None),
-    tram_5g: Optional[bool] = Query(None),
+    tram_3g: Optional[bool]      = Query(None),
+    tram_4g: Optional[bool]      = Query(None),
+    tram_5g: Optional[bool]      = Query(None),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -198,42 +245,82 @@ def bulk_update_sites(
 ):
     ids     = payload.get("ids", [])
     changes = payload.get("changes", {})
+
     if not ids:
         raise HTTPException(status_code=400, detail="No IDs provided")
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")
 
-    # Remove protected fields
-    for f in ("id", "site_name", "created_by", "created_at", "updated_at"):
-        changes.pop(f, None)
+    PROTECTED = {"id", "site_name", "created_by", "created_at", "updated_at"}
+    safe_changes = {k: v for k, v in changes.items() if k not in PROTECTED}
 
-    errors  = []
-    updated = 0
+    if not safe_changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No updatable fields provided after removing protected fields"
+        )
+
+    valid_columns = {c.name for c in Site.__table__.columns}
+    unknown = [k for k in safe_changes if k not in valid_columns]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown field(s): {unknown}")
+
+    # Coerce boolean strings → real Python booleans in the changes dict
+    safe_changes = _sanitize_changes(safe_changes)
+
+    errors:  list[str] = []
+    updated: int       = 0
+
     for site_id in ids:
-        site = db.query(Site).filter(Site.id == site_id).first()
-        if not site:
-            errors.append(f"Site id={site_id} not found")
-            continue
         try:
+            # Always use a fresh query to avoid stale identity-map objects
+            db.expire_all()
+            site = db.query(Site).filter(Site.id == site_id).first()
+            if not site:
+                errors.append(f"Site id={site_id} not found")
+                continue
+
             old_snap = _site_snapshot(site)
-            for k, v in changes.items():
-                if hasattr(site, k):
-                    setattr(site, k, v)
+
+            for k, v in safe_changes.items():
+                setattr(site, k, v)
+
+            # CRITICAL: ensure all boolean columns are real Python booleans
+            # AFTER setattr, BEFORE flush/snapshot. This is the definitive fix.
+            _sanitize_site(site)
+
             db.flush()
+
             record_site_revision(
-                db, site, old_snapshot=old_snap,
+                db, site,
+                old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="form",
                 change_note="Bulk update",
             )
+
             db.commit()
-            log_action(db, current_user, "UPDATE", "sites", site_id,
-                       old_value=old_snap, new_value=changes)
+
+            try:
+                log_action(
+                    db, current_user, "UPDATE", "sites", site_id,
+                    old_value=old_snap,
+                    new_value=safe_changes,
+                )
+            except Exception as log_err:
+                print(f"[WARN] log_action failed for site {site_id}: {log_err}")
+
             updated += 1
+
         except Exception as e:
-            db.rollback()
-            errors.append(f"Site id={site_id}: {e}")
+            tb = traceback.format_exc()
+            print(f"[ERROR] bulk_update_sites – site_id={site_id}: {e}\n{tb}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            errors.append(f"Site id={site_id}: {str(e)}")
 
     return {"updated": updated, "errors": errors}
 
@@ -288,6 +375,7 @@ def update_site(
 
     for k, v in data.items():
         setattr(site, k, v)
+    _sanitize_site(site)
     db.flush()
     record_site_revision(
         db, site, old_snapshot=old_snap,

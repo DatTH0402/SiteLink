@@ -1,6 +1,27 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: window.location.origin })
+const api = axios.create({
+  baseURL: window.location.origin,
+  paramsSerializer: {
+    // Serialize arrays as repeated params: tinh=HN&tinh=HCM
+    // (not tinh[]=HN&tinh[]=HCM which FastAPI rejects)
+    serialize: (params) => {
+      const parts: string[] = []
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null) return
+        if (Array.isArray(value)) {
+          value.forEach((v) => {
+            if (v !== undefined && v !== null && v !== '')
+              parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(v)}`)
+          })
+        } else {
+          parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        }
+      })
+      return parts.join('&')
+    },
+  },
+})
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('sl_token')

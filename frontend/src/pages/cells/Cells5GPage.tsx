@@ -16,7 +16,7 @@ import type { Cell5G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
-import BulkEditModal from '@/components/shared/BulkEditModal'
+import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
 export default function Cells5GPage() {
@@ -64,12 +64,7 @@ export default function Cells5GPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells5G({
-        search: search || undefined,
-        mien:   mien.length ? mien : undefined,
-        tinh:   tinh.length ? tinh : undefined,
-        vendor: vendor.length ? vendor : undefined,
-      })
+      await exportCells5G({ search: search || undefined, mien: mien.length ? mien : undefined, tinh: tinh.length ? tinh : undefined, vendor: vendor.length ? vendor : undefined })
       message.success(`Xuất Excel thành công (${data.length} cells)`)
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
@@ -94,8 +89,7 @@ export default function Cells5GPage() {
 
   const handleDelete = async (id: number) => {
     await cells5gApi.remove(id); message.success('Đã xóa')
-    setSelectedIds(prev => prev.filter(x => x !== id))
-    load()
+    setSelectedIds(prev => prev.filter(x => x !== id)); load()
   }
 
   const handleBulkDelete = async () => {
@@ -114,7 +108,7 @@ export default function Cells5GPage() {
 
   const rowSelection: TableRowSelection<Cell5G> = {
     selectedRowKeys: selectedIds,
-    onChange: (keys) => setSelectedIds(keys as number[]),
+    onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
 
@@ -298,46 +292,14 @@ export default function Cells5GPage() {
         </Form>
       </Modal>
 
-      <BulkEditModal
-        open={bulkEditOpen} onClose={() => setBulkEditOpen(false)}
-        title={`Sửa hàng loạt – ${selectedIds.length} Cell 5G`}
-        count={selectedIds.length} onConfirm={handleBulkEdit}
-      >
-        <Row gutter={12}>
-          <Col span={8}><Form.Item name="cell_vip" label="Cell VIP">
-            <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="moran" label="MORAN">
-            <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-            <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="vendor" label="Vendor">
-            <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="mimo" label="MIMO">
-            <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="mu_mimo" label="MU-MIMO">
-            <Select allowClear><Select.Option value="Yes">Yes</Select.Option><Select.Option value="No">No</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="azimuth" label="Azimuth" rules={[{ validator: azimuthValidator }]}><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="cell_status" label="Cell status"><Input /></Form.Item></Col>
-          <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
-            <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-              {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-            </Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
-          <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-          <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
-        </Row>
-      </BulkEditModal>
+      <CellBulkEditModal
+        open={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        count={selectedIds.length}
+        tech="5g"
+        antennaList={antennaList}
+        onConfirm={handleBulkEdit}
+      />
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 5G từ Excel" templateKey="cell-5g"

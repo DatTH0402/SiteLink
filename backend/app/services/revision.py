@@ -21,17 +21,26 @@ from app.models.cell_4g import Cell4G
 from app.models.cell_5g import Cell5G
 
 
+def _normalize(v: Any) -> Any:
+    """
+    Normalize a value for diff comparison.
+    Treats None and "" as equivalent (both become None).
+    Does NOT treat 0 or False as None – those are meaningful values.
+    """
+    if v is None or v == "":
+        return None
+    return v
+
+
 def _diff(old: Dict, new: Dict) -> Dict:
     """Return {field: [old_val, new_val]} for every field that changed."""
     result = {}
     all_keys = set(old) | set(new)
     for k in all_keys:
-        ov = old.get(k)
-        nv = new.get(k)
-        # Normalise: treat None and "" as equivalent so that a DB NULL
-        # vs an empty-string from Excel does not produce a false diff.
-        if (ov or None) != (nv or None):
-            result[k] = [ov, nv]
+        ov = _normalize(old.get(k))
+        nv = _normalize(new.get(k))
+        if ov != nv:
+            result[k] = [old.get(k), new.get(k)]
     return result
 
 
@@ -60,8 +69,6 @@ def _next_rev_no_cell5g(db: Session, cell_id_ref: int) -> int:
 
 
 # ── Snapshot helpers ──────────────────────────────────────────────────────────
-# IMPORTANT: every column that the user can edit MUST appear here.
-# Missing columns → _diff() never sees them change → revision silently skipped.
 
 def _site_snapshot(site: Site) -> Dict[str, Any]:
     return {
@@ -128,39 +135,28 @@ def _cell4g_snapshot(cell: Cell4G) -> Dict[str, Any]:
 
 
 def _cell5g_snapshot(cell: Cell5G) -> Dict[str, Any]:
-    """
-    Must include EVERY editable column of Cell5G.
-    Previously missing fields caused _diff() to return {} on real updates,
-    which made record_cell5g_revision() silently return None.
-    """
     return {
-        # identity / naming
         "site_name":        cell.site_name,
         "site_name_old":    cell.site_name_old,
         "cell_name":        cell.cell_name,
         "cell_name_old":    cell.cell_name_old,
-        # location
         "mien":             cell.mien,
         "tinh":             cell.tinh,
         "phuong_xa":        cell.phuong_xa,
-        # classification
         "cell_vip":         cell.cell_vip,
         "moran":            cell.moran,
         "lat":              cell.lat,
         "long":             cell.long,
         "vung_phu_song":    cell.vung_phu_song,
         "vendor":           cell.vendor,
-        # antenna
         "do_cao_anten":     cell.do_cao_anten,
         "azimuth":          cell.azimuth,
         "m_tilt":           cell.m_tilt,
         "e_tilt":           cell.e_tilt,
         "total_tilt":       cell.total_tilt,
         "loai_anten":       cell.loai_anten,
-        # hardware
         "baseband":         cell.baseband,
         "rf":               cell.rf,
-        # 5G-specific RF parameters
         "gnodeb_id":        cell.gnodeb_id,
         "cell_id":          cell.cell_id,
         "tac":              cell.tac,
@@ -180,9 +176,6 @@ def _cell5g_snapshot(cell: Cell5G) -> Dict[str, Any]:
 
 
 # ── Public record_* functions ─────────────────────────────────────────────────
-# Return value:
-#   Revision object – revision was written to DB (add but not yet committed)
-#   None            – skipped because nothing changed (update with empty diff)
 
 def record_site_revision(
     db: Session, site: Site, old_snapshot: Optional[Dict],

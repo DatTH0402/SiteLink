@@ -16,7 +16,7 @@ import type { Cell3G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
-import BulkEditModal from '@/components/shared/BulkEditModal'
+import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
 const CHUNG_ANTEN_3G = ['3G', '3G/4G', '2G/3G/4G', '3G/4G/5G', '3G/5G']
@@ -123,7 +123,7 @@ export default function Cells3GPage() {
 
   const rowSelection: TableRowSelection<Cell3G> = {
     selectedRowKeys: selectedIds,
-    onChange: (keys) => setSelectedIds(keys as number[]),
+    onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
 
@@ -221,14 +221,9 @@ export default function Cells3GPage() {
       {selectedIds.length > 0 && (
         <Row style={{ marginBottom: 12 }}>
           <Col>
-            <Space style={{
-              background: '#e6f7ff', border: '1px solid #91d5ff',
-              borderRadius: 6, padding: '8px 16px',
-            }}>
+            <Space style={{ background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 6, padding: '8px 16px' }}>
               <Typography.Text strong>Đã chọn {selectedIds.length} cell</Typography.Text>
-              <Button type="primary" icon={<EditOutlined />} onClick={() => setBulkEditOpen(true)}>
-                Sửa hàng loạt
-              </Button>
+              <Button type="primary" icon={<EditOutlined />} onClick={() => setBulkEditOpen(true)}>Sửa hàng loạt</Button>
               <Popconfirm title={`Xóa ${selectedIds.length} cell đã chọn?`} onConfirm={handleBulkDelete}>
                 <Button danger icon={<DeleteOutlined />}>Xóa hàng loạt</Button>
               </Popconfirm>
@@ -309,47 +304,15 @@ export default function Cells3GPage() {
         </Form>
       </Modal>
 
-      {/* Bulk Edit Modal */}
-      <BulkEditModal
-        open={bulkEditOpen} onClose={() => setBulkEditOpen(false)}
-        title={`Sửa hàng loạt – ${selectedIds.length} Cell 3G`}
-        count={selectedIds.length} onConfirm={handleBulkEdit}
-      >
-        <Row gutter={12}>
-          <Col span={8}><Form.Item name="cell_vip" label="Cell VIP">
-            <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="moran" label="MORAN">
-            <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-            <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="vendor" label="Vendor">
-            <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="mimo" label="MIMO">
-            <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="chung_anten" label="Chung anten">
-            <Select allowClear>{CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="azimuth" label="Azimuth" rules={[{ validator: azimuthValidator }]}><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-          <Col span={8}><Form.Item name="cell_status" label="Cell status"><Input /></Form.Item></Col>
-          <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
-            <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-              {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-            </Select>
-          </Form.Item></Col>
-          <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
-          <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-          <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
-        </Row>
-      </BulkEditModal>
+      {/* Bulk Edit Modal – uses CellBulkEditModal */}
+      <CellBulkEditModal
+        open={bulkEditOpen}
+        onClose={() => setBulkEditOpen(false)}
+        count={selectedIds.length}
+        tech="3g"
+        antennaList={antennaList}
+        onConfirm={handleBulkEdit}
+      />
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 3G từ Excel" templateKey="cell-3g"

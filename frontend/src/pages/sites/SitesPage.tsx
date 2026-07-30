@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
-  Form, Switch, InputNumber,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import type { TableRowSelection } from 'antd/es/table/interface'
@@ -19,40 +18,40 @@ import { exportSites } from '@/api/export'
 import { getDropdown, getTinhList } from '@/api/report'
 import type { Site, TinhItem } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
-import BulkEditModal from '@/components/shared/BulkEditModal'
+import SiteBulkEditModal from '@/components/shared/SiteBulkEditModal'
 
 const boolCell = (v: boolean) =>
   v ? <Tag color="green">x</Tag> : <Tag color="default">-</Tag>
 
 export default function SitesPage() {
   const navigate = useNavigate()
-  const [sites,         setSites]         = useState<Site[]>([])
-  const [loading,       setLoading]       = useState(false)
-  const [exporting,     setExporting]     = useState(false)
-  const [search,        setSearch]        = useState('')
-  const [mien,          setMien]          = useState<string[]>([])
-  const [tinh,          setTinh]          = useState<string[]>([])
-  const [loadError,     setLoadError]     = useState<string | null>(null)
-  const [dryRunOpen,    setDryRunOpen]    = useState(false)
-  const [selectedIds,   setSelectedIds]   = useState<number[]>([])
-  const [bulkEditOpen,  setBulkEditOpen]  = useState(false)
-  const [phanLoaiOpts,  setPhanLoaiOpts]  = useState<string[]>([])
-  const [tinhList,      setTinhList]      = useState<TinhItem[]>([])
+  const [sites,        setSites]        = useState<Site[]>([])
+  const [loading,      setLoading]      = useState(false)
+  const [exporting,    setExporting]    = useState(false)
+  const [search,       setSearch]       = useState('')
+  const [mien,         setMien]         = useState<string[]>([])
+  const [tinh,         setTinh]         = useState<string[]>([])
+  const [loadError,    setLoadError]    = useState<string | null>(null)
+  const [dryRunOpen,   setDryRunOpen]   = useState(false)
+  const [selectedIds,  setSelectedIds]  = useState<number[]>([])
+  const [bulkEditOpen, setBulkEditOpen] = useState(false)
+  const [phanLoaiOpts, setPhanLoaiOpts] = useState<string[]>([])
+  const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
 
   const tinhOptions = tinhList.length > 0
     ? tinhList.map(t => t.ten_tinh)
-    : [...new Set(sites.map((s) => s.tinh).filter((t): t is string => Boolean(t)))].sort()
+    : [...new Set(sites.map(s => s.tinh).filter((t): t is string => Boolean(t)))].sort()
 
   const load = () => {
     setLoading(true)
     setLoadError(null)
     const params: Record<string, unknown> = { limit: 500 }
-    if (search) params.search = search
-    if (mien.length)  params.mien = mien
-    if (tinh.length)  params.tinh = tinh
+    if (search)      params.search = search
+    if (mien.length) params.mien   = mien
+    if (tinh.length) params.tinh   = tinh
     getSites(params)
       .then(setSites)
-      .catch((err) => {
+      .catch(err => {
         const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
         setLoadError(`Cannot load sites: ${detail}`)
       })
@@ -63,7 +62,7 @@ export default function SitesPage() {
 
   useEffect(() => {
     getDropdown('phan_loai_tram').then((rows: any[]) =>
-      setPhanLoaiOpts(rows.map((r) => r.value)))
+      setPhanLoaiOpts(rows.map(r => r.value)))
     getTinhList().then(setTinhList)
   }, [])
 
@@ -81,15 +80,37 @@ export default function SitesPage() {
   const handleBulkDelete = async () => {
     const result = await bulkDeleteSites(selectedIds)
     if (result.deleted > 0) message.success(`Đã xóa ${result.deleted} site`)
-    if (result.errors.length > 0) message.warning(`${result.errors.length} lỗi: ${result.errors.slice(0,3).join('; ')}`)
+    if (result.errors.length > 0)
+      message.warning(`${result.errors.length} lỗi: ${result.errors.slice(0, 3).join('; ')}`)
     setSelectedIds([])
     load()
   }
 
   const handleBulkEdit = async (changes: Record<string, unknown>) => {
-    const result = await bulkUpdateSites(selectedIds, changes)
-    if (result.updated && result.updated > 0) message.success(`Đã cập nhật ${result.updated} site`)
-    if (result.errors && result.errors.length > 0) message.warning(`${result.errors.length} lỗi`)
+    try {
+      const result = await bulkUpdateSites(selectedIds, changes)
+      if (result.updated && result.updated > 0)
+        message.success(`Đã cập nhật ${result.updated} site`)
+      if (result.errors && result.errors.length > 0) {
+        message.error({
+          content: (
+            <div>
+              <div><strong>{result.errors.length} lỗi khi cập nhật:</strong></div>
+              {result.errors.slice(0, 5).map((e: string, i: number) => (
+                <div key={i} style={{ fontSize: 12, fontFamily: 'monospace' }}>{e}</div>
+              ))}
+              {result.errors.length > 5 && (
+                <div style={{ color: '#999' }}>...và {result.errors.length - 5} lỗi khác</div>
+              )}
+            </div>
+          ),
+          duration: 8,
+        })
+      }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.message || 'Lỗi không xác định'
+      message.error(`Bulk update thất bại: ${detail}`)
+    }
     setSelectedIds([])
     load()
   }
@@ -112,12 +133,8 @@ export default function SitesPage() {
 
   const rowSelection: TableRowSelection<Site> = {
     selectedRowKeys: selectedIds,
-    onChange: (keys) => setSelectedIds(keys as number[]),
-    selections: [
-      Table.SELECTION_ALL,
-      Table.SELECTION_INVERT,
-      Table.SELECTION_NONE,
-    ],
+    onChange: keys => setSelectedIds(keys as number[]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
 
   const columns: ColumnsType<Site> = [
@@ -137,12 +154,13 @@ export default function SitesPage() {
         </Space>
       ),
     },
-    { title: 'Miền', dataIndex: 'mien', fixed: 'left', width: 70,
+    { title: 'Miền',  dataIndex: 'mien',  fixed: 'left', width: 70,
       sorter: (a, b) => (a.mien||'').localeCompare(b.mien||'') },
-    { title: 'Tỉnh', dataIndex: 'tinh', fixed: 'left', width: 160,
+    { title: 'Tỉnh',  dataIndex: 'tinh',  fixed: 'left', width: 160,
       sorter: (a, b) => (a.tinh||'').localeCompare(b.tinh||'') },
     { title: 'Phường xã',      dataIndex: 'phuong_xa',    width: 160 },
-    { title: 'Site name (cũ)', dataIndex: 'site_name_cu', width: 200, ellipsis: { showTitle: true } },
+    { title: 'Site name (cũ)', dataIndex: 'site_name_cu', width: 200,
+      ellipsis: { showTitle: true } },
     { title: 'Site name', dataIndex: 'site_name', fixed: 'left', width: 220,
       sorter: (a, b) => (a.site_name||'').localeCompare(b.site_name||''),
       render: (v: string) => <strong>{v}</strong> },
@@ -150,21 +168,23 @@ export default function SitesPage() {
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'Lat',  dataIndex: 'lat',  width: 110 },
     { title: 'Long', dataIndex: 'long', width: 110 },
-    { title: 'Trạm 2G', dataIndex: 'tram_2g', width: 80, render: boolCell },
-    { title: 'Trạm 3G', dataIndex: 'tram_3g', width: 80, render: boolCell },
-    { title: 'Trạm 4G', dataIndex: 'tram_4g', width: 80, render: boolCell },
-    { title: 'Trạm 5G', dataIndex: 'tram_5g', width: 80, render: boolCell },
+    { title: 'Trạm 2G', dataIndex: 'tram_2g', width: 80,  render: boolCell },
+    { title: 'Trạm 3G', dataIndex: 'tram_3g', width: 80,  render: boolCell },
+    { title: 'Trạm 4G', dataIndex: 'tram_4g', width: 80,  render: boolCell },
+    { title: 'Trạm 5G', dataIndex: 'tram_5g', width: 80,  render: boolCell },
     { title: 'Repeater', dataIndex: 'repeater', width: 90, render: boolCell },
     { title: 'Booster',  dataIndex: 'booster',  width: 85, render: boolCell },
-    { title: 'Node truyền dẫn only', dataIndex: 'node_truyen_dan_only', width: 160, render: boolCell },
-    { title: 'Trạm phủ sóng TSCA', dataIndex: 'tram_phu_song_tsca', width: 160, render: boolCell },
+    { title: 'Node truyền dẫn only', dataIndex: 'node_truyen_dan_only',
+      width: 160, render: boolCell },
+    { title: 'Trạm phủ sóng TSCA', dataIndex: 'tram_phu_song_tsca',
+      width: 160, render: boolCell },
     { title: 'Phân loại trạm', dataIndex: 'phan_loai_tram', width: 180 },
     { title: 'MORAN 3G', dataIndex: 'moran_3g', width: 120 },
     { title: 'MORAN 4G', dataIndex: 'moran_4g', width: 120 },
     { title: 'MORAN 5G', dataIndex: 'moran_5g', width: 120 },
     { title: 'Mã PTM',   dataIndex: 'ma_ptm',   width: 120 },
     { title: 'Độ cao đỉnh cột anten (m)', dataIndex: 'do_cao_dinh_cot_anten', width: 190 },
-    { title: 'Độ cao cột anten mặt đất (m)', dataIndex: 'do_cao_cot_anten', width: 210 },
+    { title: 'Độ cao cột anten mặt đất (m)', dataIndex: 'do_cao_cot_anten',   width: 210 },
     { title: 'Địa chỉ', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
     { title: 'Ghi chú', dataIndex: 'ghi_chu', width: 200, ellipsis: { showTitle: true } },
   ]
@@ -182,7 +202,9 @@ export default function SitesPage() {
               Xuất Excel ({sites.length})
             </Button>
           </Tooltip>
-          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
+          <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
+            Import Excel
+          </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/sites/new')}>
             Thêm mới
           </Button>
@@ -194,28 +216,27 @@ export default function SitesPage() {
                style={{ marginBottom: 12 }} onClose={() => setLoadError(null)} />
       )}
 
-      {/* ── Filter bar ── */}
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="260px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm site name..."
-                 value={search} onChange={(e) => setSearch(e.target.value)} allowClear />
+                 value={search} onChange={e => setSearch(e.target.value)} allowClear />
         </Col>
         <Col flex="180px">
-          <Select
-            mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
-            style={{ width: '100%' }} value={mien} onChange={setMien}
-          >
-            {['MB','MT','MN'].map((m) => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+          <Select mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
+                  style={{ width: '100%' }} value={mien} onChange={setMien}>
+            {['MB','MT','MN'].map(m => (
+              <Select.Option key={m} value={m}>{m}</Select.Option>
+            ))}
           </Select>
         </Col>
         <Col flex="260px">
-          <Select
-            mode="multiple" placeholder="Tỉnh" allowClear showSearch maxTagCount={2}
-            style={{ width: '100%' }} value={tinh} onChange={setTinh}
-            filterOption={(input, opt) =>
-              String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}
-          >
-            {tinhOptions.map((t) => <Select.Option key={t} value={t}>{t}</Select.Option>)}
+          <Select mode="multiple" placeholder="Tỉnh" allowClear showSearch maxTagCount={2}
+                  style={{ width: '100%' }} value={tinh} onChange={setTinh}
+                  filterOption={(input, opt) =>
+                    String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
+            {tinhOptions.map(t => (
+              <Select.Option key={t} value={t}>{t}</Select.Option>
+            ))}
           </Select>
         </Col>
         <Col>
@@ -226,7 +247,6 @@ export default function SitesPage() {
         </Col>
       </Row>
 
-      {/* ── Bulk action toolbar ── */}
       {selectedIds.length > 0 && (
         <Row style={{ marginBottom: 12 }}>
           <Col>
@@ -234,14 +254,9 @@ export default function SitesPage() {
               background: '#e6f7ff', border: '1px solid #91d5ff',
               borderRadius: 6, padding: '8px 16px',
             }}>
-              <Typography.Text strong>
-                Đã chọn {selectedIds.length} site
-              </Typography.Text>
-              <Button
-                type="primary"
-                icon={<EditOutlined />}
-                onClick={() => setBulkEditOpen(true)}
-              >
+              <Typography.Text strong>Đã chọn {selectedIds.length} site</Typography.Text>
+              <Button type="primary" icon={<EditOutlined />}
+                      onClick={() => setBulkEditOpen(true)}>
                 Sửa hàng loạt
               </Button>
               <Popconfirm
@@ -249,9 +264,7 @@ export default function SitesPage() {
                 description="Site có cell sẽ bị bỏ qua."
                 onConfirm={handleBulkDelete}
               >
-                <Button danger icon={<DeleteOutlined />}>
-                  Xóa hàng loạt
-                </Button>
+                <Button danger icon={<DeleteOutlined />}>Xóa hàng loạt</Button>
               </Popconfirm>
               <Button onClick={() => setSelectedIds([])}>Bỏ chọn</Button>
             </Space>
@@ -268,121 +281,17 @@ export default function SitesPage() {
         size="small"
         scroll={{ x: scrollX, y: 600 }}
         bordered
-        pagination={{ pageSize: 50, showTotal: (t) => `${t} sites`, showSizeChanger: true }}
+        pagination={{ pageSize: 50, showTotal: t => `${t} sites`, showSizeChanger: true }}
       />
 
-      {/* ── Bulk Edit Modal ── */}
-      <BulkEditModal
+      {/* New SiteBulkEditModal – uses real Switch/booleans, tracks touched fields */}
+      <SiteBulkEditModal
         open={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}
-        title={`Sửa hàng loạt – ${selectedIds.length} site`}
         count={selectedIds.length}
+        phanLoaiOpts={phanLoaiOpts}
         onConfirm={handleBulkEdit}
-      >
-        <Row gutter={12}>
-          <Col span={8}>
-            <Form.Item name="mien" label="Miền">
-              <Select allowClear>
-                {['MB','MT','MN'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="site_vip" label="Site VIP">
-              <Select allowClear>
-                <Select.Option value="VIP">VIP</Select.Option>
-                <Select.Option value="VVIP">VVIP</Select.Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="phan_loai_tram" label="Phân loại trạm">
-              <Select allowClear>
-                {phanLoaiOpts.map(o => <Select.Option key={o} value={o}>{o}</Select.Option>)}
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="moran_3g" label="MORAN 3G">
-              <Select allowClear>
-                <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
-                <Select.Option value="MBF HOST">MBF HOST</Select.Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="moran_4g" label="MORAN 4G">
-              <Select allowClear>
-                <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
-                <Select.Option value="MBF HOST">MBF HOST</Select.Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={8}>
-            <Form.Item name="moran_5g" label="MORAN 5G">
-              <Select allowClear>
-                <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
-                <Select.Option value="MBF HOST">MBF HOST</Select.Option>
-              </Select>
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="tram_2g" label="Trạm 2G" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="tram_3g" label="Trạm 3G" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="tram_4g" label="Trạm 4G" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="tram_5g" label="Trạm 5G" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="repeater" label="Repeater" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="booster" label="Booster" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="node_truyen_dan_only" label="Node truyền dẫn only" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={6}>
-            <Form.Item name="tram_phu_song_tsca" label="Trạm TSCA" valuePropName="checked">
-              <Switch checkedChildren="Có" unCheckedChildren="Không" />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="do_cao_dinh_cot_anten" label="Độ cao đỉnh cột anten (m)">
-              <InputNumber style={{ width: '100%' }} min={0} />
-            </Form.Item>
-          </Col>
-          <Col span={12}>
-            <Form.Item name="do_cao_cot_anten" label="Độ cao cột anten (m)">
-              <InputNumber style={{ width: '100%' }} min={0} />
-            </Form.Item>
-          </Col>
-          <Col span={24}>
-            <Form.Item name="ghi_chu" label="Ghi chú">
-              <Input.TextArea rows={2} />
-            </Form.Item>
-          </Col>
-        </Row>
-      </BulkEditModal>
+      />
 
       <DryRunModal
         open={dryRunOpen}

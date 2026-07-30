@@ -1,51 +1,63 @@
 /**
  * BulkEditModal – Generic bulk-edit modal.
  *
- * Only fields that the user explicitly fills in are sent as "changes".
- * Fields left blank/untouched are NOT included in the bulk update payload,
- * so existing values on each record are preserved.
+ * Only fields the user explicitly fills are sent as "changes".
+ * Fields left blank/untouched are excluded from the payload.
  *
- * Usage: render the specific form fields as `children`.
- * The parent passes `onConfirm(changes)` which receives only filled fields.
+ * Boolean fields: pass their names in `booleanFields[]`.
+ * Use a Select with value="true" / value="false" (strings) for those fields.
+ * BulkEditModal converts them to real JS booleans before calling onConfirm.
+ * This avoids the Switch/false-default problem where untouched Switch fields
+ * always emit `false` and overwrite existing DB values.
  */
 import React, { useState } from 'react'
-import { Modal, Form, Alert, Typography, Space, Button, Divider } from 'antd'
+import { Modal, Form, Alert, Space, Button } from 'antd'
 import { EditOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 
 interface Props {
-  open:      boolean
-  onClose:   () => void
-  title:     string
-  count:     number
-  onConfirm: (changes: Record<string, unknown>) => Promise<void>
-  children:  React.ReactNode
+  open:           boolean
+  onClose:        () => void
+  title:          string
+  count:          number
+  onConfirm:      (changes: Record<string, unknown>) => Promise<void>
+  children:       React.ReactNode
+  /** Names of fields whose Select values "true"/"false" should be cast to boolean */
+  booleanFields?: string[]
 }
 
 export default function BulkEditModal({
-  open, onClose, title, count, onConfirm, children,
+  open, onClose, title, count, onConfirm, children, booleanFields = [],
 }: Props) {
-  const [form]    = Form.useForm()
-  const [busy,    setBusy]    = useState(false)
-  const [errors,  setErrors]  = useState<string[]>([])
+  const [form]   = Form.useForm()
+  const [busy,   setBusy]   = useState(false)
+  const [errors, setErrors] = useState<string[]>([])
 
   const handleOk = async () => {
-    try {
-      await form.validateFields()
-    } catch {
-      return // validation failed – don't submit
-    }
+    try { await form.validateFields() } catch { return }
+
     const all = form.getFieldsValue()
-    // Only include fields that were actually set (not undefined/null/"")
     const changes: Record<string, unknown> = {}
+
     Object.entries(all).forEach(([k, v]) => {
-      if (v !== undefined && v !== null && v !== '') {
-        changes[k] = v
+      // Skip empty / unset values
+      if (v === undefined || v === null || v === '') return
+
+      // Cast boolean Select strings → real booleans
+      if (booleanFields.includes(k)) {
+        if (v === 'true')  { changes[k] = true;  return }
+        if (v === 'false') { changes[k] = false; return }
+        // Any other value (shouldn't happen with BoolSelect) → skip
+        return
       }
+
+      changes[k] = v
     })
+
     if (Object.keys(changes).length === 0) {
       setErrors(['Vui lòng điền ít nhất một trường để cập nhật'])
       return
     }
+
     setBusy(true)
     setErrors([])
     try {
@@ -67,12 +79,7 @@ export default function BulkEditModal({
 
   return (
     <Modal
-      title={
-        <Space>
-          <EditOutlined style={{ color: '#1890ff' }} />
-          <span>{title}</span>
-        </Space>
-      }
+      title={<Space><EditOutlined style={{ color: '#1890ff' }} /><span>{title}</span></Space>}
       open={open}
       onCancel={handleClose}
       onOk={handleOk}
@@ -90,7 +97,8 @@ export default function BulkEditModal({
         message={
           <span>
             Đang cập nhật <strong>{count}</strong> bản ghi được chọn.{' '}
-            Chỉ các trường bạn <strong>điền vào</strong> mới được cập nhật – trường để trống sẽ giữ nguyên giá trị cũ.
+            Chỉ các trường bạn <strong>điền vào</strong> mới được cập nhật –
+            trường để trống sẽ giữ nguyên giá trị cũ.
           </span>
         }
       />
