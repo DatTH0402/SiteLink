@@ -306,7 +306,7 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
         </Col>
       </Row>
       <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-        {data.length} phiên bản – nhấn ▶ để xem snapshot đầy đủ và diff chi tiết
+        {data.length} phiên bản – nhấn ▶ để xem chi tiết các trường thay đổi
       </Typography.Text>
       <Table
         columns={columns} dataSource={data} rowKey="id"
@@ -338,13 +338,7 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
                 <div style={{ marginTop: 8, marginBottom: 16 }}>
                   <DiffTable diff={diff} />
                 </div>
-                <Divider style={{ margin: '12px 0' }} />
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  📋 Toàn bộ giá trị tại revision #{r.revision_no}
-                </Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  <SnapshotTable rows={siteSnap(r)} />
-                </div>
+
               </div>
             )
           },
@@ -356,43 +350,21 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// GENERIC CELL REVISION TAB
+// GENERIC CELL REVISION TAB  (tech-specific columns)
 // ═════════════════════════════════════════════════════════════════════════════
-function CellRevisionTab({
-  tech, fetchFn, tinhList,
-}: {
-  tech: string
-  fetchFn: (p: Record<string, unknown>) => Promise<CellRevisionBase[]>
-  tinhList: TinhItem[]
-}) {
-  const [siteName, setSiteName] = useState('')
-  const [cellName, setCellName] = useState('')
-  const [tinh,     setTinh]     = useState<string | undefined>()
-  const [data,     setData]     = useState<CellRevisionBase[]>([])
-  const [loading,  setLoading]  = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params: Record<string, unknown> = { limit: 500 }
-      if (siteName.trim()) params.site_name = siteName.trim()
-      if (cellName.trim()) params.cell_name = cellName.trim()
-      const rows = await fetchFn(params)
-      setData(tinh ? rows.filter(r => r.tinh === tinh) : rows)
-    } finally { setLoading(false) }
-  }, [siteName, cellName, tinh, fetchFn])
-
-  useEffect(() => { load() }, [load])
-
-  const columns: ColumnsType<CellRevisionBase> = [
+// ── Shared column builders ────────────────────────────────────────────────────
+function makeCommonCellColumns(): ColumnsType<CellRevisionBase> {
+  return [
     {
       title: 'Rev#', dataIndex: 'revision_no', width: 60, fixed: 'left',
       render: (v: number) => <Badge count={v} color="#597ef7" />,
     },
     {
       title: 'Thời gian', dataIndex: 'created_at', width: 155, fixed: 'left',
-      defaultSortOrder: 'descend',
-      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: CellRevisionBase, b: CellRevisionBase) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       render: (v: string) => v ? new Date(v).toLocaleString('vi-VN') : '-',
     },
     {
@@ -421,6 +393,10 @@ function CellRevisionTab({
         </Space>
       ),
     },
+    { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true },
+      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true },
+      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
     { title: 'Miền', dataIndex: 'mien', width: 70 },
     { title: 'Tỉnh', dataIndex: 'tinh', width: 160 },
     { title: 'Phường xã', key: 'phuong_xa', width: 160,
@@ -437,7 +413,7 @@ function CellRevisionTab({
     { title: 'Vùng phủ sóng', key: 'vung_phu_song', width: 130,
       render: (_: unknown, r: CellRevisionBase) => String(r['vung_phu_song'] ?? '-') },
     { title: 'Vendor', dataIndex: 'vendor', width: 100 },
-    { title: 'Cao anten', key: 'do_cao_anten', width: 100,
+    { title: 'Cao anten (m)', key: 'do_cao_anten', width: 115,
       render: (_: unknown, r: CellRevisionBase) => String(r['do_cao_anten'] ?? '-') },
     { title: 'Azimuth', dataIndex: 'azimuth', width: 90 },
     { title: 'M-tilt', key: 'm_tilt', width: 80,
@@ -448,26 +424,21 @@ function CellRevisionTab({
       render: (_: unknown, r: CellRevisionBase) => String(r['total_tilt'] ?? '-') },
     { title: 'Loại Anten', key: 'loai_anten', width: 220, ellipsis: { showTitle: true },
       render: (_: unknown, r: CellRevisionBase) => String(r['loai_anten'] ?? '-') },
-    { title: 'Chung anten', key: 'chung_anten', width: 120,
-      render: (_: unknown, r: CellRevisionBase) =>
-        r['chung_anten'] !== undefined ? String(r['chung_anten'] ?? '-') : '-' },
     { title: 'Baseband', key: 'baseband', width: 110,
       render: (_: unknown, r: CellRevisionBase) => String(r['baseband'] ?? '-') },
     { title: 'RF', key: 'rf', width: 90,
       render: (_: unknown, r: CellRevisionBase) => String(r['rf'] ?? '-') },
     { title: 'Cell ID', key: 'cell_id', width: 90,
       render: (_: unknown, r: CellRevisionBase) => String(r['cell_id'] ?? '-') },
-    { title: 'ARFCN/EARFCN/NR-ARFCN', key: 'arfcn_any', width: 175,
+    { title: 'MIMO', key: 'mimo', width: 80,
       render: (_: unknown, r: CellRevisionBase) =>
-        String(r['arfcn'] ?? r['earfcn'] ?? r['nr_arfcn'] ?? '-') },
-    { title: 'PSC / PCI', key: 'psc_pci', width: 95,
-      render: (_: unknown, r: CellRevisionBase) =>
-        String(r['psc'] ?? r['pci'] ?? '-') },
-    { title: 'Root Seq ID', key: 'root_sequence_id', width: 120,
-      render: (_: unknown, r: CellRevisionBase) =>
-        String(r['root_sequence_id'] ?? '-') },
-    { title: 'MIMO', dataIndex: 'mimo', width: 80,
-      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : <span>-</span> },
+        r['mimo'] ? <Tag color="blue">{String(r['mimo'])}</Tag> : <span>-</span> },
+    { title: 'Cell max power (dBm)', key: 'cell_max_power', width: 175,
+      render: (_: unknown, r: CellRevisionBase) => String(r['cell_max_power'] ?? '-') },
+    { title: 'BBUname', key: 'bbu_name', width: 130,
+      render: (_: unknown, r: CellRevisionBase) => String(r['bbu_name'] ?? '-') },
+    { title: 'Cell status', key: 'cell_status', width: 140,
+      render: (_: unknown, r: CellRevisionBase) => String(r['cell_status'] ?? '-') },
     { title: 'Nguồn', dataIndex: 'change_source', width: 90,
       render: (v: string) => SOURCE_TAG[v] || <Tag>{v}</Tag> },
     { title: 'Người thay đổi', dataIndex: 'changed_by_name', width: 160,
@@ -480,6 +451,126 @@ function CellRevisionTab({
       },
     },
   ]
+}
+
+function makeCell3GColumns(): ColumnsType<CellRevisionBase> {
+  const common = makeCommonCellColumns()
+  // Insert 3G-specific columns before the trailing meta columns (Nguồn, Người thay đổi, Số trường TĐ)
+  // We splice them in after 'cell_id' column by rebuilding the array
+  const metaCount = 3 // Nguồn, Người thay đổi, Số trường TĐ
+  const before = common.slice(0, common.length - metaCount)
+  const meta   = common.slice(common.length - metaCount)
+  const specific: ColumnsType<CellRevisionBase> = [
+    { title: 'Chung anten', key: 'chung_anten', width: 120,
+      render: (_: unknown, r: CellRevisionBase) => String(r['chung_anten'] ?? '-') },
+    { title: 'ARFCN', key: 'arfcn', width: 90,
+      render: (_: unknown, r: CellRevisionBase) => String(r['arfcn'] ?? '-') },
+    { title: 'UARFCN', key: 'uarfcn', width: 95,
+      render: (_: unknown, r: CellRevisionBase) => String(r['uarfcn'] ?? '-') },
+    { title: 'LAC', key: 'lac', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['lac'] ?? '-') },
+    { title: 'RAC', key: 'rac', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['rac'] ?? '-') },
+    { title: 'PSC', key: 'psc', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['psc'] ?? '-') },
+    { title: 'URAId', key: 'ura_id', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['ura_id'] ?? '-') },
+    { title: 'CPICH power (dBm)', key: 'cpich_power', width: 155,
+      render: (_: unknown, r: CellRevisionBase) => String(r['cpich_power'] ?? '-') },
+  ]
+  return [...before, ...specific, ...meta]
+}
+
+function makeCell4GColumns(): ColumnsType<CellRevisionBase> {
+  const common = makeCommonCellColumns()
+  const metaCount = 3
+  const before = common.slice(0, common.length - metaCount)
+  const meta   = common.slice(common.length - metaCount)
+  const specific: ColumnsType<CellRevisionBase> = [
+    { title: 'Chung anten', key: 'chung_anten', width: 120,
+      render: (_: unknown, r: CellRevisionBase) => String(r['chung_anten'] ?? '-') },
+    { title: 'EnodeB ID', key: 'enodeb_id', width: 110,
+      render: (_: unknown, r: CellRevisionBase) => String(r['enodeb_id'] ?? '-') },
+    { title: 'EARFCN', key: 'earfcn', width: 90,
+      render: (_: unknown, r: CellRevisionBase) => String(r['earfcn'] ?? '-') },
+    { title: 'TAC', key: 'tac', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['tac'] ?? '-') },
+    { title: 'PCI', key: 'pci', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['pci'] ?? '-') },
+    { title: 'Root Sequence ID', key: 'root_sequence_id', width: 155,
+      render: (_: unknown, r: CellRevisionBase) => String(r['root_sequence_id'] ?? '-') },
+    { title: 'Bandwidth (MHz)', key: 'bandwidth', width: 130,
+      render: (_: unknown, r: CellRevisionBase) => String(r['bandwidth'] ?? '-') },
+    { title: 'ECI', key: 'eci', width: 110,
+      render: (_: unknown, r: CellRevisionBase) => String(r['eci'] ?? '-') },
+  ]
+  return [...before, ...specific, ...meta]
+}
+
+function makeCell5GColumns(): ColumnsType<CellRevisionBase> {
+  const common = makeCommonCellColumns()
+  const metaCount = 3
+  const before = common.slice(0, common.length - metaCount)
+  const meta   = common.slice(common.length - metaCount)
+  const specific: ColumnsType<CellRevisionBase> = [
+    { title: 'gNodeB ID', key: 'gnodeb_id', width: 110,
+      render: (_: unknown, r: CellRevisionBase) => String(r['gnodeb_id'] ?? '-') },
+    { title: 'TAC', key: 'tac', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['tac'] ?? '-') },
+    { title: 'PCI', key: 'pci', width: 80,
+      render: (_: unknown, r: CellRevisionBase) => String(r['pci'] ?? '-') },
+    { title: 'Root Sequence ID', key: 'root_sequence_id', width: 155,
+      render: (_: unknown, r: CellRevisionBase) => String(r['root_sequence_id'] ?? '-') },
+    { title: 'SSB-ARFCN', key: 'ssb_arfcn', width: 110,
+      render: (_: unknown, r: CellRevisionBase) => String(r['ssb_arfcn'] ?? '-') },
+    { title: 'Center-ARFCN', key: 'center_arfcn', width: 125,
+      render: (_: unknown, r: CellRevisionBase) => String(r['center_arfcn'] ?? '-') },
+    { title: 'GSCN', key: 'gscn', width: 85,
+      render: (_: unknown, r: CellRevisionBase) => String(r['gscn'] ?? '-') },
+    { title: 'Bandwidth (MHz)', key: 'bandwidth', width: 130,
+      render: (_: unknown, r: CellRevisionBase) => String(r['bandwidth'] ?? '-') },
+    { title: 'NCI', key: 'nci', width: 110,
+      render: (_: unknown, r: CellRevisionBase) => String(r['nci'] ?? '-') },
+    { title: 'MU-MIMO', key: 'mu_mimo', width: 95,
+      render: (_: unknown, r: CellRevisionBase) => String(r['mu_mimo'] ?? '-') },
+  ]
+  return [...before, ...specific, ...meta]
+}
+
+function CellRevisionTab({
+  tech, fetchFn, tinhList,
+}: {
+  tech: string
+  fetchFn: (p: Record<string, unknown>) => Promise<CellRevisionBase[]>
+  tinhList: TinhItem[]
+}) {
+  const [siteName, setSiteName] = useState('')
+  const [cellName, setCellName] = useState('')
+  const [tinh,     setTinh]     = useState<string | undefined>()
+  const [data,     setData]     = useState<CellRevisionBase[]>([])
+  const [loading,  setLoading]  = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params: Record<string, unknown> = { limit: 500 }
+      if (siteName.trim()) params.site_name = siteName.trim()
+      if (cellName.trim()) params.cell_name = cellName.trim()
+      const rows = await fetchFn(params)
+      setData(tinh ? rows.filter(r => r.tinh === tinh) : rows)
+    } finally { setLoading(false) }
+  }, [siteName, cellName, tinh, fetchFn])
+
+  useEffect(() => { load() }, [load])
+
+  // Select column set based on tech
+  const columns: ColumnsType<CellRevisionBase> = React.useMemo(() => {
+    const t = tech.toLowerCase()
+    if (t === '3g') return makeCell3GColumns()
+    if (t === '4g') return makeCell4GColumns()
+    if (t === '5g') return makeCell5GColumns()
+    return makeCommonCellColumns()
+  }, [tech])
 
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
@@ -514,7 +605,7 @@ function CellRevisionTab({
         </Col>
       </Row>
       <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-        {data.length} phiên bản Cell {tech} – nhấn ▶ để xem snapshot đầy đủ và diff chi tiết
+        {data.length} phiên bản Cell {tech} – nhấn ▶ để xem chi tiết các trường thay đổi
       </Typography.Text>
       <Table
         columns={columns} dataSource={data} rowKey="id"
@@ -525,7 +616,6 @@ function CellRevisionTab({
           expandedRowRender: (r: CellRevisionBase) => {
             const diff  = r.changed_fields || {}
             const nDiff = Object.keys(diff).length
-            // Only show rename banners when the name field actually changed in THIS revision
             const cellRenamed = 'cell_name' in diff
             const siteRenamed = 'site_name' in diff
             return (
@@ -555,15 +645,8 @@ function CellRevisionTab({
                 <Typography.Text strong style={{ fontSize: 13 }}>
                   🔄 Các trường thay đổi ({nDiff}) – Revision #{r.revision_no}
                 </Typography.Text>
-                <div style={{ marginTop: 8, marginBottom: 16 }}>
-                  <DiffTable diff={diff} />
-                </div>
-                <Divider style={{ margin: '12px 0' }} />
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  📋 Toàn bộ giá trị tại revision #{r.revision_no}
-                </Typography.Text>
                 <div style={{ marginTop: 8 }}>
-                  <SnapshotTable rows={cellSnap(r)} />
+                  <DiffTable diff={diff} />
                 </div>
               </div>
             )
@@ -597,7 +680,7 @@ export default function RevisionPage() {
             <li>Dữ liệu tự động tải khi mở trang – bộ lọc trống hiển thị tất cả thay đổi gần nhất.</li>
             <li>Mỗi lần tạo mới hoặc cập nhật đều tạo một bản ghi revision.</li>
             <li>Tìm kiếm theo tên hiện tại <strong>hoặc</strong> tên cũ đều ra kết quả.</li>
-            <li>Nhấn ▶ để xem đầy đủ snapshot và diff chi tiết từng trường.</li>
+            <li>Nhấn ▶ để xem diff chi tiết các trường thay đổi trong revision đó.</li>
             <li>Banner "Đổi tên" chỉ xuất hiện khi tên <strong>thực sự thay đổi</strong> trong revision đó.</li>
           </ul>
         }
