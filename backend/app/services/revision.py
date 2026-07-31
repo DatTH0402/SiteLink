@@ -20,6 +20,26 @@ from app.models.cell_3g import Cell3G
 from app.models.cell_4g import Cell4G
 from app.models.cell_5g import Cell5G
 
+def _safe_bool(v) -> bool:
+    """
+    Robustly convert any DB-returned value to Python bool.
+    Handles: None, real bool, int (0/1), and string ("false"/"true"/"0"/"1").
+    This is necessary because psycopg2 can return the PostgreSQL text
+    representation ("false"/"true") instead of a Python bool when the
+    server_default is a text expression and the ORM type-map is bypassed.
+    """
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
+
 
 def _normalize(v: Any) -> Any:
     """
@@ -98,14 +118,14 @@ def _site_snapshot(site: Site) -> Dict[str, Any]:
         "mien": site.mien, "tinh": site.tinh, "phuong_xa": site.phuong_xa,
         "site_name_cu": site.site_name_cu, "site_vip": site.site_vip,
         "lat": site.lat, "long": site.long,
-        "tram_2g": bool(site.tram_2g) if site.tram_2g is not None else False,
-        "tram_3g": bool(site.tram_3g) if site.tram_3g is not None else False,
-        "tram_4g": bool(site.tram_4g) if site.tram_4g is not None else False,
-        "tram_5g": bool(site.tram_5g) if site.tram_5g is not None else False,
-        "repeater": bool(site.repeater) if site.repeater is not None else False,
-        "booster": bool(site.booster) if site.booster is not None else False,
-        "node_truyen_dan_only": bool(site.node_truyen_dan_only) if site.node_truyen_dan_only is not None else False,
-        "tram_phu_song_tsca": bool(site.tram_phu_song_tsca) if site.tram_phu_song_tsca is not None else False,
+        "tram_2g": _safe_bool(site.tram_2g),
+        "tram_3g": _safe_bool(site.tram_3g),
+        "tram_4g": _safe_bool(site.tram_4g),
+        "tram_5g": _safe_bool(site.tram_5g),
+        "repeater": _safe_bool(site.repeater),
+        "booster": _safe_bool(site.booster),
+        "node_truyen_dan_only": _safe_bool(site.node_truyen_dan_only),
+        "tram_phu_song_tsca": _safe_bool(site.tram_phu_song_tsca),
         "phan_loai_tram": site.phan_loai_tram,
         "moran_3g": site.moran_3g, "moran_4g": site.moran_4g,
         "moran_5g": site.moran_5g,
@@ -226,11 +246,11 @@ def record_site_revision(
         mien=site.mien, tinh=site.tinh, phuong_xa=site.phuong_xa,
         site_name_cu=site.site_name_cu, site_vip=site.site_vip,
         lat=site.lat, long=site.long,
-        tram_2g=site.tram_2g, tram_3g=site.tram_3g,
-        tram_4g=site.tram_4g, tram_5g=site.tram_5g,
-        repeater=site.repeater, booster=site.booster,
-        node_truyen_dan_only=site.node_truyen_dan_only,
-        tram_phu_song_tsca=site.tram_phu_song_tsca,
+        tram_2g=_safe_bool(site.tram_2g), tram_3g=_safe_bool(site.tram_3g),
+        tram_4g=_safe_bool(site.tram_4g), tram_5g=_safe_bool(site.tram_5g),
+        repeater=_safe_bool(site.repeater), booster=_safe_bool(site.booster),
+        node_truyen_dan_only=_safe_bool(site.node_truyen_dan_only),
+        tram_phu_song_tsca=_safe_bool(site.tram_phu_song_tsca),
         phan_loai_tram=site.phan_loai_tram,
         moran_3g=site.moran_3g, moran_4g=site.moran_4g,
         moran_5g=site.moran_5g, ma_ptm=site.ma_ptm,

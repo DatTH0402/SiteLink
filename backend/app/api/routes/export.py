@@ -118,7 +118,18 @@ def export_sites(
         ("Do cao cot anten (m)", 20), ("Dia chi", 30), ("Ghi chu", 30),
     ]
     wb, ws = _make_wb(headers)
-    def b(val): return "x" if val else ""
+    def _safe_bool_export(v) -> bool:
+        if v is None:
+            return False
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return v != 0
+        if isinstance(v, str):
+            return v.strip().lower() not in ("false", "0", "no", "off", "")
+        return bool(v)
+
+    def b(val): return "x" if _safe_bool_export(val) else ""
     for idx, s in enumerate(sites, start=1):
         row = idx + 1
         values = [

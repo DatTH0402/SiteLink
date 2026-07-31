@@ -28,6 +28,23 @@ def _to_bool(value) -> bool:
         return value
     if isinstance(value, int):
         return bool(value)
+
+
+def _safe_bool_db(v) -> bool:
+    """
+    Convert a raw DB value (possibly str/int) to Python bool.
+    Required because psycopg2 may return "false"/"true" as strings.
+    """
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
     if isinstance(value, str):
         if value.lower() in ('true', 'yes', '1', 'on'):
             return True
@@ -39,10 +56,11 @@ def _to_bool(value) -> bool:
 
 
 def _sanitize_site(obj: Site) -> None:
+    """Ensure all boolean site fields are stored as real Python bools."""
     for field in _SITE_BOOL_FIELD_SET:
         raw = getattr(obj, field, None)
-        if not isinstance(raw, bool):
-            setattr(obj, field, _to_bool(raw))
+        # Always coerce – handles str ("false"/"true"), int (0/1), None
+        setattr(obj, field, _safe_bool_db(raw))
 
 
 def _sanitize_changes(changes: dict) -> dict:
@@ -82,8 +100,8 @@ def _apply_site_changes(existing: Site, changes: dict,
         # Normalize for comparison
         is_bool = k in _SITE_BOOL_FIELD_SET
         if is_bool:
-            old_norm = bool(old_val) if old_val is not None else False
-            new_norm = bool(v) if v is not None else False
+            old_norm = _safe_bool_db(old_val)
+            new_norm = _safe_bool_db(v)
         else:
             old_norm = None if (old_val is None or old_val == "") else old_val
             new_norm = None if (v is None or v == "") else v

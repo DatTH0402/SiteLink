@@ -159,7 +159,7 @@ def _bool_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
             col_found = True
             val = row.get(key)
             if val is not None and str(val).strip() not in ("", "nan", "None"):
-                return str(val).strip().lower() in ("x", "true", "yes", "1", "co", "có")
+                return bool(str(val).strip().lower() in ("x", "true", "yes", "1", "co", "có"))
             return False  # blank → False
     if not col_found:
         return _CLEAR
@@ -258,7 +258,9 @@ def _norm_compare(v: Any, is_bool: bool = False) -> Any:
         if isinstance(v, bool):
             return v
         if isinstance(v, int):
-            return bool(v)
+            return v != 0
+        if isinstance(v, str):
+            return v.strip().lower() not in ("false", "0", "no", "off", "")
         return bool(v)
     if v is None or (isinstance(v, str) and v.strip() == ""):
         return None
