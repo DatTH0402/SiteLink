@@ -15,6 +15,17 @@ export interface BulkResult {
   errors: string[]
 }
 
+/**
+ * Convert undefined → null so backend receives explicit null (clears the field).
+ */
+function nullifyUndefined(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(data)) {
+    out[k] = v === undefined ? null : v
+  }
+  return out
+}
+
 function makeCellApi<T>(tech: string) {
   return {
     list: (params?: Record<string, unknown>) =>
@@ -27,16 +38,20 @@ function makeCellApi<T>(tech: string) {
       api.post<T>(`/api/v1/cells-${tech}/`, data).then((r) => r.data),
 
     update: (id: number, data: Partial<T>) =>
-      api.put<T>(`/api/v1/cells-${tech}/${id}`, data).then((r) => r.data),
+      api.put<T>(`/api/v1/cells-${tech}/${id}`,
+                 nullifyUndefined(data as Record<string, unknown>))
+         .then((r) => r.data),
 
     remove: (id: number) =>
       api.delete(`/api/v1/cells-${tech}/${id}`),
 
     bulkDelete: (ids: number[]) =>
-      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-delete`, { ids }).then((r) => r.data),
+      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-delete`, { ids })
+         .then((r) => r.data),
 
     bulkUpdate: (ids: number[], changes: Record<string, unknown>) =>
-      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-update`, { ids, changes }).then((r) => r.data),
+      api.post<BulkResult>(`/api/v1/cells-${tech}/bulk-update`, { ids, changes })
+         .then((r) => r.data),
 
     dryRunExcel: (file: File) => {
       const form = new FormData()

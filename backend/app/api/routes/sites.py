@@ -12,19 +12,18 @@ from app.schemas.site import SiteCreate, SiteUpdate, SiteRead
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
-from app.services.import_excel import parse_site_excel
+from app.services.import_excel import parse_site_excel, _CLEAR, _SITE_BOOL_FIELDS
 from app.services.revision import record_site_revision, _site_snapshot
 
 router = APIRouter()
 
-_SITE_BOOL_FIELDS = frozenset({
+_SITE_BOOL_FIELD_SET = frozenset({
     'tram_2g', 'tram_3g', 'tram_4g', 'tram_5g',
     'repeater', 'booster', 'node_truyen_dan_only', 'tram_phu_song_tsca',
 })
 
 
 def _to_bool(value) -> bool:
-    """Robustly convert any value to Python bool."""
     if isinstance(value, bool):
         return value
     if isinstance(value, int):
@@ -36,27 +35,20 @@ def _to_bool(value) -> bool:
             return False
     if value is None:
         return False
-    # Last resort
     return bool(value)
 
 
 def _sanitize_site(obj: Site) -> None:
-    """
-    Ensure all boolean columns on a Site ORM object hold real Python booleans.
-    Call this AFTER setattr() and BEFORE flush/snapshot to prevent SQLAlchemy
-    from passing strings to psycopg2's boolean adapter.
-    """
-    for field in _SITE_BOOL_FIELDS:
+    for field in _SITE_BOOL_FIELD_SET:
         raw = getattr(obj, field, None)
         if not isinstance(raw, bool):
             setattr(obj, field, _to_bool(raw))
 
 
 def _sanitize_changes(changes: dict) -> dict:
-    """Coerce boolean-field values in a changes dict to real Python booleans."""
     out = {}
     for k, v in changes.items():
-        if k in _SITE_BOOL_FIELDS:
+        if k in _SITE_BOOL_FIELD_SET:
             out[k] = _to_bool(v)
         else:
             out[k] = v
@@ -68,6 +60,37 @@ def _site_or_404(db: Session, site_id: int) -> Site:
     if not s:
         raise HTTPException(status_code=404, detail="Site not found")
     return s
+
+
+def _apply_site_changes(existing: Site, changes: dict,
+                         skip_keys: set = None) -> bool:
+    """
+    Apply changes to site object. Skips _CLEAR sentinels.
+    Returns True if any field was actually changed vs current DB value.
+    """
+    if skip_keys is None:
+        skip_keys = set()
+    any_changed = False
+    for k, v in changes.items():
+        if k in skip_keys or k.startswith("_"):
+            continue
+        if v is _CLEAR:
+            continue
+        if not hasattr(existing, k):
+            continue
+        old_val = getattr(existing, k)
+        # Normalize for comparison
+        is_bool = k in _SITE_BOOL_FIELD_SET
+        if is_bool:
+            old_norm = bool(old_val) if old_val is not None else False
+            new_norm = bool(v) if v is not None else False
+        else:
+            old_norm = None if (old_val is None or old_val == "") else old_val
+            new_norm = None if (v is None or v == "") else v
+        if old_norm != new_norm:
+            setattr(existing, k, v)
+            any_changed = True
+    return any_changed
 
 
 # ── Static routes FIRST ──────────────────────────────────────────────────────
@@ -119,11 +142,16 @@ async def import_sites_excel(
     to_create = result["to_create"]
     to_update = result["to_update"]
     errors    = list(result["errors"])
-    created, updated = 0, 0
+    created, updated, skipped = 0, 0, 0
 
     for rec in to_create:
         try:
-            site = Site(**rec, created_by=current_user.id)
+            # rec already has _CLEAR resolved for creates
+            clean = {k: v for k, v in rec.items()
+                     if v is not _CLEAR and not k.startswith("_")}
+            site = Site(**clean, created_by=current_user.id)
+            # Ensure booleans
+            _sanitize_site(site)
             db.add(site)
             db.flush()
             record_site_revision(
@@ -133,7 +161,7 @@ async def import_sites_excel(
                 change_source="excel",
             )
             db.commit()
-            log_action(db, current_user, "CREATE", "sites", site.id, new_value=rec)
+            log_action(db, current_user, "CREATE", "sites", site.id, new_value=clean)
             created += 1
         except Exception as e:
             db.rollback()
@@ -145,21 +173,23 @@ async def import_sites_excel(
             if not existing:
                 errors.append(f"Site '{upd['anchor']}' disappeared during import")
                 continue
-            old_snap = _site_snapshot(existing)
-            old_name = existing.site_name
-            changes  = upd["changes"]
+
+            old_snap  = _site_snapshot(existing)
+            old_name  = existing.site_name
+            changes   = upd["changes"]
 
             new_site_name = changes.get("site_name")
             site_name_old_ref = None
-            if new_site_name and new_site_name != old_name:
+            if new_site_name and new_site_name is not _CLEAR and new_site_name != old_name:
                 site_name_old_ref = old_name
 
-            for k, v in changes.items():
-                if v is not None:
-                    setattr(existing, k, v)
+            # Apply only fields that differ from current DB value
+            _apply_site_changes(existing, changes,
+                                 skip_keys={"site_id", "created_by", "created_at"})
             _sanitize_site(existing)
             db.flush()
-            record_site_revision(
+
+            rev = record_site_revision(
                 db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
@@ -167,14 +197,21 @@ async def import_sites_excel(
                 site_name_old_ref=site_name_old_ref,
             )
             db.commit()
-            log_action(db, current_user, "UPDATE", "sites",
-                       existing.id, old_value=old_snap, new_value=changes)
-            updated += 1
+
+            if rev is None:
+                skipped += 1
+            else:
+                log_action(db, current_user, "UPDATE", "sites",
+                           existing.id, old_value=old_snap,
+                           new_value={k: v for k, v in changes.items()
+                                      if v is not _CLEAR})
+                updated += 1
         except Exception as e:
             db.rollback()
             errors.append(f"Update '{upd['anchor']}': {e}")
 
-    return {"created": created, "updated": updated, "errors": errors}
+    return {"created": created, "updated": updated,
+            "skipped_no_change": skipped, "errors": errors}
 
 
 @router.get("/", response_model=List[SiteRead])
@@ -265,15 +302,13 @@ def bulk_update_sites(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown field(s): {unknown}")
 
-    # Coerce boolean strings → real Python booleans in the changes dict
     safe_changes = _sanitize_changes(safe_changes)
 
-    errors:  list[str] = []
-    updated: int       = 0
+    errors:  list = []
+    updated: int  = 0
 
     for site_id in ids:
         try:
-            # Always use a fresh query to avoid stale identity-map objects
             db.expire_all()
             site = db.query(Site).filter(Site.id == site_id).first()
             if not site:
@@ -285,13 +320,10 @@ def bulk_update_sites(
             for k, v in safe_changes.items():
                 setattr(site, k, v)
 
-            # CRITICAL: ensure all boolean columns are real Python booleans
-            # AFTER setattr, BEFORE flush/snapshot. This is the definitive fix.
             _sanitize_site(site)
-
             db.flush()
 
-            record_site_revision(
+            rev = record_site_revision(
                 db, site,
                 old_snapshot=old_snap,
                 changed_by_id=current_user.id,
@@ -302,16 +334,16 @@ def bulk_update_sites(
 
             db.commit()
 
-            try:
-                log_action(
-                    db, current_user, "UPDATE", "sites", site_id,
-                    old_value=old_snap,
-                    new_value=safe_changes,
-                )
-            except Exception as log_err:
-                print(f"[WARN] log_action failed for site {site_id}: {log_err}")
-
-            updated += 1
+            if rev is not None:
+                try:
+                    log_action(
+                        db, current_user, "UPDATE", "sites", site_id,
+                        old_value=old_snap,
+                        new_value=safe_changes,
+                    )
+                except Exception as log_err:
+                    print(f"[WARN] log_action failed for site {site_id}: {log_err}")
+                updated += 1
 
         except Exception as e:
             tb = traceback.format_exc()
@@ -377,7 +409,7 @@ def update_site(
         setattr(site, k, v)
     _sanitize_site(site)
     db.flush()
-    record_site_revision(
+    rev = record_site_revision(
         db, site, old_snapshot=old_snap,
         changed_by_id=current_user.id,
         changed_by_name=current_user.full_name or current_user.username,
@@ -386,8 +418,9 @@ def update_site(
     )
     db.commit()
     db.refresh(site)
-    log_action(db, current_user, "UPDATE", "sites", site.id,
-               old_value=old_snap, new_value=data)
+    if rev is not None:
+        log_action(db, current_user, "UPDATE", "sites", site.id,
+                   old_value=old_snap, new_value=data)
     return site
 
 

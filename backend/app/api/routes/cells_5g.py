@@ -9,7 +9,7 @@ from app.schemas.cell import Cell5GCreate, Cell5GUpdate, Cell5GRead
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
-from app.services.import_excel import parse_cell5g_excel
+from app.services.import_excel import parse_cell5g_excel, _CLEAR
 from app.services.revision import record_cell5g_revision, _cell5g_snapshot
 
 router = APIRouter()
@@ -34,6 +34,23 @@ def _ensure_site(db: Session, rec: dict, current_user: User) -> int:
     )
     db.add(new_site); db.commit(); db.refresh(new_site)
     return new_site.id
+
+
+def _apply_cell_changes(existing: Cell5G, changes: dict,
+                         skip_keys: set = None, is_rename: bool = False) -> None:
+    if skip_keys is None:
+        skip_keys = set()
+    for k, v in changes.items():
+        if k in skip_keys or k.startswith("_"):
+            continue
+        if v is _CLEAR:
+            continue
+        if k == "cell_name" and not is_rename:
+            continue
+        if k == "site_id":
+            continue
+        if hasattr(existing, k):
+            setattr(existing, k, v)
 
 
 @router.get("/", response_model=List[Cell5GRead])
@@ -102,14 +119,15 @@ def bulk_update(
             for k, v in changes.items():
                 if hasattr(cell, k): setattr(cell, k, v)
             db.flush()
-            record_cell5g_revision(db, cell, old_snapshot=old_snap,
+            rev = record_cell5g_revision(db, cell, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="form", change_note="Bulk update")
             db.commit()
-            log_action(db, current_user, "UPDATE", "cells_5g", cid,
-                       old_value=old_snap, new_value=changes)
-            updated += 1
+            if rev is not None:
+                log_action(db, current_user, "UPDATE", "cells_5g", cid,
+                           old_value=old_snap, new_value=changes)
+                updated += 1
         except Exception as e:
             db.rollback(); errors.append(f"Cell id={cid}: {e}")
     return {"updated": updated, "errors": errors}
@@ -148,8 +166,9 @@ async def import_excel(
             site_id = _ensure_site(db, rec, current_user)
             if site_id != rec.get("site_id"): sites_auto_created += 1
             rec["site_id"] = site_id
-            cell = Cell5G(**{k: v for k, v in rec.items() if hasattr(Cell5G, k)},
-                          created_by=current_user.id)
+            clean = {k: v for k, v in rec.items()
+                     if v is not _CLEAR and hasattr(Cell5G, k)}
+            cell = Cell5G(**clean, created_by=current_user.id)
             db.add(cell); db.flush()
             record_cell5g_revision(db, cell, old_snapshot=None,
                 changed_by_id=current_user.id,
@@ -164,11 +183,7 @@ async def import_excel(
             if not existing: errors.append(f"Cell '{upd['anchor']}' disappeared"); continue
             old_snap = _cell5g_snapshot(existing)
             is_rename = upd.get("is_rename", False)
-            for k, v in upd["changes"].items():
-                if k == "cell_name" and not is_rename: continue
-                if k in ("site_id",): continue
-                if k.startswith("_"): continue
-                if v is not None and hasattr(existing, k): setattr(existing, k, v)
+            _apply_cell_changes(existing, upd["changes"], is_rename=is_rename)
             db.flush()
             rev = record_cell5g_revision(db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
@@ -180,7 +195,8 @@ async def import_excel(
         except Exception as e:
             db.rollback(); errors.append(f"Update cell '{upd['anchor']}': {e}")
     return {"created": created, "updated": updated,
-            "skipped_no_change": skipped, "sites_auto_created": sites_auto_created, "errors": errors}
+            "skipped_no_change": skipped, "sites_auto_created": sites_auto_created,
+            "errors": errors}
 
 
 @router.get("/{cell_id}", response_model=Cell5GRead)
@@ -217,13 +233,14 @@ def update_cell(
     data = payload.model_dump(exclude_unset=True)
     for k, v in data.items(): setattr(cell, k, v)
     db.flush()
-    record_cell5g_revision(db, cell, old_snapshot=old_snap,
+    rev = record_cell5g_revision(db, cell, old_snapshot=old_snap,
         changed_by_id=current_user.id,
         changed_by_name=current_user.full_name or current_user.username,
         change_source="form")
     db.commit(); db.refresh(cell)
-    log_action(db, current_user, "UPDATE", "cells_5g", cell.id,
-               old_value=old_dict, new_value=data)
+    if rev is not None:
+        log_action(db, current_user, "UPDATE", "cells_5g", cell.id,
+                   old_value=old_dict, new_value=data)
     return cell
 
 

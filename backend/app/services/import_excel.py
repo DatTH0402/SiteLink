@@ -1,40 +1,32 @@
 """
 import_excel.py – Excel → DB record conversion for Sites, Cell3G, Cell4G, Cell5G.
 
-Key fix (dry-run / import shows wrong "create" for existing cells):
-  The exported Excel file contains columns:
-    "Site Name"  (current site_name)
-    "Site Name Old" (site_name_old – may be non-empty)
-    "Cell Name"  (current cell_name)
-    "Cell Name Old" (cell_name_old – may be non-empty)
+Key design decisions:
+  1. Column PRESENT in Excel + blank value → intentional clear → set field to None/False
+  2. Column ABSENT from Excel → do not touch that field
+  3. This requires tracking which columns exist in the sheet (excel_columns set)
+  4. For boolean fields: blank = False (not None), "x" = True
+  5. For text/number fields: blank = None (clear the field)
 
-  Previous lookup strategy:
-    1. find site by site_name  →  if not found try site_name_old
-    2. find cell by (site_id, cell_name)
-
-  Problem: if site lookup returns None (e.g. site_name slightly differs or
-  site_name_old populated), the cell is pushed to to_create.
-
-  New lookup strategy (most-specific first, broadest last):
-    1. find site by exact site_name
-    2. find site by site_name_old (rename case)
-    3. cell lookup by (site_id, cell_name)          ← primary
-    4. cell lookup by cell_name alone (no site_id)  ← fallback when site
-       could not be resolved but cell_name is unique enough
-    5. cell lookup by (site_id, cell_name_old)      ← rename case
+This fixes:
+  - Spurious bool updates: blank bool col → False; DB has False → no diff
+  - Blank text col in update: previously ignored, now sets to None (clears field)
 """
 from __future__ import annotations
 
 import io
 import re
 import unicodedata
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
 VN_LAT_MIN, VN_LAT_MAX = 8.33,   23.39
 VN_LON_MIN, VN_LON_MAX = 102.14, 109.47
 AZI_MIN,    AZI_MAX    = 0,       359
+
+# Sentinel: column exists in Excel but is blank → intentional clear
+_CLEAR = object()
 
 
 def _strip_accents(text: str) -> str:
@@ -95,7 +87,19 @@ def _read_excel(file_bytes: bytes) -> pd.DataFrame:
     return df
 
 
-def _v(row, *keys) -> Optional[str]:
+def _col_present(row: Dict, excel_cols: Set[str], *keys) -> bool:
+    """Return True if any of the keys exist as a column in the Excel sheet."""
+    for key in keys:
+        if key in excel_cols:
+            return True
+    return False
+
+
+def _v(row: Dict, *keys) -> Optional[str]:
+    """
+    Return the string value for the first matching key.
+    Returns None if key not found OR if cell is blank.
+    """
     for key in keys:
         val = row.get(key)
         if val is not None and str(val).strip() not in ("", "nan", "None"):
@@ -103,14 +107,65 @@ def _v(row, *keys) -> Optional[str]:
     return None
 
 
-def _bool(row, *keys) -> bool:
-    v = _v(row, *keys)
-    if v is None:
-        return False
-    return str(v).strip().lower() in ("x", "true", "yes", "1", "co", "có")
+def _v_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
+    """
+    Column-presence-aware value extractor.
+    - Column absent from Excel: returns _CLEAR sentinel (meaning: skip this field)
+      Wait, actually we want: absent = don't include in rec at all.
+      So we return a special sentinel only when col IS present but blank.
+    - Column present + blank: return None (intentional clear)
+    - Column present + has value: return the value string
+    - Column absent: return _CLEAR (caller should skip this field)
+    """
+    col_found = False
+    for key in keys:
+        if key in excel_cols:
+            col_found = True
+            val = row.get(key)
+            if val is not None and str(val).strip() not in ("", "nan", "None"):
+                return str(val).strip()
+            # Column exists but blank → intentional clear
+            return None
+    if not col_found:
+        return _CLEAR  # column not in this Excel file → don't touch
 
 
-def _float(row, *keys) -> Optional[float]:
+def _float_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
+    """Float version of _v_aware."""
+    col_found = False
+    for key in keys:
+        if key in excel_cols:
+            col_found = True
+            val = row.get(key)
+            if val is not None and str(val).strip() not in ("", "nan", "None"):
+                try:
+                    return float(str(val).strip())
+                except (ValueError, TypeError):
+                    return None
+            return None  # blank → clear
+    if not col_found:
+        return _CLEAR
+
+
+def _bool_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
+    """
+    Bool version: column present + blank → False (not None, because False is
+    the explicit "off" state for checkbox fields).
+    Column absent → _CLEAR (skip).
+    """
+    col_found = False
+    for key in keys:
+        if key in excel_cols:
+            col_found = True
+            val = row.get(key)
+            if val is not None and str(val).strip() not in ("", "nan", "None"):
+                return str(val).strip().lower() in ("x", "true", "yes", "1", "co", "có")
+            return False  # blank → False
+    if not col_found:
+        return _CLEAR
+
+
+def _float(row: Dict, *keys) -> Optional[float]:
     v = _v(row, *keys)
     if v is None:
         return None
@@ -118,6 +173,13 @@ def _float(row, *keys) -> Optional[float]:
         return float(v)
     except (ValueError, TypeError):
         return None
+
+
+def _bool(row: Dict, *keys) -> bool:
+    v = _v(row, *keys)
+    if v is None:
+        return False
+    return str(v).strip().lower() in ("x", "true", "yes", "1", "co", "có")
 
 
 def _validate_lat(lat, row_num, label, errors):
@@ -154,10 +216,69 @@ def _validate_azimuth(azi, row_num, label, errors):
     return azi
 
 
+def _apply_changes_to_obj(obj: Any, changes: Dict[str, Any],
+                           skip_keys: Set[str] = None,
+                           bool_fields: Set[str] = None) -> bool:
+    """
+    Apply changes dict to an ORM object.
+    - Skips _CLEAR sentinel values (column not in Excel → don't touch)
+    - Applies None values (intentional clear)
+    - Applies False values for bool fields (intentional uncheck)
+    - Returns True if any field was actually changed
+    """
+    if skip_keys is None:
+        skip_keys = set()
+    if bool_fields is None:
+        bool_fields = set()
+    changed = False
+    for k, v in changes.items():
+        if k in skip_keys:
+            continue
+        if k.startswith("_"):
+            continue
+        if v is _CLEAR:
+            continue  # column absent from Excel → don't touch
+        if not hasattr(obj, k):
+            continue
+        old_val = getattr(obj, k)
+        # Normalize for comparison
+        old_norm = _norm_compare(old_val, k in bool_fields)
+        new_norm = _norm_compare(v, k in bool_fields)
+        if old_norm != new_norm:
+            setattr(obj, k, v)
+            changed = True
+    return changed
+
+
+def _norm_compare(v: Any, is_bool: bool = False) -> Any:
+    """Normalize value for change comparison."""
+    if is_bool:
+        if v is None:
+            return False
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return bool(v)
+        return bool(v)
+    if v is None or (isinstance(v, str) and v.strip() == ""):
+        return None
+    if isinstance(v, float):
+        return v
+    return str(v).strip() if isinstance(v, str) else v
+
+
 # ── Site import ───────────────────────────────────────────────────────────────
+
+_SITE_BOOL_FIELDS = {
+    'tram_2g', 'tram_3g', 'tram_4g', 'tram_5g',
+    'repeater', 'booster', 'node_truyen_dan_only', 'tram_phu_song_tsca',
+}
+
+
 def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[str, Any]:
     df  = _read_excel(file_bytes)
     geo = GeoCache(db) if db else None
+    excel_cols: Set[str] = set(df.columns)
     to_create: List[Dict] = []
     to_update: List[Dict] = []
     errors:    List[str]  = []
@@ -209,38 +330,43 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         file_site_name_old = _v(row, "Site name (cũ)", "Site name (cu)", "Site Name (cũ)",
                                  "Site Name Old", "site_name_old")
 
+        # Build rec with column-aware values
+        # For CREATE: use _bool/_v (blank = False/None as before)
+        # For UPDATE: use _bool_aware/_v_aware (blank = intentional clear)
         rec: Dict[str, Any] = {
             "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
             "site_name_cu": file_site_name_old, "site_name": site_name,
-            "site_vip": _v(row, "Site VIP", "site_vip"),
+            # Use aware versions for update-sensitive fields:
+            "site_vip":    _v_aware(row, excel_cols, "Site VIP", "site_vip"),
             "lat": lat, "long": long,
-            "tram_2g": _bool(row, "Trạm 2G", "Tram 2G", "tram_2g"),
-            "tram_3g": _bool(row, "Trạm 3G", "Tram 3G", "tram_3g"),
-            "tram_4g": _bool(row, "Trạm 4G", "Tram 4G", "tram_4g"),
-            "tram_5g": _bool(row, "Trạm 5G", "Tram 5G", "tram_5g"),
-            "repeater": _bool(row, "Repeater", "repeater"),
-            "booster":  _bool(row, "Booster",  "booster"),
-            "node_truyen_dan_only": _bool(row, "Node truyền dẫn only",
-                                          "Node truyen dan only", "node_truyen_dan_only"),
-            "tram_phu_song_tsca": _bool(row, "Trạm phủ sóng TSCA",
-                                        "Tram phu song TSCA", "tram_phu_song_tsca"),
-            "phan_loai_tram": _v(row,
+            # Boolean fields – aware version: blank → False, absent → _CLEAR
+            "tram_2g":    _bool_aware(row, excel_cols, "Trạm 2G", "Tram 2G", "tram_2g"),
+            "tram_3g":    _bool_aware(row, excel_cols, "Trạm 3G", "Tram 3G", "tram_3g"),
+            "tram_4g":    _bool_aware(row, excel_cols, "Trạm 4G", "Tram 4G", "tram_4g"),
+            "tram_5g":    _bool_aware(row, excel_cols, "Trạm 5G", "Tram 5G", "tram_5g"),
+            "repeater":   _bool_aware(row, excel_cols, "Repeater", "repeater"),
+            "booster":    _bool_aware(row, excel_cols, "Booster",  "booster"),
+            "node_truyen_dan_only": _bool_aware(row, excel_cols,
+                "Node truyền dẫn only", "Node truyen dan only", "node_truyen_dan_only"),
+            "tram_phu_song_tsca": _bool_aware(row, excel_cols,
+                "Trạm phủ sóng TSCA", "Tram phu song TSCA", "tram_phu_song_tsca"),
+            "phan_loai_tram": _v_aware(row, excel_cols,
                 "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
                 "Phan loai tram", "phan_loai_tram"),
-            "moran_3g": _v(row, "TRẠM MORAN 3G (VNPT HOST, MBF HOST)",
-                           "MORAN 3G", "moran_3g"),
-            "moran_4g": _v(row, "TRẠM MORAN 4G (VNPT HOST, MBF HOST)",
-                           "MORAN 4G", "moran_4g"),
-            "moran_5g": _v(row, "TRẠM MORAN 5G (VNPT HOST, MBF HOST)",
-                           "MORAN 5G", "moran_5g"),
-            "ma_ptm": _v(row, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM") or "",
-            "do_cao_dinh_cot_anten": _float(row,
+            "moran_3g": _v_aware(row, excel_cols,
+                "TRẠM MORAN 3G (VNPT HOST, MBF HOST)", "MORAN 3G", "moran_3g"),
+            "moran_4g": _v_aware(row, excel_cols,
+                "TRẠM MORAN 4G (VNPT HOST, MBF HOST)", "MORAN 4G", "moran_4g"),
+            "moran_5g": _v_aware(row, excel_cols,
+                "TRẠM MORAN 5G (VNPT HOST, MBF HOST)", "MORAN 5G", "moran_5g"),
+            "ma_ptm": _v_aware(row, excel_cols, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM"),
+            "do_cao_dinh_cot_anten": _float_aware(row, excel_cols,
                 "Độ cao đỉnh cột anten (m) đến mặt đất",
                 "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
-            "do_cao_cot_anten": _float(row, "Độ cao cột anten",
-                                       "Do cao cot anten", "do_cao_cot_anten"),
-            "dia_chi": _v(row, "Địa chỉ", "Dia chi", "dia_chi"),
-            "ghi_chu": _v(row, "Ghi chú", "Ghi chu", "ghi_chu"),
+            "do_cao_cot_anten": _float_aware(row, excel_cols,
+                "Độ cao cột anten", "Do cao cot anten", "do_cao_cot_anten"),
+            "dia_chi": _v_aware(row, excel_cols, "Địa chỉ", "Dia chi", "dia_chi"),
+            "ghi_chu":  _v_aware(row, excel_cols, "Ghi chú", "Ghi chu", "ghi_chu"),
         }
 
         if db:
@@ -262,9 +388,12 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                     "changes": rec, "is_rename": False,
                 })
             else:
-                to_create.append(rec)
+                # For CREATE: replace _CLEAR with defaults
+                create_rec = _resolve_create_rec(rec)
+                to_create.append(create_rec)
         else:
-            to_create.append(rec)
+            create_rec = _resolve_create_rec(rec)
+            to_create.append(create_rec)
 
     return {
         "to_create": to_create, "to_update": to_update,
@@ -272,8 +401,29 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
     }
 
 
+def _resolve_create_rec(rec: Dict) -> Dict:
+    """For CREATE operations, replace _CLEAR sentinels with None/False defaults."""
+    result = {}
+    for k, v in rec.items():
+        if v is _CLEAR:
+            # Default: booleans → False, others → None
+            if k in _SITE_BOOL_FIELDS:
+                result[k] = False
+            else:
+                result[k] = None
+        else:
+            result[k] = v
+    return result
+
+
 # ── Cell common field extractor ───────────────────────────────────────────────
-def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
+
+_CELL_BOOL_FIELDS: Set[str] = set()  # cells have no boolean fields currently
+
+
+def _cell_common_aware(row: Dict, excel_cols: Set[str],
+                        geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
+    """Column-aware version of _cell_common."""
     raw_tinh   = _v(row, "Tỉnh", "Tinh", "tinh")
     raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
     raw_mien   = _v(row, "Miền", "Mien", "mien")
@@ -309,44 +459,49 @@ def _cell_common(row, geo=None, errors_out=None, row_num=0) -> Dict[str, Any]:
     return {
         "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
         "site_name":     _v(row, "Site Name", "Site name", "site_name") or "",
-        "site_name_old": _v(row, "Site Name Old", "Site name old", "site_name_old",
-                             "Site Name (cũ)", "Site name (cu)"),
+        "site_name_old": _v_aware(row, excel_cols, "Site Name Old", "Site name old",
+                                   "site_name_old", "Site Name (cũ)", "Site name (cu)"),
         "cell_name":     cell_name,
-        "cell_name_old": _v(row, "Cell Name Old", "Cell name old", "cell_name_old",
-                             "Cell Name (cũ)"),
-        "cell_vip":      _v(row, "Cell VIP", "cell_vip"),
-        "moran":         _v(row, "MORAN", "Moran", "moran"),
+        "cell_name_old": _v_aware(row, excel_cols, "Cell Name Old", "Cell name old",
+                                   "cell_name_old", "Cell Name (cũ)"),
+        "cell_vip":      _v_aware(row, excel_cols, "Cell VIP", "cell_vip"),
+        "moran":         _v_aware(row, excel_cols, "MORAN", "Moran", "moran"),
         "lat": lat, "long": lon,
-        "vung_phu_song": _v(row, "Vùng phủ sóng", "Vung phu song", "vung_phu_song"),
-        "vendor":        _v(row, "Vendor", "vendor"),
-        "do_cao_anten":  _float(row, "Độ cao anten", "Do cao anten", "do_cao_anten"),
+        "vung_phu_song": _v_aware(row, excel_cols, "Vùng phủ sóng",
+                                   "Vung phu song", "vung_phu_song"),
+        "vendor":        _v_aware(row, excel_cols, "Vendor", "vendor"),
+        "do_cao_anten":  _float_aware(row, excel_cols, "Độ cao anten",
+                                       "Do cao anten", "do_cao_anten"),
         "azimuth": azi,
-        "m_tilt":        _float(row, "M-tilt", "M-Tilt", "m_tilt"),
-        "e_tilt":        _float(row, "E-Tilt", "E-tilt", "e_tilt"),
-        "total_tilt":    _float(row, "Total Tilt", "Total tilt", "total_tilt"),
-        "loai_anten":    _v(row, "Loại Anten", "Loai Anten", "loai_anten"),
-        "baseband":      _v(row, "Baseband", "baseband"),
-        "rf":            _v(row, "RF", "rf"),
-        "cell_id":       _v(row, "Cell ID", "cell_id"),
-        "mimo":          _v(row, "MIMO", "mimo"),
-        "bbu_name":      _v(row, "BBUname", "BBU Name", "bbu_name"),
-        "cell_status":   _v(row, "Cell status (at dump time)", "Cell status", "cell_status"),
-        "cell_max_power": _v(row, "Cell max power (dBm)", "Cell max power", "cell_max_power"),
+        "m_tilt":        _float_aware(row, excel_cols, "M-tilt", "M-Tilt", "m_tilt"),
+        "e_tilt":        _float_aware(row, excel_cols, "E-Tilt", "E-tilt", "e_tilt"),
+        "total_tilt":    _float_aware(row, excel_cols, "Total Tilt", "Total tilt", "total_tilt"),
+        "loai_anten":    _v_aware(row, excel_cols, "Loại Anten", "Loai Anten", "loai_anten"),
+        "baseband":      _v_aware(row, excel_cols, "Baseband", "baseband"),
+        "rf":            _v_aware(row, excel_cols, "RF", "rf"),
+        "cell_id":       _v_aware(row, excel_cols, "Cell ID", "cell_id"),
+        "mimo":          _v_aware(row, excel_cols, "MIMO", "mimo"),
+        "bbu_name":      _v_aware(row, excel_cols, "BBUname", "BBU Name", "bbu_name"),
+        "cell_status":   _v_aware(row, excel_cols, "Cell status (at dump time)",
+                                   "Cell status", "cell_status"),
+        "cell_max_power": _v_aware(row, excel_cols, "Cell max power (dBm)",
+                                    "Cell max power", "cell_max_power"),
     }
 
 
 # ── Core cell Excel parser ────────────────────────────────────────────────────
+
 def _parse_cell_excel(
     file_bytes, Model, extra_fields_fn, db=None, dry_run=False
 ) -> Dict[str, Any]:
     df  = _read_excel(file_bytes)
+    excel_cols: Set[str] = set(df.columns)
     geo = GeoCache(db) if db else None
 
     to_create:         List[Dict] = []
     to_update:         List[Dict] = []
     sites_to_create:   List[Dict] = []
     errors:            List[str]  = []
-    # track site names we know are new (not in DB) within this import batch
     pending_new_sites: Dict[str, Dict] = {}
 
     from app.models.site import Site
@@ -355,13 +510,16 @@ def _parse_cell_excel(
         row_num    = int(str(i)) + 2
         row_errors: List[str] = []
 
-        common       = _cell_common(row, geo=geo, errors_out=row_errors, row_num=row_num)
+        common       = _cell_common_aware(row, excel_cols, geo=geo,
+                                           errors_out=row_errors, row_num=row_num)
         errors.extend(row_errors)
 
         cell_name     = common.get("cell_name", "")
-        cell_name_old = common.get("cell_name_old", "")
+        cell_name_old_val = common.get("cell_name_old", _CLEAR)
+        cell_name_old = cell_name_old_val if cell_name_old_val is not _CLEAR else None
         site_name     = common.get("site_name", "")
-        site_name_old = common.get("site_name_old", "")
+        site_name_old_val = common.get("site_name_old", _CLEAR)
+        site_name_old = site_name_old_val if site_name_old_val is not _CLEAR else None
 
         if not cell_name:
             errors.append(f"Row {row_num}: 'Cell Name' is empty – skipped")
@@ -370,13 +528,10 @@ def _parse_cell_excel(
             errors.append(f"Row {row_num}: 'Site Name' is empty – skipped")
             continue
 
-        extra = extra_fields_fn(row)
+        extra = extra_fields_fn(row, excel_cols)
         rec   = {**common, **extra}
 
         # ── Site resolution ───────────────────────────────────────────────────
-        # Priority:
-        #   1. exact match on current site_name
-        #   2. match on site_name_old (covers renamed-site exports)
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
@@ -387,10 +542,8 @@ def _parse_cell_excel(
         if site_obj:
             site_id = site_obj.id
         elif site_name in pending_new_sites:
-            # already queued as new in this batch
             site_id = None
         else:
-            # genuinely new site
             new_site_rec = {
                 "site_name": site_name,
                 "mien":      common.get("mien") or "",
@@ -406,22 +559,15 @@ def _parse_cell_excel(
         rec["site_id"] = site_id
 
         # ── Cell resolution ───────────────────────────────────────────────────
-        # Priority:
-        #   1. (site_id, cell_name)       – exact, most reliable
-        #   2. (site_id, cell_name_old)   – rename: old name in file
-        #   3. cell_name alone            – fallback when site_id unknown yet
-        #                                   but cell_name should be unique
         existing_cell = None
 
         if db:
             if site_obj:
-                # ── Primary: exact (site_id, cell_name) ──────────────────────
                 existing_cell = db.query(Model).filter(
                     Model.site_id == site_obj.id,
                     Model.cell_name == cell_name,
                 ).first()
 
-                # ── Rename: (site_id, cell_name_old) → new cell_name ─────────
                 if not existing_cell and cell_name_old:
                     existing_by_old = db.query(Model).filter(
                         Model.site_id == site_obj.id,
@@ -437,10 +583,6 @@ def _parse_cell_excel(
                         continue
 
             else:
-                # site not in DB yet – try to find cell by name only
-                # (handles re-import of exported file where site lookup failed
-                #  because site_name in DB differs slightly, but cell_name is
-                #  unique across the table)
                 existing_cell = db.query(Model).filter(
                     Model.cell_name == cell_name,
                 ).first()
@@ -451,8 +593,6 @@ def _parse_cell_excel(
                     ).first()
 
                 if existing_cell:
-                    # We found the cell – use its actual site_id so the
-                    # update does not inadvertently move it to a new site
                     rec["site_id"] = existing_cell.site_id
 
         if existing_cell:
@@ -463,7 +603,9 @@ def _parse_cell_excel(
                 "is_rename":   False,
             })
         else:
-            to_create.append(rec)
+            # Resolve _CLEAR sentinels for CREATE
+            create_rec = _resolve_cell_create_rec(rec)
+            to_create.append(create_rec)
 
     return {
         "to_create":       to_create,
@@ -474,61 +616,71 @@ def _parse_cell_excel(
     }
 
 
+def _resolve_cell_create_rec(rec: Dict) -> Dict:
+    """For CREATE: replace _CLEAR sentinels with None."""
+    return {k: (None if v is _CLEAR else v) for k, v in rec.items()}
+
+
 def parse_site_excel_simple(file_bytes: bytes) -> List[Dict[str, Any]]:
     result = parse_site_excel(file_bytes, db=None, dry_run=False)
     records: List[Dict] = []
     for rec in result["to_create"]:
         records.append(rec)
     for upd in result["to_update"]:
-        records.append(upd["changes"])
+        records.append(_resolve_create_rec(upd["changes"]))
     return records
 
 
 def parse_cell3g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_3g import Cell3G
-    def extra(row):
+    def extra(row, excel_cols):
         return {
-            "chung_anten": _v(row, "Chung anten", "chung_anten"),
-            "arfcn":       _v(row, "ARFCN", "arfcn"),
-            "uarfcn":      _v(row, "UARFCN", "uarfcn"),
-            "lac":         _v(row, "LAC", "lac"),
-            "rac":         _v(row, "RAC", "rac"),
-            "psc":         _v(row, "PSC", "psc"),
-            "ura_id":      _v(row, "URAId", "URA ID", "ura_id"),
-            "cpich_power": _v(row, "CPICH power (dBm)", "CPICH power", "cpich_power"),
+            "chung_anten": _v_aware(row, excel_cols, "Chung anten", "chung_anten"),
+            "arfcn":       _v_aware(row, excel_cols, "ARFCN", "arfcn"),
+            "uarfcn":      _v_aware(row, excel_cols, "UARFCN", "uarfcn"),
+            "lac":         _v_aware(row, excel_cols, "LAC", "lac"),
+            "rac":         _v_aware(row, excel_cols, "RAC", "rac"),
+            "psc":         _v_aware(row, excel_cols, "PSC", "psc"),
+            "ura_id":      _v_aware(row, excel_cols, "URAId", "URA ID", "ura_id"),
+            "cpich_power": _v_aware(row, excel_cols, "CPICH power (dBm)",
+                                     "CPICH power", "cpich_power"),
         }
     return _parse_cell_excel(file_bytes, Cell3G, extra, db=db, dry_run=dry_run)
 
 
 def parse_cell4g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_4g import Cell4G
-    def extra(row):
+    def extra(row, excel_cols):
         return {
-            "chung_anten":      _v(row, "Chung anten",     "chung_anten"),
-            "enodeb_id":        _v(row, "EnodeB ID",       "enodeb_id"),
-            "earfcn":           _v(row, "EARFCN",           "earfcn"),
-            "tac":              _v(row, "TAC",              "tac"),
-            "pci":              _v(row, "PCI",              "pci"),
-            "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
-            "bandwidth":        _v(row, "Bandwitdh", "Bandwidth", "bandwidth"),
-            "eci":              _v(row, "ECI",              "eci"),
+            "chung_anten":      _v_aware(row, excel_cols, "Chung anten", "chung_anten"),
+            "enodeb_id":        _v_aware(row, excel_cols, "EnodeB ID", "enodeb_id"),
+            "earfcn":           _v_aware(row, excel_cols, "EARFCN", "earfcn"),
+            "tac":              _v_aware(row, excel_cols, "TAC", "tac"),
+            "pci":              _v_aware(row, excel_cols, "PCI", "pci"),
+            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID",
+                                          "root_sequence_id"),
+            "bandwidth":        _v_aware(row, excel_cols, "Bandwitdh", "Bandwidth",
+                                          "bandwidth"),
+            "eci":              _v_aware(row, excel_cols, "ECI", "eci"),
         }
     return _parse_cell_excel(file_bytes, Cell4G, extra, db=db, dry_run=dry_run)
 
 
 def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
     from app.models.cell_5g import Cell5G
-    def extra(row):
+    def extra(row, excel_cols):
         return {
-            "gnodeb_id":        _v(row, "gNodeB ID",       "gnodeb_id"),
-            "tac":              _v(row, "TAC",              "tac"),
-            "pci":              _v(row, "PCI",              "pci"),
-            "root_sequence_id": _v(row, "Root Sequence ID", "root_sequence_id"),
-            "ssb_arfcn":        _v(row, "SSB-ARFCN",        "ssb_arfcn"),
-            "center_arfcn":     _v(row, "Center-ARFCN",     "center_arfcn"),
-            "gscn":             _v(row, "GSCN",             "gscn"),
-            "bandwidth":        _v(row, "Bandwidth (MHz)", "Bandwidth", "bandwidth"),
-            "nci":              _v(row, "NCI",              "nci"),
-            "mu_mimo":          _v(row, "MU-MIMO",          "mu_mimo"),
+            "gnodeb_id":        _v_aware(row, excel_cols, "gNodeB ID", "gnodeb_id"),
+            "tac":              _v_aware(row, excel_cols, "TAC", "tac"),
+            "pci":              _v_aware(row, excel_cols, "PCI", "pci"),
+            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID",
+                                          "root_sequence_id"),
+            "ssb_arfcn":        _v_aware(row, excel_cols, "SSB-ARFCN", "ssb_arfcn"),
+            "center_arfcn":     _v_aware(row, excel_cols, "Center-ARFCN", "center_arfcn"),
+            "gscn":             _v_aware(row, excel_cols, "GSCN", "gscn"),
+            "bandwidth":        _v_aware(row, excel_cols, "Bandwidth (MHz)", "Bandwidth",
+                                          "bandwidth"),
+            "nci":              _v_aware(row, excel_cols, "NCI", "nci"),
+            "mu_mimo":          _v_aware(row, excel_cols, "MU-MIMO", "mu_mimo"),
         }
     return _parse_cell_excel(file_bytes, Cell5G, extra, db=db, dry_run=dry_run)

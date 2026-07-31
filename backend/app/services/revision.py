@@ -24,11 +24,34 @@ from app.models.cell_5g import Cell5G
 def _normalize(v: Any) -> Any:
     """
     Normalize a value for diff comparison.
-    Treats None and "" as equivalent (both become None).
-    Does NOT treat 0 or False as None – those are meaningful values.
+    - None and "" are both treated as "empty" (None).
+    - False is kept as False (meaningful value, NOT treated as empty).
+    - 0 is kept as 0 (meaningful value).
     """
     if v is None or v == "":
         return None
+    # Normalize boolean-like integers from DB (psycopg2 may return 0/1)
+    if v is True or v == 1 and not isinstance(v, bool):
+        return True
+    if v is False or v == 0 and not isinstance(v, bool):
+        # Only treat int 0 as False-equivalent, not string "0"
+        pass
+    return v
+
+
+def _normalize_for_diff(v: Any) -> Any:
+    """
+    Stricter normalization for diff: treat None/"" as None, booleans as canonical bool.
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int) and v in (0, 1):
+        # psycopg2 sometimes returns int for bool columns
+        return bool(v)
+    if isinstance(v, str) and v.lower() in ("true", "false"):
+        return v.lower() == "true"
     return v
 
 
@@ -37,8 +60,8 @@ def _diff(old: Dict, new: Dict) -> Dict:
     result = {}
     all_keys = set(old) | set(new)
     for k in all_keys:
-        ov = _normalize(old.get(k))
-        nv = _normalize(new.get(k))
+        ov = _normalize_for_diff(old.get(k))
+        nv = _normalize_for_diff(new.get(k))
         if ov != nv:
             result[k] = [old.get(k), new.get(k)]
     return result
@@ -75,11 +98,14 @@ def _site_snapshot(site: Site) -> Dict[str, Any]:
         "mien": site.mien, "tinh": site.tinh, "phuong_xa": site.phuong_xa,
         "site_name_cu": site.site_name_cu, "site_vip": site.site_vip,
         "lat": site.lat, "long": site.long,
-        "tram_2g": site.tram_2g, "tram_3g": site.tram_3g,
-        "tram_4g": site.tram_4g, "tram_5g": site.tram_5g,
-        "repeater": site.repeater, "booster": site.booster,
-        "node_truyen_dan_only": site.node_truyen_dan_only,
-        "tram_phu_song_tsca": site.tram_phu_song_tsca,
+        "tram_2g": bool(site.tram_2g) if site.tram_2g is not None else False,
+        "tram_3g": bool(site.tram_3g) if site.tram_3g is not None else False,
+        "tram_4g": bool(site.tram_4g) if site.tram_4g is not None else False,
+        "tram_5g": bool(site.tram_5g) if site.tram_5g is not None else False,
+        "repeater": bool(site.repeater) if site.repeater is not None else False,
+        "booster": bool(site.booster) if site.booster is not None else False,
+        "node_truyen_dan_only": bool(site.node_truyen_dan_only) if site.node_truyen_dan_only is not None else False,
+        "tram_phu_song_tsca": bool(site.tram_phu_song_tsca) if site.tram_phu_song_tsca is not None else False,
         "phan_loai_tram": site.phan_loai_tram,
         "moran_3g": site.moran_3g, "moran_4g": site.moran_4g,
         "moran_5g": site.moran_5g,

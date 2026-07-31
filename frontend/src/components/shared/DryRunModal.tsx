@@ -4,10 +4,6 @@
  * Generic 2-step import wizard with template download:
  *   Step 1 – upload file  → call dryRunFn  → show preview
  *   Step 2 – user confirms → call importFn → show result
- *
- * Props:
- *   templateKey: 'site' | 'cell-3g' | 'cell-4g' | 'cell-5g'
- *     When provided, shows a "Download Template" button.
  */
 import React, { useState } from 'react'
 import {
@@ -34,6 +30,7 @@ export interface DryRunPreview {
 export interface ImportResultData {
   created: number
   updated: number
+  skipped_no_change?: number
   sites_auto_created?: number
   errors: string[]
 }
@@ -41,13 +38,13 @@ export interface ImportResultData {
 export type TemplateKey = 'site' | 'cell-3g' | 'cell-4g' | 'cell-5g'
 
 interface Props {
-  open:        boolean
-  onClose:     () => void
-  title:       string
+  open:         boolean
+  onClose:      () => void
+  title:        string
   templateKey?: TemplateKey
-  dryRunFn:   (file: File) => Promise<DryRunPreview>
-  importFn:   (file: File) => Promise<ImportResultData>
-  onSuccess:  () => void
+  dryRunFn:    (file: File) => Promise<DryRunPreview>
+  importFn:    (file: File) => Promise<ImportResultData>
+  onSuccess:   () => void
 }
 
 const TEMPLATE_LABELS: Record<TemplateKey, string> = {
@@ -59,10 +56,7 @@ const TEMPLATE_LABELS: Record<TemplateKey, string> = {
 
 function downloadTemplate(key: TemplateKey) {
   const token = localStorage.getItem('sl_token') || ''
-  // Create a temporary link – the backend serves the file with auth via Bearer
-  // We use fetch+blob so we can pass Authorization header
-  const url = `/api/v1/templates/${key}`
-  fetch(url, {
+  fetch(`/api/v1/templates/${key}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
     .then((res) => {
@@ -132,51 +126,34 @@ export default function DryRunModal({
   const footer = () => {
     if (step === 0) return (
       <Space>
-        <Button onClick={handleClose}>Huy</Button>
-        <Button
-          type="primary"
-          disabled={!file}
-          loading={busy}
-          onClick={handleDryRun}
-        >
+        <Button onClick={handleClose}>Hủy</Button>
+        <Button type="primary" disabled={!file} loading={busy} onClick={handleDryRun}>
           Kiểm tra file
         </Button>
       </Space>
     )
     if (step === 1) return (
       <Space>
-        <Button onClick={reset}>Chon lai file</Button>
-        <Button onClick={handleClose}>Huy</Button>
+        <Button onClick={reset}>Chọn lại file</Button>
+        <Button onClick={handleClose}>Hủy</Button>
         <Button
-          type="primary"
-          loading={busy}
-          onClick={handleConfirm}
-          disabled={
-            (preview?.to_create ?? 0) + (preview?.to_update ?? 0) === 0
-          }
+          type="primary" loading={busy} onClick={handleConfirm}
+          disabled={(preview?.to_create ?? 0) + (preview?.to_update ?? 0) === 0}
         >
           Xác nhận import
         </Button>
       </Space>
     )
-    return (
-      <Button type="primary" onClick={handleClose}>Đóng</Button>
-    )
+    return <Button type="primary" onClick={handleClose}>Đóng</Button>
   }
 
   return (
     <Modal
-      title={title}
-      open={open}
-      onCancel={handleClose}
-      footer={footer()}
-      width={700}
-      destroyOnClose
+      title={title} open={open} onCancel={handleClose}
+      footer={footer()} width={700} destroyOnClose
     >
       <Steps
-        current={step}
-        size="small"
-        style={{ marginBottom: 24 }}
+        current={step} size="small" style={{ marginBottom: 24 }}
         items={[
           { title: 'Chọn file' },
           { title: 'Xem trước' },
@@ -187,19 +164,12 @@ export default function DryRunModal({
       {/* ── Step 0: file picker ── */}
       {step === 0 && (
         <div>
-          {/* Template download section */}
           {templateKey && (
             <div style={{
-              background: '#f6ffed',
-              border: '1px solid #b7eb8f',
-              borderRadius: 6,
-              padding: '10px 14px',
-              marginBottom: 16,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: 8,
+              background: '#f6ffed', border: '1px solid #b7eb8f',
+              borderRadius: 6, padding: '10px 14px', marginBottom: 16,
+              display: 'flex', alignItems: 'center',
+              justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
             }}>
               <Space>
                 <FileExcelOutlined style={{ color: '#52c41a', fontSize: 18 }} />
@@ -209,19 +179,15 @@ export default function DryRunModal({
                   </Typography.Text>
                   <br />
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                    Tải file Excel mẫu, điền dữ liệu và import lên hệ thống
+                    Tải file Excel mẫu, điền dữ liệu và import lên hệ thống.
+                    Để trống một ô = xóa dữ liệu của trường đó.
                   </Typography.Text>
                 </div>
               </Space>
               <Tooltip title={`Tải ${TEMPLATE_LABELS[templateKey]}`}>
                 <Button
-                  icon={<DownloadOutlined />}
-                  size="small"
-                  style={{
-                    background: '#52c41a',
-                    borderColor: '#52c41a',
-                    color: '#fff',
-                  }}
+                  icon={<DownloadOutlined />} size="small"
+                  style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
                   onClick={() => downloadTemplate(templateKey)}
                 >
                   Tải file mẫu
@@ -230,21 +196,28 @@ export default function DryRunModal({
             </div>
           )}
 
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="Quy tắc import"
+            description={
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                <li>Cột <strong>có mặt trong file</strong> + ô <strong>trống</strong> → xóa dữ liệu trường đó</li>
+                <li>Cột <strong>không có trong file</strong> → giữ nguyên dữ liệu hiện tại</li>
+                <li>Trường boolean (checkbox): để trống = tắt (false), nhập <code>x</code> = bật (true)</li>
+              </ul>
+            }
+          />
+
           <Divider style={{ margin: '0 0 16px' }} />
 
           {fatalErr && (
-            <Alert
-              message={fatalErr}
-              type="error"
-              showIcon
-              style={{ marginBottom: 12 }}
-            />
+            <Alert message={fatalErr} type="error" showIcon style={{ marginBottom: 12 }} />
           )}
 
           <Upload
-            accept=".xlsx,.xls"
-            showUploadList={Boolean(file)}
-            maxCount={1}
+            accept=".xlsx,.xls" showUploadList={Boolean(file)} maxCount={1}
             beforeUpload={(f) => { setFile(f); return false }}
             onRemove={() => setFile(null)}
           >
@@ -254,10 +227,7 @@ export default function DryRunModal({
           </Upload>
 
           {file && (
-            <Typography.Text
-              type="secondary"
-              style={{ marginTop: 8, display: 'block' }}
-            >
+            <Typography.Text type="secondary" style={{ marginTop: 8, display: 'block' }}>
               Đã chọn: <strong>{file.name}</strong>{' '}
               ({(file.size / 1024).toFixed(1)} KB)
             </Typography.Text>
@@ -287,10 +257,8 @@ export default function DryRunModal({
                 <Tag color="purple">{preview.sites_to_create}</Tag>
               </Descriptions.Item>
             )}
-            <Descriptions.Item label="Đang có lỗi / cảnh báo">
-              <Tag color={preview.errors > 0 ? 'red' : 'default'}>
-                {preview.errors}
-              </Tag>
+            <Descriptions.Item label="Lỗi / cảnh báo">
+              <Tag color={preview.errors > 0 ? 'red' : 'default'}>{preview.errors}</Tag>
             </Descriptions.Item>
           </Descriptions>
 
@@ -300,11 +268,8 @@ export default function DryRunModal({
                 <CheckCircleOutlined style={{ color: '#52c41a' }} />{' '}
                 Sẽ tạo mới (mẫu):
               </Typography.Text>
-              <List
-                size="small"
-                dataSource={preview.preview_create}
-                renderItem={(item) => <List.Item>{item}</List.Item>}
-              />
+              <List size="small" dataSource={preview.preview_create}
+                    renderItem={(item) => <List.Item>{item}</List.Item>} />
               {preview.to_create > 5 && (
                 <Typography.Text type="secondary">
                   ... và {preview.to_create - 5} bản ghi khác
@@ -319,46 +284,34 @@ export default function DryRunModal({
                 <CheckCircleOutlined style={{ color: '#1890ff' }} />{' '}
                 Sẽ cập nhật (mẫu):
               </Typography.Text>
-              <List
-                size="small"
-                dataSource={preview.preview_update}
-                renderItem={(item) => <List.Item>{item}</List.Item>}
-              />
+              <List size="small" dataSource={preview.preview_update}
+                    renderItem={(item) => <List.Item>{item}</List.Item>} />
             </div>
           )}
 
           {(preview.preview_new_sites?.length ?? 0) > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <Typography.Text strong>
-                Site sẽ tự động tạo (mẫu):
-              </Typography.Text>
-              <List
-                size="small"
-                dataSource={preview.preview_new_sites}
-                renderItem={(item) => <List.Item>{item}</List.Item>}
-              />
+              <Typography.Text strong>Site sẽ tự động tạo (mẫu):</Typography.Text>
+              <List size="small" dataSource={preview.preview_new_sites}
+                    renderItem={(item) => <List.Item>{item}</List.Item>} />
             </div>
           )}
 
           {preview.error_details.length > 0 && (
             <Alert
-              type="warning"
-              showIcon
+              type="warning" showIcon
               icon={<ExclamationCircleOutlined />}
               message={`${preview.errors} dòng có lỗi / cảnh báo (sẽ bị bỏ qua hoặc giữ nguyên)`}
               description={
                 <div style={{ maxHeight: 150, overflowY: 'auto' }}>
                   {preview.error_details.slice(0, 20).map((e, i) => (
-                    <div
-                      key={i}
-                      style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 2 }}
-                    >
+                    <div key={i} style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 2 }}>
                       {e}
                     </div>
                   ))}
                   {preview.error_details.length > 20 && (
                     <div style={{ color: '#999' }}>
-                      ... va {preview.error_details.length - 20} loi khac
+                      ... và {preview.error_details.length - 20} lỗi khác
                     </div>
                   )}
                 </div>
@@ -372,17 +325,20 @@ export default function DryRunModal({
       {step === 2 && result && (
         <div>
           <Alert
-            type="success"
-            showIcon
-            message="Import hoàn thành"
+            type="success" showIcon message="Import hoàn thành"
             description={
               <div>
                 <div>Đã tạo mới: <strong>{result.created}</strong></div>
                 <div>Đã cập nhật: <strong>{result.updated}</strong></div>
+                {(result.skipped_no_change ?? 0) > 0 && (
+                  <div>
+                    Bỏ qua (không có thay đổi):{' '}
+                    <strong>{result.skipped_no_change}</strong>
+                  </div>
+                )}
                 {(result.sites_auto_created ?? 0) > 0 && (
                   <div>
-                    Site tự động tạo:{' '}
-                    <strong>{result.sites_auto_created}</strong>
+                    Site tự động tạo: <strong>{result.sites_auto_created}</strong>
                   </div>
                 )}
                 {result.errors.length > 0 && (
@@ -392,12 +348,7 @@ export default function DryRunModal({
                     </Typography.Text>
                     <div style={{ maxHeight: 120, overflowY: 'auto' }}>
                       {result.errors.slice(0, 10).map((e, i) => (
-                        <div
-                          key={i}
-                          style={{ fontSize: 12, fontFamily: 'monospace' }}
-                        >
-                          {e}
-                        </div>
+                        <div key={i} style={{ fontSize: 12, fontFamily: 'monospace' }}>{e}</div>
                       ))}
                     </div>
                   </div>

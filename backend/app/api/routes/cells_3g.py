@@ -9,7 +9,7 @@ from app.schemas.cell import Cell3GCreate, Cell3GUpdate, Cell3GRead
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
-from app.services.import_excel import parse_cell3g_excel
+from app.services.import_excel import parse_cell3g_excel, _CLEAR
 from app.services.revision import record_cell3g_revision, _cell3g_snapshot
 
 router = APIRouter()
@@ -36,6 +36,24 @@ def _ensure_site(db: Session, rec: dict, current_user: User) -> int:
     db.commit()
     db.refresh(new_site)
     return new_site.id
+
+
+def _apply_cell_changes(existing: Cell3G, changes: dict,
+                         skip_keys: set = None, is_rename: bool = False) -> None:
+    """Apply changes to cell, respecting _CLEAR sentinels."""
+    if skip_keys is None:
+        skip_keys = set()
+    for k, v in changes.items():
+        if k in skip_keys or k.startswith("_"):
+            continue
+        if v is _CLEAR:
+            continue
+        if k == "cell_name" and not is_rename:
+            continue
+        if k == "site_id":
+            continue
+        if hasattr(existing, k):
+            setattr(existing, k, v)
 
 
 @router.get("/", response_model=List[Cell3GRead])
@@ -117,16 +135,17 @@ def bulk_update(
                 if hasattr(cell, k):
                     setattr(cell, k, v)
             db.flush()
-            record_cell3g_revision(
+            rev = record_cell3g_revision(
                 db, cell, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="form", change_note="Bulk update",
             )
             db.commit()
-            log_action(db, current_user, "UPDATE", "cells_3g", cid,
-                       old_value=old_snap, new_value=changes)
-            updated += 1
+            if rev is not None:
+                log_action(db, current_user, "UPDATE", "cells_3g", cid,
+                           old_value=old_snap, new_value=changes)
+                updated += 1
         except Exception as e:
             db.rollback()
             errors.append(f"Cell id={cid}: {e}")
@@ -178,8 +197,9 @@ async def import_excel(
             if site_id != rec.get("site_id"):
                 sites_auto_created += 1
             rec["site_id"] = site_id
-            cell = Cell3G(**{k: v for k, v in rec.items() if hasattr(Cell3G, k)},
-                          created_by=current_user.id)
+            clean = {k: v for k, v in rec.items()
+                     if v is not _CLEAR and hasattr(Cell3G, k)}
+            cell = Cell3G(**clean, created_by=current_user.id)
             db.add(cell)
             db.flush()
             record_cell3g_revision(db, cell, old_snapshot=None,
@@ -199,21 +219,18 @@ async def import_excel(
                 errors.append(f"Cell '{upd['anchor']}' disappeared during import")
                 continue
             old_snap  = _cell3g_snapshot(existing)
-            changes   = upd["changes"]
             is_rename = upd.get("is_rename", False)
-            for k, v in changes.items():
-                if k == "site_id": continue
-                if k == "cell_name" and not is_rename: continue
-                if k.startswith("_"): continue
-                if v is not None and hasattr(existing, k): setattr(existing, k, v)
+            _apply_cell_changes(existing, upd["changes"], is_rename=is_rename)
             db.flush()
             rev = record_cell3g_revision(db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
                 changed_by_name=current_user.full_name or current_user.username,
                 change_source="excel")
             db.commit()
-            if rev is None: skipped += 1
-            else: updated += 1
+            if rev is None:
+                skipped += 1
+            else:
+                updated += 1
         except Exception as e:
             db.rollback()
             errors.append(f"Update cell '{upd['anchor']}': {e}")
@@ -258,16 +275,18 @@ def update_cell(
     old_snap = _cell3g_snapshot(cell)
     old_dict = {c.name: getattr(cell, c.name) for c in cell.__table__.columns}
     data     = payload.model_dump(exclude_unset=True)
-    for k, v in data.items(): setattr(cell, k, v)
+    for k, v in data.items():
+        setattr(cell, k, v)
     db.flush()
-    record_cell3g_revision(db, cell, old_snapshot=old_snap,
+    rev = record_cell3g_revision(db, cell, old_snapshot=old_snap,
         changed_by_id=current_user.id,
         changed_by_name=current_user.full_name or current_user.username,
         change_source="form")
     db.commit()
     db.refresh(cell)
-    log_action(db, current_user, "UPDATE", "cells_3g", cell.id,
-               old_value=old_dict, new_value=data)
+    if rev is not None:
+        log_action(db, current_user, "UPDATE", "cells_3g", cell.id,
+                   old_value=old_dict, new_value=data)
     return cell
 
 
