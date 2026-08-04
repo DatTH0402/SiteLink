@@ -17,7 +17,7 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import {
   SearchOutlined, ReloadOutlined, HistoryOutlined,
-  FileExcelOutlined, FormOutlined,
+  FileExcelOutlined, FormOutlined, RobotOutlined,
 } from '@ant-design/icons'
 import {
   getSiteRevisions,
@@ -31,8 +31,9 @@ import type { TinhItem } from '@/types'
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const SOURCE_TAG: Record<string, React.ReactNode> = {
-  form:  <Tag icon={<FormOutlined />}      color="blue">Form</Tag>,
-  excel: <Tag icon={<FileExcelOutlined />} color="green">Excel</Tag>,
+  form:   <Tag icon={<FormOutlined />}      color="blue">Form</Tag>,
+  excel:  <Tag icon={<FileExcelOutlined />} color="green">Excel</Tag>,
+  script: <Tag icon={<RobotOutlined />}     color="purple">Script</Tag>,
 }
 
 const boolTag = (v: unknown) =>

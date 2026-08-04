@@ -1,0 +1,3 @@
+Schedule the script update_cells_with_revision.py (cron example — runs at 2:00 AM daily):
+    crontab -e
+0 2 * * * cd /path/to/project && python3 update_cells_with_revision.py >> /var/log/sitelink_update.log 2>&1
