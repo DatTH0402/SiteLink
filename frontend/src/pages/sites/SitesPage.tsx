@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
@@ -15,7 +15,7 @@ import {
   bulkDeleteSites, bulkUpdateSites,
 } from '@/api/sites'
 import { exportSites } from '@/api/export'
-import { getDropdown, getTinhList } from '@/api/report'
+import { getDropdown, getTinhList, getPhuongXaList } from '@/api/report'
 import type { Site, TinhItem } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
 import SiteBulkEditModal from '@/components/shared/SiteBulkEditModal'
@@ -29,8 +29,11 @@ export default function SitesPage() {
   const [loading,      setLoading]      = useState(false)
   const [exporting,    setExporting]    = useState(false)
   const [search,       setSearch]       = useState('')
+  const [siteNameCu,   setSiteNameCu]   = useState('')
   const [mien,         setMien]         = useState<string[]>([])
   const [tinh,         setTinh]         = useState<string[]>([])
+  const [phuongXa,     setPhuongXa]     = useState<string[]>([])
+  const [phuongXaOpts, setPhuongXaOpts] = useState<string[]>([])
   const [loadError,    setLoadError]    = useState<string | null>(null)
   const [dryRunOpen,   setDryRunOpen]   = useState(false)
   const [selectedIds,  setSelectedIds]  = useState<number[]>([])
@@ -42,13 +45,28 @@ export default function SitesPage() {
     ? tinhList.map(t => t.ten_tinh)
     : [...new Set(sites.map(s => s.tinh).filter((t): t is string => Boolean(t)))].sort()
 
-  const load = () => {
+  // Reload ward list whenever province filter changes
+  useEffect(() => {
+    setPhuongXa([])
+    setPhuongXaOpts([])
+    if (tinh.length === 1) {
+      getPhuongXaList(tinh[0]).then(setPhuongXaOpts)
+    } else if (tinh.length === 0) {
+      // collect from current data as fallback
+      const unique = [...new Set(sites.map(s => s.phuong_xa).filter(Boolean) as string[])].sort()
+      setPhuongXaOpts(unique)
+    }
+  }, [tinh])
+
+  const load = useCallback(() => {
     setLoading(true)
     setLoadError(null)
     const params: Record<string, unknown> = { limit: 500 }
-    if (search)      params.search = search
-    if (mien.length) params.mien   = mien
-    if (tinh.length) params.tinh   = tinh
+    if (search)           params.search       = search
+    if (siteNameCu)       params.site_name_cu = siteNameCu
+    if (mien.length)      params.mien         = mien
+    if (tinh.length)      params.tinh         = tinh
+    if (phuongXa.length)  params.phuong_xa    = phuongXa
     getSites(params)
       .then(setSites)
       .catch(err => {
@@ -56,9 +74,9 @@ export default function SitesPage() {
         setLoadError(`Cannot load sites: ${detail}`)
       })
       .finally(() => setLoading(false))
-  }
+  }, [search, siteNameCu, mien, tinh, phuongXa])
 
-  useEffect(() => { load() }, [search, mien, tinh])
+  useEffect(() => { load() }, [load])
 
   useEffect(() => {
     getDropdown('phan_loai_tram').then((rows: any[]) =>
@@ -119,9 +137,11 @@ export default function SitesPage() {
     setExporting(true)
     try {
       await exportSites({
-        search: search || undefined,
-        mien:   mien.length ? mien : undefined,
-        tinh:   tinh.length ? tinh : undefined,
+        search:       search || undefined,
+        site_name_cu: siteNameCu || undefined,
+        mien:         mien.length ? mien : undefined,
+        tinh:         tinh.length ? tinh : undefined,
+        phuong_xa:    phuongXa.length ? phuongXa : undefined,
       })
       message.success(`Xuất Excel thành công (${sites.length} sites)`)
     } catch (e: any) {
@@ -129,6 +149,14 @@ export default function SitesPage() {
     } finally {
       setExporting(false)
     }
+  }
+
+  const clearFilters = () => {
+    setSearch('')
+    setSiteNameCu('')
+    setMien([])
+    setTinh([])
+    setPhuongXa([])
   }
 
   const rowSelection: TableRowSelection<Site> = {
@@ -216,31 +244,79 @@ export default function SitesPage() {
                style={{ marginBottom: 12 }} onClose={() => setLoadError(null)} />
       )}
 
-      <Row gutter={8} style={{ marginBottom: 12 }}>
+      {/* ── Filter row 1: search fields ── */}
+      <Row gutter={8} style={{ marginBottom: 8 }}>
         <Col flex="260px">
-          <Input prefix={<SearchOutlined />} placeholder="Tìm site name..."
-                 value={search} onChange={e => setSearch(e.target.value)} allowClear />
+          <Input
+            prefix={<SearchOutlined />}
+            placeholder="Tìm site name (hiện tại)..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            allowClear
+          />
+        </Col>
+        <Col flex="260px">
+          <Input
+            prefix={<SearchOutlined />}
+            placeholder="Tìm site name (cũ)..."
+            value={siteNameCu}
+            onChange={e => setSiteNameCu(e.target.value)}
+            allowClear
+          />
         </Col>
         <Col flex="180px">
-          <Select mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
-                  style={{ width: '100%' }} value={mien} onChange={setMien}>
+          <Select
+            mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
+            style={{ width: '100%' }} value={mien} onChange={setMien}
+          >
             {['MB','MT','MN'].map(m => (
               <Select.Option key={m} value={m}>{m}</Select.Option>
             ))}
           </Select>
         </Col>
         <Col flex="260px">
-          <Select mode="multiple" placeholder="Tỉnh" allowClear showSearch maxTagCount={2}
-                  style={{ width: '100%' }} value={tinh} onChange={setTinh}
-                  filterOption={(input, opt) =>
-                    String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}>
+          <Select
+            mode="multiple" placeholder="Tỉnh" allowClear showSearch maxTagCount={2}
+            style={{ width: '100%' }} value={tinh} onChange={setTinh}
+            filterOption={(input, opt) =>
+              String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}
+          >
             {tinhOptions.map(t => (
               <Select.Option key={t} value={t}>{t}</Select.Option>
             ))}
           </Select>
         </Col>
+      </Row>
+
+      {/* ── Filter row 2: ward filter ── */}
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="320px">
+          <Select
+            mode="multiple"
+            placeholder={
+              tinh.length === 0
+                ? 'Chọn tỉnh trước để lọc phường/xã'
+                : tinh.length > 1
+                ? 'Chọn 1 tỉnh để lọc phường/xã'
+                : 'Lọc theo Phường/Xã...'
+            }
+            allowClear
+            showSearch
+            maxTagCount={3}
+            style={{ width: '100%' }}
+            value={phuongXa}
+            onChange={setPhuongXa}
+            disabled={tinh.length !== 1}
+            filterOption={(input, opt) =>
+              String(opt?.children ?? '').toLowerCase().includes(input.toLowerCase())}
+          >
+            {phuongXaOpts.map(p => (
+              <Select.Option key={p} value={p}>{p}</Select.Option>
+            ))}
+          </Select>
+        </Col>
         <Col>
-          <Button onClick={() => { setSearch(''); setMien([]); setTinh([]) }}>Xóa lọc</Button>
+          <Button onClick={clearFilters}>Xóa lọc</Button>
         </Col>
         <Col>
           <Button onClick={load} loading={loading}>Làm mới</Button>
@@ -284,7 +360,6 @@ export default function SitesPage() {
         pagination={{ pageSize: 50, showTotal: t => `${t} sites`, showSizeChanger: true }}
       />
 
-      {/* New SiteBulkEditModal – uses real Switch/booleans, tracks touched fields */}
       <SiteBulkEditModal
         open={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}

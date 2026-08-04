@@ -1,7 +1,6 @@
 /**
  * export.ts – Downloads exported Excel files from the backend.
- * Multi-value filter arrays are serialized as repeated query params:
- *   tinh=HN&tinh=HCM  (not tinh[]=HN&tinh[]=HCM)
+ * Multi-value filter arrays are serialized as repeated query params.
  */
 
 function getToken(): string {
@@ -43,9 +42,11 @@ function buildQS(params: Record<string, FilterValue>): string {
 }
 
 export function exportSites(filters: {
-  search?: string
-  mien?:   string[]
-  tinh?:   string[]
+  search?:       string
+  site_name_cu?: string
+  mien?:         string[]
+  tinh?:         string[]
+  phuong_xa?:    string[]
 }) {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/sites${qs}`, 'Sites_Export.xlsx')
@@ -53,8 +54,10 @@ export function exportSites(filters: {
 
 export function exportCells3G(filters: {
   search?:        string
+  cell_name_old?: string
   mien?:          string[]
   tinh?:          string[]
+  phuong_xa?:     string[]
   vendor?:        string[]
   mimo?:          string[]
   vung_phu_song?: string[]
@@ -65,8 +68,10 @@ export function exportCells3G(filters: {
 
 export function exportCells4G(filters: {
   search?:        string
+  cell_name_old?: string
   mien?:          string[]
   tinh?:          string[]
+  phuong_xa?:     string[]
   vendor?:        string[]
   mimo?:          string[]
   vung_phu_song?: string[]
@@ -77,8 +82,10 @@ export function exportCells4G(filters: {
 
 export function exportCells5G(filters: {
   search?:        string
+  cell_name_old?: string
   mien?:          string[]
   tinh?:          string[]
+  phuong_xa?:     string[]
   vendor?:        string[]
   mimo?:          string[]
   vung_phu_song?: string[]

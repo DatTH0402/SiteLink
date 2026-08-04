@@ -40,7 +40,6 @@ def _ensure_site(db: Session, rec: dict, current_user: User) -> int:
 
 def _apply_cell_changes(existing: Cell3G, changes: dict,
                          skip_keys: set = None, is_rename: bool = False) -> None:
-    """Apply changes to cell, respecting _CLEAR sentinels."""
     if skip_keys is None:
         skip_keys = set()
     for k, v in changes.items():
@@ -59,19 +58,23 @@ def _apply_cell_changes(existing: Cell3G, changes: dict,
 @router.get("/", response_model=List[Cell3GRead])
 def list_cells(
     skip: int = 0, limit: int = 500,
-    search: Optional[str] = Query(None),
-    mien:   Optional[List[str]] = Query(None),
-    tinh:   Optional[List[str]] = Query(None),
-    vendor: Optional[List[str]] = Query(None),
-    mimo:   Optional[List[str]] = Query(None),
+    search:        Optional[str]       = Query(None),
+    cell_name_old: Optional[str]       = Query(None),
+    mien:          Optional[List[str]] = Query(None),
+    tinh:          Optional[List[str]] = Query(None),
+    phuong_xa:     Optional[List[str]] = Query(None),
+    vendor:        Optional[List[str]] = Query(None),
+    mimo:          Optional[List[str]] = Query(None),
     vung_phu_song: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
     q = db.query(Cell3G)
     if search:        q = q.filter(Cell3G.cell_name.ilike(f"%{search}%") | Cell3G.site_name.ilike(f"%{search}%"))
+    if cell_name_old: q = q.filter(Cell3G.cell_name_old.ilike(f"%{cell_name_old}%"))
     if mien:          q = q.filter(Cell3G.mien.in_(mien))
     if tinh:          q = q.filter(Cell3G.tinh.in_(tinh))
+    if phuong_xa:     q = q.filter(Cell3G.phuong_xa.in_(phuong_xa))
     if vendor:        q = q.filter(Cell3G.vendor.in_(vendor))
     if mimo:          q = q.filter(Cell3G.mimo.in_(mimo))
     if vung_phu_song: q = q.filter(Cell3G.vung_phu_song.in_(vung_phu_song))

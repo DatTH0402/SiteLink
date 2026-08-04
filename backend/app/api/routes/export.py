@@ -1,7 +1,7 @@
 """
 export.py – Excel export endpoints (Sites, Cells 3G/4G/5G, Antennas)
 Token can be passed as Bearer header OR ?token= query param.
-Multi-value filters: tinh, mien, vendor, mimo, vung_phu_song accept repeated params.
+Multi-value filters: tinh, mien, vendor, mimo, vung_phu_song, phuong_xa accept repeated params.
 """
 from __future__ import annotations
 
@@ -89,19 +89,23 @@ def get_optional_user(
 
 @router.get("/sites")
 def export_sites(
-    search:  Optional[str]        = Query(None),
-    mien:    Optional[List[str]]  = Query(None),
-    tinh:    Optional[List[str]]  = Query(None),
-    tram_3g: Optional[bool]       = Query(None),
-    tram_4g: Optional[bool]       = Query(None),
-    tram_5g: Optional[bool]       = Query(None),
-    db:      Session              = Depends(get_db),
-    _:       User                 = Depends(get_optional_user),
+    search:       Optional[str]        = Query(None),
+    site_name_cu: Optional[str]        = Query(None),
+    mien:         Optional[List[str]]  = Query(None),
+    tinh:         Optional[List[str]]  = Query(None),
+    phuong_xa:    Optional[List[str]]  = Query(None),
+    tram_3g:      Optional[bool]       = Query(None),
+    tram_4g:      Optional[bool]       = Query(None),
+    tram_5g:      Optional[bool]       = Query(None),
+    db:           Session              = Depends(get_db),
+    _:            User                 = Depends(get_optional_user),
 ):
     q = db.query(Site)
-    if search:  q = q.filter(Site.site_name.ilike(f"%{search}%"))
-    if mien:    q = q.filter(Site.mien.in_(mien))
-    if tinh:    q = q.filter(Site.tinh.in_(tinh))
+    if search:       q = q.filter(Site.site_name.ilike(f"%{search}%"))
+    if site_name_cu: q = q.filter(Site.site_name_cu.ilike(f"%{site_name_cu}%"))
+    if mien:         q = q.filter(Site.mien.in_(mien))
+    if tinh:         q = q.filter(Site.tinh.in_(tinh))
+    if phuong_xa:    q = q.filter(Site.phuong_xa.in_(phuong_xa))
     if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
     if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
     if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
@@ -118,15 +122,12 @@ def export_sites(
         ("Do cao cot anten (m)", 20), ("Dia chi", 30), ("Ghi chu", 30),
     ]
     wb, ws = _make_wb(headers)
+
     def _safe_bool_export(v) -> bool:
-        if v is None:
-            return False
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, int):
-            return v != 0
-        if isinstance(v, str):
-            return v.strip().lower() not in ("false", "0", "no", "off", "")
+        if v is None: return False
+        if isinstance(v, bool): return v
+        if isinstance(v, int): return v != 0
+        if isinstance(v, str): return v.strip().lower() not in ("false", "0", "no", "off", "")
         return bool(v)
 
     def b(val): return "x" if _safe_bool_export(val) else ""
@@ -150,8 +151,10 @@ def export_sites(
 @router.get("/cells-3g")
 def export_cells_3g(
     search:        Optional[str]       = Query(None),
+    cell_name_old: Optional[str]       = Query(None),
     mien:          Optional[List[str]] = Query(None),
     tinh:          Optional[List[str]] = Query(None),
+    phuong_xa:     Optional[List[str]] = Query(None),
     vendor:        Optional[List[str]] = Query(None),
     mimo:          Optional[List[str]] = Query(None),
     vung_phu_song: Optional[List[str]] = Query(None),
@@ -160,8 +163,10 @@ def export_cells_3g(
 ):
     q = db.query(Cell3G)
     if search:        q = q.filter(Cell3G.cell_name.ilike(f"%{search}%") | Cell3G.site_name.ilike(f"%{search}%"))
+    if cell_name_old: q = q.filter(Cell3G.cell_name_old.ilike(f"%{cell_name_old}%"))
     if mien:          q = q.filter(Cell3G.mien.in_(mien))
     if tinh:          q = q.filter(Cell3G.tinh.in_(tinh))
+    if phuong_xa:     q = q.filter(Cell3G.phuong_xa.in_(phuong_xa))
     if vendor:        q = q.filter(Cell3G.vendor.in_(vendor))
     if mimo:          q = q.filter(Cell3G.mimo.in_(mimo))
     if vung_phu_song: q = q.filter(Cell3G.vung_phu_song.in_(vung_phu_song))
@@ -202,8 +207,10 @@ def export_cells_3g(
 @router.get("/cells-4g")
 def export_cells_4g(
     search:        Optional[str]       = Query(None),
+    cell_name_old: Optional[str]       = Query(None),
     mien:          Optional[List[str]] = Query(None),
     tinh:          Optional[List[str]] = Query(None),
+    phuong_xa:     Optional[List[str]] = Query(None),
     vendor:        Optional[List[str]] = Query(None),
     mimo:          Optional[List[str]] = Query(None),
     vung_phu_song: Optional[List[str]] = Query(None),
@@ -212,8 +219,10 @@ def export_cells_4g(
 ):
     q = db.query(Cell4G)
     if search:        q = q.filter(Cell4G.cell_name.ilike(f"%{search}%") | Cell4G.site_name.ilike(f"%{search}%"))
+    if cell_name_old: q = q.filter(Cell4G.cell_name_old.ilike(f"%{cell_name_old}%"))
     if mien:          q = q.filter(Cell4G.mien.in_(mien))
     if tinh:          q = q.filter(Cell4G.tinh.in_(tinh))
+    if phuong_xa:     q = q.filter(Cell4G.phuong_xa.in_(phuong_xa))
     if vendor:        q = q.filter(Cell4G.vendor.in_(vendor))
     if mimo:          q = q.filter(Cell4G.mimo.in_(mimo))
     if vung_phu_song: q = q.filter(Cell4G.vung_phu_song.in_(vung_phu_song))
@@ -254,8 +263,10 @@ def export_cells_4g(
 @router.get("/cells-5g")
 def export_cells_5g(
     search:        Optional[str]       = Query(None),
+    cell_name_old: Optional[str]       = Query(None),
     mien:          Optional[List[str]] = Query(None),
     tinh:          Optional[List[str]] = Query(None),
+    phuong_xa:     Optional[List[str]] = Query(None),
     vendor:        Optional[List[str]] = Query(None),
     mimo:          Optional[List[str]] = Query(None),
     vung_phu_song: Optional[List[str]] = Query(None),
@@ -264,8 +275,10 @@ def export_cells_5g(
 ):
     q = db.query(Cell5G)
     if search:        q = q.filter(Cell5G.cell_name.ilike(f"%{search}%") | Cell5G.site_name.ilike(f"%{search}%"))
+    if cell_name_old: q = q.filter(Cell5G.cell_name_old.ilike(f"%{cell_name_old}%"))
     if mien:          q = q.filter(Cell5G.mien.in_(mien))
     if tinh:          q = q.filter(Cell5G.tinh.in_(tinh))
+    if phuong_xa:     q = q.filter(Cell5G.phuong_xa.in_(phuong_xa))
     if vendor:        q = q.filter(Cell5G.vendor.in_(vendor))
     if mimo:          q = q.filter(Cell5G.mimo.in_(mimo))
     if vung_phu_song: q = q.filter(Cell5G.vung_phu_song.in_(vung_phu_song))

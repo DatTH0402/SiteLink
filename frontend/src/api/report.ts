@@ -30,3 +30,16 @@ export const getTinhList = () =>
 
 export const getAntennaList = () =>
   api.get('/api/v1/dropdowns/antenna').then((r) => r.data)
+
+/**
+ * Get ward (phường/xã) list for a given province.
+ * Returns unique ten_phuong_xa values sorted alphabetically.
+ */
+export const getPhuongXaList = (tinh: string): Promise<string[]> =>
+  api
+    .get('/api/v1/dropdowns/tinh-xa-phuong', { params: { tinh } })
+    .then((r) =>
+      [...new Set<string>((r.data as { ten_phuong_xa: string }[]).map((x) => x.ten_phuong_xa))]
+        .filter(Boolean)
+        .sort()
+    )

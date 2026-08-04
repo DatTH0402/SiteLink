@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Tooltip,
@@ -14,27 +14,30 @@ import { cells5gApi } from '@/api/cells'
 import { exportCells5G } from '@/api/export'
 import type { Cell5G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
-import { getAntennaList, getTinhList } from '@/api/report'
+import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
 
 export default function Cells5GPage() {
-  const [data,        setData]        = useState<Cell5G[]>([])
-  const [loading,     setLoading]     = useState(false)
-  const [exporting,   setExporting]   = useState(false)
-  const [search,      setSearch]      = useState('')
-  const [mien,        setMien]        = useState<string[]>([])
-  const [tinh,        setTinh]        = useState<string[]>([])
-  const [vendor,      setVendor]      = useState<string[]>([])
-  const [sites,       setSites]       = useState<Site[]>([])
-  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
-  const [tinhList,    setTinhList]    = useState<TinhItem[]>([])
-  const [modalOpen,   setModalOpen]   = useState(false)
-  const [editing,     setEditing]     = useState<Cell5G | null>(null)
-  const [dryRunOpen,  setDryRunOpen]  = useState(false)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const [bulkEditOpen,setBulkEditOpen]= useState(false)
+  const [data,         setData]         = useState<Cell5G[]>([])
+  const [loading,      setLoading]      = useState(false)
+  const [exporting,    setExporting]    = useState(false)
+  const [search,       setSearch]       = useState('')
+  const [cellNameOld,  setCellNameOld]  = useState('')
+  const [mien,         setMien]         = useState<string[]>([])
+  const [tinh,         setTinh]         = useState<string[]>([])
+  const [phuongXa,     setPhuongXa]     = useState<string[]>([])
+  const [phuongXaOpts, setPhuongXaOpts] = useState<string[]>([])
+  const [vendor,       setVendor]       = useState<string[]>([])
+  const [sites,        setSites]        = useState<Site[]>([])
+  const [antennaList,  setAntennaList]  = useState<AntennaItem[]>([])
+  const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
+  const [modalOpen,    setModalOpen]    = useState(false)
+  const [editing,      setEditing]      = useState<Cell5G | null>(null)
+  const [dryRunOpen,   setDryRunOpen]   = useState(false)
+  const [selectedIds,  setSelectedIds]  = useState<number[]>([])
+  const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [form] = Form.useForm()
 
   const tinhOptions   = tinhList.length > 0
@@ -42,32 +45,61 @@ export default function Cells5GPage() {
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
   const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
 
-  const load = async () => {
+  // Reload ward options when province filter changes (single province only)
+  useEffect(() => {
+    setPhuongXa([])
+    setPhuongXaOpts([])
+    if (tinh.length === 1) {
+      getPhuongXaList(tinh[0]).then(setPhuongXaOpts)
+    }
+  }, [tinh])
+
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { limit: 1000 }
-      if (search) params.search = search
-      if (mien.length)   params.mien   = mien
-      if (tinh.length)   params.tinh   = tinh
-      if (vendor.length) params.vendor = vendor
+      if (search)           params.search        = search
+      if (cellNameOld)      params.cell_name_old = cellNameOld
+      if (mien.length)      params.mien          = mien
+      if (tinh.length)      params.tinh          = tinh
+      if (phuongXa.length)  params.phuong_xa     = phuongXa
+      if (vendor.length)    params.vendor        = vendor
       setData(await cells5gApi.list(params))
     } finally { setLoading(false) }
-  }
+  }, [search, cellNameOld, mien, tinh, phuongXa, vendor])
 
   useEffect(() => {
     load()
     getSites({ limit: 2000 }).then(setSites)
     getTinhList().then(setTinhList)
-    getAntennaList().then(setAntennaList)
-  }, [search, mien, tinh, vendor])
+    getAntennaList().then((list: AntennaItem[]) => {
+      const sorted = [...list].sort((a, b) => {
+        const aU = a.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || a.name.toUpperCase().includes('CHUA XAC DINH')
+        const bU = b.name.toUpperCase().includes('CHƯA XÁC ĐỊNH') || b.name.toUpperCase().includes('CHUA XAC DINH')
+        if (aU) return -1; if (bU) return 1; return 0
+      })
+      setAntennaList(sorted)
+    })
+  }, [load])
 
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells5G({ search: search || undefined, mien: mien.length ? mien : undefined, tinh: tinh.length ? tinh : undefined, vendor: vendor.length ? vendor : undefined })
+      await exportCells5G({
+        search:        search || undefined,
+        cell_name_old: cellNameOld || undefined,
+        mien:          mien.length ? mien : undefined,
+        tinh:          tinh.length ? tinh : undefined,
+        phuong_xa:     phuongXa.length ? phuongXa : undefined,
+        vendor:        vendor.length ? vendor : undefined,
+      })
       message.success(`Xuất Excel thành công (${data.length} cells)`)
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
+  }
+
+  const clearFilters = () => {
+    setSearch(''); setCellNameOld(''); setMien([]); setTinh([]); setPhuongXa([]); setVendor([])
   }
 
   const handleSiteSelect = (siteId: number) => {
@@ -159,6 +191,7 @@ export default function Cells5GPage() {
     { title: 'MU-MIMO', dataIndex: 'mu_mimo', width: 100 },
     { title: 'Cell status', dataIndex: 'cell_status', width: 140 },
   ]
+
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
@@ -177,10 +210,15 @@ export default function Cells5GPage() {
         </Space>
       </Row>
 
-      <Row gutter={8} style={{ marginBottom: 12 }}>
-        <Col flex="260px">
+      {/* ── Filter row 1 ── */}
+      <Row gutter={8} style={{ marginBottom: 8 }}>
+        <Col flex="240px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
                  value={search} onChange={e => setSearch(e.target.value)} allowClear />
+        </Col>
+        <Col flex="240px">
+          <Input prefix={<SearchOutlined />} placeholder="Tìm cell name (cũ)..."
+                 value={cellNameOld} onChange={e => setCellNameOld(e.target.value)} allowClear />
         </Col>
         <Col flex="150px">
           <Select mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
@@ -201,8 +239,31 @@ export default function Cells5GPage() {
             {vendorOptions.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
         </Col>
+      </Row>
+
+      {/* ── Filter row 2: ward ── */}
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="320px">
+          <Select
+            mode="multiple"
+            placeholder={
+              tinh.length === 0
+                ? 'Chọn tỉnh trước để lọc phường/xã'
+                : tinh.length > 1
+                ? 'Chọn 1 tỉnh để lọc phường/xã'
+                : 'Lọc theo Phường/Xã...'
+            }
+            allowClear showSearch maxTagCount={3}
+            style={{ width: '100%' }}
+            value={phuongXa} onChange={setPhuongXa}
+            disabled={tinh.length !== 1}
+            filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}
+          >
+            {phuongXaOpts.map(p => <Select.Option key={p} value={p}>{p}</Select.Option>)}
+          </Select>
+        </Col>
         <Col>
-          <Button onClick={() => { setSearch(''); setMien([]); setTinh([]); setVendor([]) }}>Xóa lọc</Button>
+          <Button onClick={clearFilters}>Xóa lọc</Button>
         </Col>
       </Row>
 
@@ -283,10 +344,10 @@ export default function Cells5GPage() {
             <Col span={8}><Form.Item name="bandwidth" label="Bandwidth (MHz)"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="nci" label="NCI"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="mu_mimo" label="MU-MIMO">
               <Select allowClear><Select.Option value="Yes">Yes</Select.Option><Select.Option value="No">No</Select.Option></Select>
             </Form.Item></Col>
+            <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
             <Col span={16}><Form.Item name="cell_status" label="Cell status (at dump time)"><Input /></Form.Item></Col>
           </Row>
         </Form>

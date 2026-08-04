@@ -28,23 +28,6 @@ def _to_bool(value) -> bool:
         return value
     if isinstance(value, int):
         return bool(value)
-
-
-def _safe_bool_db(v) -> bool:
-    """
-    Convert a raw DB value (possibly str/int) to Python bool.
-    Required because psycopg2 may return "false"/"true" as strings.
-    """
-    if v is None:
-        return False
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, int):
-        return v != 0
-    if isinstance(v, str):
-        return v.strip().lower() not in ("false", "0", "no", "off", "")
-    return bool(v)
-
     if isinstance(value, str):
         if value.lower() in ('true', 'yes', '1', 'on'):
             return True
@@ -55,11 +38,21 @@ def _safe_bool_db(v) -> bool:
     return bool(value)
 
 
+def _safe_bool_db(v) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
 def _sanitize_site(obj: Site) -> None:
-    """Ensure all boolean site fields are stored as real Python bools."""
     for field in _SITE_BOOL_FIELD_SET:
         raw = getattr(obj, field, None)
-        # Always coerce – handles str ("false"/"true"), int (0/1), None
         setattr(obj, field, _safe_bool_db(raw))
 
 
@@ -82,10 +75,6 @@ def _site_or_404(db: Session, site_id: int) -> Site:
 
 def _apply_site_changes(existing: Site, changes: dict,
                          skip_keys: set = None) -> bool:
-    """
-    Apply changes to site object. Skips _CLEAR sentinels.
-    Returns True if any field was actually changed vs current DB value.
-    """
     if skip_keys is None:
         skip_keys = set()
     any_changed = False
@@ -97,7 +86,6 @@ def _apply_site_changes(existing: Site, changes: dict,
         if not hasattr(existing, k):
             continue
         old_val = getattr(existing, k)
-        # Normalize for comparison
         is_bool = k in _SITE_BOOL_FIELD_SET
         if is_bool:
             old_norm = _safe_bool_db(old_val)
@@ -164,11 +152,9 @@ async def import_sites_excel(
 
     for rec in to_create:
         try:
-            # rec already has _CLEAR resolved for creates
             clean = {k: v for k, v in rec.items()
                      if v is not _CLEAR and not k.startswith("_")}
             site = Site(**clean, created_by=current_user.id)
-            # Ensure booleans
             _sanitize_site(site)
             db.add(site)
             db.flush()
@@ -201,7 +187,6 @@ async def import_sites_excel(
             if new_site_name and new_site_name is not _CLEAR and new_site_name != old_name:
                 site_name_old_ref = old_name
 
-            # Apply only fields that differ from current DB value
             _apply_site_changes(existing, changes,
                                  skip_keys={"site_id", "created_by", "created_at"})
             _sanitize_site(existing)
@@ -236,19 +221,23 @@ async def import_sites_excel(
 def list_sites(
     skip: int = 0,
     limit: int = 500,
-    search:  Optional[str]       = Query(None),
-    mien:    Optional[List[str]] = Query(None),
-    tinh:    Optional[List[str]] = Query(None),
-    tram_3g: Optional[bool]      = Query(None),
-    tram_4g: Optional[bool]      = Query(None),
-    tram_5g: Optional[bool]      = Query(None),
+    search:       Optional[str]       = Query(None),
+    site_name_cu: Optional[str]       = Query(None),
+    mien:         Optional[List[str]] = Query(None),
+    tinh:         Optional[List[str]] = Query(None),
+    phuong_xa:    Optional[List[str]] = Query(None),
+    tram_3g:      Optional[bool]      = Query(None),
+    tram_4g:      Optional[bool]      = Query(None),
+    tram_5g:      Optional[bool]      = Query(None),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
     q = db.query(Site)
-    if search: q = q.filter(Site.site_name.ilike(f"%{search}%"))
-    if mien:   q = q.filter(Site.mien.in_(mien))
-    if tinh:   q = q.filter(Site.tinh.in_(tinh))
+    if search:       q = q.filter(Site.site_name.ilike(f"%{search}%"))
+    if site_name_cu: q = q.filter(Site.site_name_cu.ilike(f"%{site_name_cu}%"))
+    if mien:         q = q.filter(Site.mien.in_(mien))
+    if tinh:         q = q.filter(Site.tinh.in_(tinh))
+    if phuong_xa:    q = q.filter(Site.phuong_xa.in_(phuong_xa))
     if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
     if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
     if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)

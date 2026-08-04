@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Tooltip,
@@ -14,7 +14,7 @@ import { cells4gApi } from '@/api/cells'
 import { exportCells4G } from '@/api/export'
 import type { Cell4G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
-import { getAntennaList, getTinhList } from '@/api/report'
+import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
@@ -22,21 +22,24 @@ import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators
 const CHUNG_ANTEN_4G = ['4G', '2G/4G', '3G/4G', '2G/3G/4G', '4G/5G']
 
 export default function Cells4GPage() {
-  const [data,        setData]        = useState<Cell4G[]>([])
-  const [loading,     setLoading]     = useState(false)
-  const [exporting,   setExporting]   = useState(false)
-  const [search,      setSearch]      = useState('')
-  const [mien,        setMien]        = useState<string[]>([])
-  const [tinh,        setTinh]        = useState<string[]>([])
-  const [vendor,      setVendor]      = useState<string[]>([])
-  const [sites,       setSites]       = useState<Site[]>([])
-  const [antennaList, setAntennaList] = useState<AntennaItem[]>([])
-  const [tinhList,    setTinhList]    = useState<TinhItem[]>([])
-  const [modalOpen,   setModalOpen]   = useState(false)
-  const [editing,     setEditing]     = useState<Cell4G | null>(null)
-  const [dryRunOpen,  setDryRunOpen]  = useState(false)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const [bulkEditOpen,setBulkEditOpen]= useState(false)
+  const [data,         setData]         = useState<Cell4G[]>([])
+  const [loading,      setLoading]      = useState(false)
+  const [exporting,    setExporting]    = useState(false)
+  const [search,       setSearch]       = useState('')
+  const [cellNameOld,  setCellNameOld]  = useState('')
+  const [mien,         setMien]         = useState<string[]>([])
+  const [tinh,         setTinh]         = useState<string[]>([])
+  const [phuongXa,     setPhuongXa]     = useState<string[]>([])
+  const [phuongXaOpts, setPhuongXaOpts] = useState<string[]>([])
+  const [vendor,       setVendor]       = useState<string[]>([])
+  const [sites,        setSites]        = useState<Site[]>([])
+  const [antennaList,  setAntennaList]  = useState<AntennaItem[]>([])
+  const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
+  const [modalOpen,    setModalOpen]    = useState(false)
+  const [editing,      setEditing]      = useState<Cell4G | null>(null)
+  const [dryRunOpen,   setDryRunOpen]   = useState(false)
+  const [selectedIds,  setSelectedIds]  = useState<number[]>([])
+  const [bulkEditOpen, setBulkEditOpen] = useState(false)
   const [form] = Form.useForm()
 
   const tinhOptions   = tinhList.length > 0
@@ -44,17 +47,28 @@ export default function Cells4GPage() {
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
   const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
 
-  const load = async () => {
+  // Reload ward options when province filter changes (single province only)
+  useEffect(() => {
+    setPhuongXa([])
+    setPhuongXaOpts([])
+    if (tinh.length === 1) {
+      getPhuongXaList(tinh[0]).then(setPhuongXaOpts)
+    }
+  }, [tinh])
+
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { limit: 1000 }
-      if (search) params.search = search
-      if (mien.length)   params.mien   = mien
-      if (tinh.length)   params.tinh   = tinh
-      if (vendor.length) params.vendor = vendor
+      if (search)           params.search        = search
+      if (cellNameOld)      params.cell_name_old = cellNameOld
+      if (mien.length)      params.mien          = mien
+      if (tinh.length)      params.tinh          = tinh
+      if (phuongXa.length)  params.phuong_xa     = phuongXa
+      if (vendor.length)    params.vendor        = vendor
       setData(await cells4gApi.list(params))
     } finally { setLoading(false) }
-  }
+  }, [search, cellNameOld, mien, tinh, phuongXa, vendor])
 
   useEffect(() => {
     load()
@@ -68,15 +82,26 @@ export default function Cells4GPage() {
       })
       setAntennaList(sorted)
     })
-  }, [search, mien, tinh, vendor])
+  }, [load])
 
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells4G({ search: search || undefined, mien: mien.length ? mien : undefined, tinh: tinh.length ? tinh : undefined, vendor: vendor.length ? vendor : undefined })
+      await exportCells4G({
+        search:        search || undefined,
+        cell_name_old: cellNameOld || undefined,
+        mien:          mien.length ? mien : undefined,
+        tinh:          tinh.length ? tinh : undefined,
+        phuong_xa:     phuongXa.length ? phuongXa : undefined,
+        vendor:        vendor.length ? vendor : undefined,
+      })
       message.success(`Xuất Excel thành công (${data.length} cells)`)
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
+  }
+
+  const clearFilters = () => {
+    setSearch(''); setCellNameOld(''); setMien([]); setTinh([]); setPhuongXa([]); setVendor([])
   }
 
   const handleSiteSelect = (siteId: number) => {
@@ -166,6 +191,7 @@ export default function Cells4GPage() {
     { title: 'BBUname', dataIndex: 'bbu_name', width: 130 },
     { title: 'Cell status', dataIndex: 'cell_status', width: 140 },
   ]
+
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
@@ -184,10 +210,15 @@ export default function Cells4GPage() {
         </Space>
       </Row>
 
-      <Row gutter={8} style={{ marginBottom: 12 }}>
-        <Col flex="260px">
+      {/* ── Filter row 1 ── */}
+      <Row gutter={8} style={{ marginBottom: 8 }}>
+        <Col flex="240px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
                  value={search} onChange={e => setSearch(e.target.value)} allowClear />
+        </Col>
+        <Col flex="240px">
+          <Input prefix={<SearchOutlined />} placeholder="Tìm cell name (cũ)..."
+                 value={cellNameOld} onChange={e => setCellNameOld(e.target.value)} allowClear />
         </Col>
         <Col flex="150px">
           <Select mode="multiple" placeholder="Miền" allowClear maxTagCount={2}
@@ -208,8 +239,31 @@ export default function Cells4GPage() {
             {vendorOptions.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
           </Select>
         </Col>
+      </Row>
+
+      {/* ── Filter row 2: ward ── */}
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="320px">
+          <Select
+            mode="multiple"
+            placeholder={
+              tinh.length === 0
+                ? 'Chọn tỉnh trước để lọc phường/xã'
+                : tinh.length > 1
+                ? 'Chọn 1 tỉnh để lọc phường/xã'
+                : 'Lọc theo Phường/Xã...'
+            }
+            allowClear showSearch maxTagCount={3}
+            style={{ width: '100%' }}
+            value={phuongXa} onChange={setPhuongXa}
+            disabled={tinh.length !== 1}
+            filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}
+          >
+            {phuongXaOpts.map(p => <Select.Option key={p} value={p}>{p}</Select.Option>)}
+          </Select>
+        </Col>
         <Col>
-          <Button onClick={() => { setSearch(''); setMien([]); setTinh([]); setVendor([]) }}>Xóa lọc</Button>
+          <Button onClick={clearFilters}>Xóa lọc</Button>
         </Col>
       </Row>
 
@@ -274,11 +328,11 @@ export default function Cells4GPage() {
                 {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
               </Select>
             </Form.Item></Col>
+            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={12}><Form.Item name="chung_anten" label="Chung anten">
               <Select allowClear>{CHUNG_ANTEN_4G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="enodeb_id" label="EnodeB ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item></Col>
