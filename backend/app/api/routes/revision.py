@@ -157,6 +157,7 @@ def list_cell3g_revisions(
             "long":          r.long,
             "vung_phu_song": r.vung_phu_song,
             "vendor":        r.vendor,
+            "rnc_name":      r.rnc_name,
             "do_cao_anten":  r.do_cao_anten,
             "azimuth":       r.azimuth,
             "m_tilt":        r.m_tilt,

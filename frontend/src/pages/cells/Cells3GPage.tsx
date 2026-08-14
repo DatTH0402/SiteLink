@@ -12,6 +12,7 @@ import {
 } from '@ant-design/icons'
 import { cells3gApi } from '@/api/cells'
 import { exportCells3G } from '@/api/export'
+import { getRncNamesGrouped } from '@/api/rnc'
 import type { Cell3G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
@@ -22,24 +23,26 @@ import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators
 const CHUNG_ANTEN_3G = ['3G', '3G/4G', '2G/3G/4G', '3G/4G/5G', '3G/5G']
 
 export default function Cells3GPage() {
-  const [data,         setData]         = useState<Cell3G[]>([])
-  const [loading,      setLoading]      = useState(false)
-  const [exporting,    setExporting]    = useState(false)
-  const [search,       setSearch]       = useState('')
-  const [cellNameOld,  setCellNameOld]  = useState('')
-  const [mien,         setMien]         = useState<string[]>([])
-  const [tinh,         setTinh]         = useState<string[]>([])
-  const [phuongXa,     setPhuongXa]     = useState<string[]>([])
-  const [phuongXaOpts, setPhuongXaOpts] = useState<string[]>([])
-  const [vendor,       setVendor]       = useState<string[]>([])
-  const [sites,        setSites]        = useState<Site[]>([])
-  const [antennaList,  setAntennaList]  = useState<AntennaItem[]>([])
-  const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
-  const [modalOpen,    setModalOpen]    = useState(false)
-  const [editing,      setEditing]      = useState<Cell3G | null>(null)
-  const [dryRunOpen,   setDryRunOpen]   = useState(false)
-  const [selectedIds,  setSelectedIds]  = useState<number[]>([])
-  const [bulkEditOpen, setBulkEditOpen] = useState(false)
+  const [data,          setData]          = useState<Cell3G[]>([])
+  const [loading,       setLoading]       = useState(false)
+  const [exporting,     setExporting]     = useState(false)
+  const [search,        setSearch]        = useState('')
+  const [cellNameOld,   setCellNameOld]   = useState('')
+  const [mien,          setMien]          = useState<string[]>([])
+  const [tinh,          setTinh]          = useState<string[]>([])
+  const [phuongXa,      setPhuongXa]      = useState<string[]>([])
+  const [phuongXaOpts,  setPhuongXaOpts]  = useState<string[]>([])
+  const [vendor,        setVendor]        = useState<string[]>([])
+  const [sites,         setSites]         = useState<Site[]>([])
+  const [antennaList,   setAntennaList]   = useState<AntennaItem[]>([])
+  const [tinhList,      setTinhList]      = useState<TinhItem[]>([])
+  const [rncGrouped,    setRncGrouped]    = useState<Record<string, string[]>>({})
+  const [rncOptions,    setRncOptions]    = useState<string[]>([])
+  const [modalOpen,     setModalOpen]     = useState(false)
+  const [editing,       setEditing]       = useState<Cell3G | null>(null)
+  const [dryRunOpen,    setDryRunOpen]    = useState(false)
+  const [selectedIds,   setSelectedIds]   = useState<number[]>([])
+  const [bulkEditOpen,  setBulkEditOpen]  = useState(false)
   const [form] = Form.useForm()
 
   const tinhOptions   = tinhList.length > 0
@@ -47,7 +50,6 @@ export default function Cells3GPage() {
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
   const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
 
-  // Reload ward options when province filter changes (single province only)
   useEffect(() => {
     setPhuongXa([])
     setPhuongXaOpts([])
@@ -60,12 +62,12 @@ export default function Cells3GPage() {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { limit: 1000 }
-      if (search)           params.search        = search
-      if (cellNameOld)      params.cell_name_old = cellNameOld
-      if (mien.length)      params.mien          = mien
-      if (tinh.length)      params.tinh          = tinh
-      if (phuongXa.length)  params.phuong_xa     = phuongXa
-      if (vendor.length)    params.vendor        = vendor
+      if (search)          params.search        = search
+      if (cellNameOld)     params.cell_name_old = cellNameOld
+      if (mien.length)     params.mien          = mien
+      if (tinh.length)     params.tinh          = tinh
+      if (phuongXa.length) params.phuong_xa     = phuongXa
+      if (vendor.length)   params.vendor        = vendor
       setData(await cells3gApi.list(params))
     } finally { setLoading(false) }
   }, [search, cellNameOld, mien, tinh, phuongXa, vendor])
@@ -82,7 +84,37 @@ export default function Cells3GPage() {
       })
       setAntennaList(sorted)
     })
+    getRncNamesGrouped().then(setRncGrouped)
   }, [load])
+
+  // When vendor field changes in the form, update RNC options
+  const handleVendorChange = (value: string | undefined) => {
+    form.setFieldValue('rnc_name', undefined)
+    if (value && rncGrouped[value]) {
+      setRncOptions(rncGrouped[value])
+    } else {
+      setRncOptions([])
+    }
+  }
+
+  // When opening edit modal, populate RNC options based on existing vendor
+  const openEdit = (r: Cell3G) => {
+    setEditing(r)
+    form.setFieldsValue(r)
+    if (r.vendor && rncGrouped[r.vendor]) {
+      setRncOptions(rncGrouped[r.vendor])
+    } else {
+      setRncOptions([])
+    }
+    setModalOpen(true)
+  }
+
+  const openCreate = () => {
+    setEditing(null)
+    form.resetFields()
+    setRncOptions([])
+    setModalOpen(true)
+  }
 
   const handleExport = async () => {
     setExporting(true)
@@ -108,9 +140,6 @@ export default function Cells3GPage() {
     const site = sites.find(s => s.id === siteId)
     if (site) form.setFieldValue('site_name', site.site_name)
   }
-
-  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
-  const openEdit   = (r: Cell3G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
 
   const handleSave = async () => {
     const values = await form.validateFields()
@@ -156,39 +185,45 @@ export default function Cells3GPage() {
           </Popconfirm>
         </Space>
       )},
-    { title: 'Miền', dataIndex: 'mien', fixed: 'left', width: 70 },
-    { title: 'Tỉnh', dataIndex: 'tinh', fixed: 'left', width: 160 },
-    { title: 'Phường/Xã', dataIndex: 'phuong_xa', width: 160 },
+    { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70 },
+    { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
+    { title: 'Phường/Xã',     dataIndex: 'phuong_xa',     width: 160 },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90, render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
-    { title: 'MORAN', dataIndex: 'moran', width: 120 },
-    { title: 'Lat', dataIndex: 'lat', width: 110 },
-    { title: 'Long', dataIndex: 'long', width: 110 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP',  dataIndex: 'cell_vip',  width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',    dataIndex: 'moran',         width: 120 },
+    { title: 'Lat',      dataIndex: 'lat',           width: 110 },
+    { title: 'Long',     dataIndex: 'long',          width: 110 },
     { title: 'Vùng phủ sóng', dataIndex: 'vung_phu_song', width: 120 },
-    { title: 'Vendor', dataIndex: 'vendor', width: 100 },
-    { title: 'Độ cao anten', dataIndex: 'do_cao_anten', width: 120 },
-    { title: 'Azimuth', dataIndex: 'azimuth', width: 90 },
-    { title: 'M-tilt', dataIndex: 'm_tilt', width: 80 },
-    { title: 'E-Tilt', dataIndex: 'e_tilt', width: 80 },
-    { title: 'Total Tilt', dataIndex: 'total_tilt', width: 100 },
-    { title: 'Loại Anten', dataIndex: 'loai_anten', width: 250, ellipsis: { showTitle: true } },
-    { title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },
-    { title: 'Baseband', dataIndex: 'baseband', width: 120 },
-    { title: 'RF', dataIndex: 'rf', width: 100 },
-    { title: 'Cell ID', dataIndex: 'cell_id', width: 100 },
-    { title: 'UARFCN', dataIndex: 'uarfcn', width: 100 },
-    { title: 'LAC', dataIndex: 'lac', width: 80 },
-    { title: 'RAC', dataIndex: 'rac', width: 80 },
-    { title: 'PSC', dataIndex: 'psc', width: 80 },
-    { title: 'MIMO', dataIndex: 'mimo', width: 80, render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
-    { title: 'URAId', dataIndex: 'ura_id', width: 80 },
+    { title: 'Vendor',        dataIndex: 'vendor',         width: 100 },
+    { title: 'RNC Name',      dataIndex: 'rnc_name',       width: 130,
+      render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : '-' },
+    { title: 'Độ cao anten',  dataIndex: 'do_cao_anten',   width: 120 },
+    { title: 'Azimuth',       dataIndex: 'azimuth',        width: 90 },
+    { title: 'M-tilt',        dataIndex: 'm_tilt',         width: 80 },
+    { title: 'E-Tilt',        dataIndex: 'e_tilt',         width: 80 },
+    { title: 'Total Tilt',    dataIndex: 'total_tilt',     width: 100 },
+    { title: 'Loại Anten',    dataIndex: 'loai_anten',     width: 250, ellipsis: { showTitle: true } },
+    { title: 'Chung anten',   dataIndex: 'chung_anten',    width: 120 },
+    { title: 'Baseband',      dataIndex: 'baseband',       width: 120 },
+    { title: 'RF',            dataIndex: 'rf',             width: 100 },
+    { title: 'Cell ID',       dataIndex: 'cell_id',        width: 100 },
+    { title: 'UARFCN',        dataIndex: 'uarfcn',         width: 100 },
+    { title: 'LAC',           dataIndex: 'lac',            width: 80 },
+    { title: 'RAC',           dataIndex: 'rac',            width: 80 },
+    { title: 'PSC',           dataIndex: 'psc',            width: 80 },
+    { title: 'MIMO',          dataIndex: 'mimo',           width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+    { title: 'URAId',         dataIndex: 'ura_id',         width: 80 },
     { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 160 },
-    { title: 'CPICH power (dBm)', dataIndex: 'cpich_power', width: 150 },
-    { title: 'BBUname', dataIndex: 'bbu_name', width: 130 },
-    { title: 'Cell status', dataIndex: 'cell_status', width: 140 },
+    { title: 'CPICH power (dBm)',    dataIndex: 'cpich_power',    width: 150 },
+    { title: 'BBUname',       dataIndex: 'bbu_name',       width: 130 },
+    { title: 'Cell status',   dataIndex: 'cell_status',    width: 140 },
   ]
 
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
@@ -209,7 +244,6 @@ export default function Cells3GPage() {
         </Space>
       </Row>
 
-      {/* ── Filter row 1 ── */}
       <Row gutter={8} style={{ marginBottom: 8 }}>
         <Col flex="240px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
@@ -240,7 +274,6 @@ export default function Cells3GPage() {
         </Col>
       </Row>
 
-      {/* ── Filter row 2: ward ── */}
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="320px">
           <Select
@@ -285,61 +318,158 @@ export default function Cells3GPage() {
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
              pagination={{ pageSize: 50, showTotal: t => `${t} cells`, showSizeChanger: true }} />
 
+      {/* ── Create / Edit Modal ── */}
       <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
-             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+             open={modalOpen} onOk={handleSave} onCancel={() => { setModalOpen(false); setRncOptions([]) }}
              width={900} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
-            <Col span={12}><Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
-              <Select showSearch optionFilterProp="children" allowClear placeholder="Chọn site..."
-                      onChange={handleSiteSelect} disabled={Boolean(editing)}
-                      filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
-              </Select>
-            </Form.Item></Col>
-            <Col span={12}><Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="site_name" label="Site Name">
-              <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
-            </Form.Item></Col>
-            <Col span={12}><Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col span={6}><Form.Item name="cell_vip" label="Cell VIP">
-              <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
-            </Form.Item></Col>
-            <Col span={6}><Form.Item name="moran" label="MORAN">
-              <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-              <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="vendor" label="Vendor">
-              <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
-              <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-              </Select>
-            </Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
+                <Select showSearch optionFilterProp="children" allowClear placeholder="Chọn site..."
+                        onChange={handleSiteSelect} disabled={Boolean(editing)}
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name">
+                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
+                <Select allowClear>
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}>
+                <InputNumber style={{ width: '100%' }} precision={5} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
+                <Select allowClear>
+                  <Select.Option value="Indoor">Indoor</Select.Option>
+                  <Select.Option value="Outdoor">Outdoor</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            {/* Vendor + RNC Name: cascading like province/ward */}
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor">
+                <Select allowClear onChange={handleVendorChange}>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
+                    <Select.Option key={v} value={v}>{v}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="rnc_name" label="RNC Name">
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder={
+                    !form.getFieldValue('vendor')
+                      ? 'Chọn Vendor trước'
+                      : rncOptions.length === 0
+                      ? 'Không có RNC cho vendor này'
+                      : 'Chọn RNC Name...'
+                  }
+                  disabled={rncOptions.length === 0 && !form.getFieldValue('vendor')}
+                  filterOption={(input, option) =>
+                    String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                >
+                  {rncOptions.map(n => (
+                    <Select.Option key={n} value={n}>{n}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Độ cao anten (m)">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}>
+                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="loai_anten" label="Loại Anten">
+                <Select showSearch allowClear
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="chung_anten" label="Chung anten">
-              <Select allowClear>{CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-            </Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten">
+                <Select allowClear>
+                  {CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="uarfcn" label="UARFCN"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="lac" label="LAC"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rac" label="RAC"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="psc" label="PSC"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="mimo" label="MIMO">
-              <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
-            </Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="ura_id" label="URAId"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cpich_power" label="CPICH power (dBm)"><Input /></Form.Item></Col>

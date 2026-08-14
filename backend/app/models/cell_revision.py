@@ -28,6 +28,7 @@ class Cell3GRevision(Base):
     long           = Column(Float)
     vung_phu_song  = Column(String(20))
     vendor         = Column(String(50))
+    rnc_name       = Column(String(100))
     do_cao_anten   = Column(Float)
     azimuth        = Column(Float)
     m_tilt         = Column(Float)

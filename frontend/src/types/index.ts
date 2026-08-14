@@ -77,6 +77,7 @@ export interface Cell3G extends CellBase {
   psc?: string
   ura_id?: string
   cpich_power?: string
+  rnc_name?: string
 }
 
 export interface Cell4G extends CellBase {

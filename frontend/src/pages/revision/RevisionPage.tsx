@@ -476,6 +476,8 @@ function makeCell3GColumns(): ColumnsType<CellRevisionBase> {
       render: (_: unknown, r: CellRevisionBase) => String(r['psc'] ?? '-') },
     { title: 'URAId', key: 'ura_id', width: 80,
       render: (_: unknown, r: CellRevisionBase) => String(r['ura_id'] ?? '-') },
+    { title: 'RNC Name', key: 'rnc_name', width: 130,
+      render: (_: unknown, r: CellRevisionBase) => r['rnc_name'] ? <Tag color="cyan">{String(r['rnc_name'])}</Tag> : <span>-</span> },
     { title: 'CPICH power (dBm)', key: 'cpich_power', width: 155,
       render: (_: unknown, r: CellRevisionBase) => String(r['cpich_power'] ?? '-') },
   ]

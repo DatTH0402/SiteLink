@@ -35,13 +35,14 @@ class CellBase(BaseModel):
 # ── 3G ────────────────────────────────────────────────────────────────────────
 class Cell3GBase(CellBase):
     chung_anten:    Optional[str] = None
-    arfcn:          Optional[str] = None   # legacy / backward compat
-    uarfcn:         Optional[str] = None   # UARFCN
-    lac:            Optional[str] = None   # Location Area Code
-    rac:            Optional[str] = None   # Routing Area Code
-    psc:            Optional[str] = None   # Primary Scrambling Code
-    ura_id:         Optional[str] = None   # URA ID
-    cpich_power:    Optional[str] = None   # CPICH power (dBm)
+    arfcn:          Optional[str] = None
+    uarfcn:         Optional[str] = None
+    lac:            Optional[str] = None
+    rac:            Optional[str] = None
+    psc:            Optional[str] = None
+    ura_id:         Optional[str] = None
+    cpich_power:    Optional[str] = None
+    rnc_name:       Optional[str] = None
 
 
 class Cell3GCreate(Cell3GBase):
@@ -59,6 +60,7 @@ class Cell3GUpdate(BaseModel):
     long:           Optional[float] = None
     vung_phu_song:  Optional[str]   = None
     vendor:         Optional[str]   = None
+    rnc_name:       Optional[str]   = None
     do_cao_anten:   Optional[float] = None
     azimuth:        Optional[float] = None
     m_tilt:         Optional[float] = None
@@ -91,13 +93,13 @@ class Cell3GRead(Cell3GBase):
 # ── 4G ────────────────────────────────────────────────────────────────────────
 class Cell4GBase(CellBase):
     chung_anten:      Optional[str] = None
-    enodeb_id:        Optional[str] = None   # eNodeB ID
+    enodeb_id:        Optional[str] = None
     earfcn:           Optional[str] = None
-    tac:              Optional[str] = None   # Tracking Area Code
+    tac:              Optional[str] = None
     pci:              Optional[str] = None
     root_sequence_id: Optional[str] = None
-    bandwidth:        Optional[str] = None   # Bandwidth (MHz)
-    eci:              Optional[str] = None   # E-UTRAN Cell Identifier
+    bandwidth:        Optional[str] = None
+    eci:              Optional[str] = None
 
 
 class Cell4GCreate(Cell4GBase):
@@ -146,16 +148,16 @@ class Cell4GRead(Cell4GBase):
 
 # ── 5G ────────────────────────────────────────────────────────────────────────
 class Cell5GBase(CellBase):
-    gnodeb_id:        Optional[str] = None   # gNodeB ID
-    tac:              Optional[str] = None   # Tracking Area Code
+    gnodeb_id:        Optional[str] = None
+    tac:              Optional[str] = None
     pci:              Optional[str] = None
     root_sequence_id: Optional[str] = None
-    ssb_arfcn:        Optional[str] = None   # SSB-ARFCN
-    center_arfcn:     Optional[str] = None   # Center-ARFCN
-    gscn:             Optional[str] = None   # GSCN
-    bandwidth:        Optional[str] = None   # Bandwidth (MHz)
-    nci:              Optional[str] = None   # NR Cell Identity
-    mu_mimo:          Optional[str] = None   # MU-MIMO
+    ssb_arfcn:        Optional[str] = None
+    center_arfcn:     Optional[str] = None
+    gscn:             Optional[str] = None
+    bandwidth:        Optional[str] = None
+    nci:              Optional[str] = None
+    mu_mimo:          Optional[str] = None
 
 
 class Cell5GCreate(Cell5GBase):

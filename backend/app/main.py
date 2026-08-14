@@ -14,6 +14,7 @@ from app.api.routes import antenna   as antenna_router
 from app.api.routes import templates as templates_router
 from app.api.routes import export    as export_router
 from app.api.routes import revision  as revision_router
+from app.api.routes import rnc       as rnc_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -24,12 +25,44 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(os.path.join(UPLOAD_DIR, "antenna_specs"), exist_ok=True)
 
 
+_RNC_DATA = [
+    ("ERICSSON", "RHNCG1E"), ("ERICSSON", "RHNCG2E"), ("ERICSSON", "RHNCG3E"),
+    ("ERICSSON", "RHNCG4E"), ("ERICSSON", "RHNHM1E"), ("ERICSSON", "RHNHM2E"),
+    ("ERICSSON", "RHNHM3E"), ("ERICSSON", "RQNHL1E"), ("ERICSSON", "RQNHL2E"),
+    ("ERICSSON", "RSG103E"), ("ERICSSON", "RSG011E"), ("ERICSSON", "RSG072E"),
+    ("ERICSSON", "RSG091E"), ("ERICSSON", "RSG092E"), ("ERICSSON", "RSG093E"),
+    ("ERICSSON", "RSG094E"), ("ERICSSON", "RSG095E"), ("ERICSSON", "RSG097E"),
+    ("ERICSSON", "RSG104E"), ("ERICSSON", "RSG105E"), ("ERICSSON", "RSGBC2E"),
+    ("ERICSSON", "RSGBI2E"), ("ERICSSON", "RSGBT2E"), ("ERICSSON", "RSGHM1E"),
+    ("ERICSSON", "RSGTB2E"),
+    ("HUAWEI", "iHNCG1H"), ("HUAWEI", "iHNCG3H"), ("HUAWEI", "iHNHM1H"),
+    ("HUAWEI", "iHNHM2H"), ("HUAWEI", "iHNHM3H"), ("HUAWEI", "iHNHM5H"),
+    ("HUAWEI", "iHNHM6H"), ("HUAWEI", "iHNHM7H"), ("HUAWEI", "iHNHM8H"),
+    ("HUAWEI", "RHNCG1H"), ("HUAWEI", "RHNCG3H"), ("HUAWEI", "RHNCG4H"),
+    ("HUAWEI", "RHNHM3H"), ("HUAWEI", "RHNHM4H"), ("HUAWEI", "RHNHM5H"),
+    ("HUAWEI", "RHNHM6H"), ("HUAWEI", "RHNHM7H"), ("HUAWEI", "RHNHM8H"),
+    ("HUAWEI", "RDNG01H"), ("HUAWEI", "RDNG02H"), ("HUAWEI", "RQBDH1H"),
+    ("HUAWEI", "RCTCR11H"), ("HUAWEI", "RCTCR12H"),
+    ("NOKIA", "RDNCL3N"), ("NOKIA", "RDNCL4N"), ("NOKIA", "RDNCL5N"),
+    ("NOKIA", "RDNCL7N"), ("NOKIA", "RDNCL8N"), ("NOKIA", "RDNCL9N"),
+    ("NOKIA", "RDNST10N"), ("NOKIA", "RDNST12N"), ("NOKIA", "RDNST13N"),
+    ("NOKIA", "RDNST14N"), ("NOKIA", "RDNST15N"), ("NOKIA", "RDNST7N"),
+    ("NOKIA", "RCTCR1N"), ("NOKIA", "RCTCR2N"), ("NOKIA", "RCTCR8N"),
+    ("NOKIA", "RDNBH5N"), ("NOKIA", "RSG091N"), ("NOKIA", "RSG092N"),
+    ("NOKIA", "RSG093N"), ("NOKIA", "RSG094N"), ("NOKIA", "RSG095N"),
+    ("NOKIA", "RSG097N"), ("NOKIA", "RSG098N"), ("NOKIA", "RSG099N"),
+    ("NOKIA", "RSG105N"), ("NOKIA", "RTGMT3N"),
+    ("ZTE", "RCTCR3Z"), ("ZTE", "RCTCR4Z"), ("ZTE", "RCTCR5Z"), ("ZTE", "RCTCR6Z"),
+]
+
+
 def _seed_initial_data():
     db = SessionLocal()
     try:
         from app.models.user import User, UserRole
         from app.core.security import get_password_hash
         from app.models.dropdown import DropdownGeneral, DropdownVendor
+        from app.models.rnc import RncName
 
         if not db.query(User).filter(User.username == "admin").first():
             db.add(User(
@@ -71,6 +104,13 @@ def _seed_initial_data():
                     vendor_4g=row[2], vendor_5g=row[3],
                 ))
             db.commit()
+
+        # Seed RNC names
+        if db.query(RncName).count() == 0:
+            for vendor, name in _RNC_DATA:
+                db.add(RncName(vendor=vendor, name=name))
+            db.commit()
+
     finally:
         db.close()
 
@@ -146,6 +186,7 @@ app.include_router(antenna_router.router,   prefix=f"{PREFIX}/antennas",   tags=
 app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=["Templates"])
 app.include_router(export_router.router,    prefix=f"{PREFIX}/export",     tags=["Export"])
 app.include_router(revision_router.router,  prefix=f"{PREFIX}/revisions",  tags=["Revisions"])
+app.include_router(rnc_router.router,       prefix=f"{PREFIX}/rnc",        tags=["RNC"])
 
 
 @app.get("/health")

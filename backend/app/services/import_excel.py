@@ -646,6 +646,8 @@ def parse_cell3g_excel(file_bytes, db=None, dry_run=False):
             "ura_id":      _v_aware(row, excel_cols, "URAId", "URA ID", "ura_id"),
             "cpich_power": _v_aware(row, excel_cols, "CPICH power (dBm)",
                                      "CPICH power", "cpich_power"),
+            "rnc_name":    _v_aware(row, excel_cols, "RNC Name", "RNC name",
+                                     "RNCNAME", "rnc_name"),
         }
     return _parse_cell_excel(file_bytes, Cell3G, extra, db=db, dry_run=dry_run)
 

@@ -1,10 +1,5 @@
 """
 revision.py – Service layer for revision history snapshots.
-
-Rules:
-  - CREATE (old_snapshot is None)  → always record (revision_no=1).
-  - UPDATE with changes            → record with diff.
-  - UPDATE with NO changes         → skip entirely (return None).
 """
 from __future__ import annotations
 
@@ -20,14 +15,8 @@ from app.models.cell_3g import Cell3G
 from app.models.cell_4g import Cell4G
 from app.models.cell_5g import Cell5G
 
+
 def _safe_bool(v) -> bool:
-    """
-    Robustly convert any DB-returned value to Python bool.
-    Handles: None, real bool, int (0/1), and string ("false"/"true"/"0"/"1").
-    This is necessary because psycopg2 can return the PostgreSQL text
-    representation ("false"/"true") instead of a Python bool when the
-    server_default is a text expression and the ORM type-map is bypassed.
-    """
     if v is None:
         return False
     if isinstance(v, bool):
@@ -39,36 +28,12 @@ def _safe_bool(v) -> bool:
     return bool(v)
 
 
-
-
-def _normalize(v: Any) -> Any:
-    """
-    Normalize a value for diff comparison.
-    - None and "" are both treated as "empty" (None).
-    - False is kept as False (meaningful value, NOT treated as empty).
-    - 0 is kept as 0 (meaningful value).
-    """
-    if v is None or v == "":
-        return None
-    # Normalize boolean-like integers from DB (psycopg2 may return 0/1)
-    if v is True or v == 1 and not isinstance(v, bool):
-        return True
-    if v is False or v == 0 and not isinstance(v, bool):
-        # Only treat int 0 as False-equivalent, not string "0"
-        pass
-    return v
-
-
 def _normalize_for_diff(v: Any) -> Any:
-    """
-    Stricter normalization for diff: treat None/"" as None, booleans as canonical bool.
-    """
     if v is None or v == "":
         return None
     if isinstance(v, bool):
         return v
     if isinstance(v, int) and v in (0, 1):
-        # psycopg2 sometimes returns int for bool columns
         return bool(v)
     if isinstance(v, str) and v.lower() in ("true", "false"):
         return v.lower() == "true"
@@ -76,7 +41,6 @@ def _normalize_for_diff(v: Any) -> Any:
 
 
 def _diff(old: Dict, new: Dict) -> Dict:
-    """Return {field: [old_val, new_val]} for every field that changed."""
     result = {}
     all_keys = set(old) | set(new)
     for k in all_keys:
@@ -145,6 +109,7 @@ def _cell3g_snapshot(cell: Cell3G) -> Dict[str, Any]:
         "cell_vip": cell.cell_vip, "moran": cell.moran,
         "lat": cell.lat, "long": cell.long,
         "vung_phu_song": cell.vung_phu_song, "vendor": cell.vendor,
+        "rnc_name": cell.rnc_name,
         "do_cao_anten": cell.do_cao_anten, "azimuth": cell.azimuth,
         "m_tilt": cell.m_tilt, "e_tilt": cell.e_tilt,
         "total_tilt": cell.total_tilt,
@@ -287,6 +252,7 @@ def record_cell3g_revision(
         cell_vip=cell.cell_vip, moran=cell.moran,
         lat=cell.lat, long=cell.long,
         vung_phu_song=cell.vung_phu_song, vendor=cell.vendor,
+        rnc_name=cell.rnc_name,
         do_cao_anten=cell.do_cao_anten, azimuth=cell.azimuth,
         m_tilt=cell.m_tilt, e_tilt=cell.e_tilt, total_tilt=cell.total_tilt,
         loai_anten=cell.loai_anten, chung_anten=cell.chung_anten,

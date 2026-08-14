@@ -1,7 +1,6 @@
 """
 export.py – Excel export endpoints (Sites, Cells 3G/4G/5G, Antennas)
 Token can be passed as Bearer header OR ?token= query param.
-Multi-value filters: tinh, mien, vendor, mimo, vung_phu_song, phuong_xa accept repeated params.
 """
 from __future__ import annotations
 
@@ -175,7 +174,8 @@ def export_cells_3g(
         ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
         ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
         ("Cell VIP", 10), ("MORAN", 15), ("Lat", 14), ("Long", 14),
-        ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
+        ("Vung phu song", 15), ("Vendor", 14), ("RNC Name", 18),
+        ("Do cao anten", 15),
         ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
         ("Loai Anten", 30), ("Chung anten", 18), ("Baseband", 18), ("RF", 14),
         ("Cell ID", 14), ("UARFCN", 12), ("LAC", 10), ("RAC", 10),
@@ -190,7 +190,7 @@ def export_cells_3g(
             idx, c.mien, c.tinh, c.phuong_xa,
             c.site_name, c.site_name_old, c.cell_name, c.cell_name_old,
             c.cell_vip, c.moran, c.lat, c.long,
-            c.vung_phu_song, c.vendor, c.do_cao_anten,
+            c.vung_phu_song, c.vendor, c.rnc_name, c.do_cao_anten,
             c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
             c.loai_anten, c.chung_anten, c.baseband, c.rf,
             c.cell_id, c.uarfcn, c.lac, c.rac,
