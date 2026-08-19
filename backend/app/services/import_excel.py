@@ -366,7 +366,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 "Độ cao đỉnh cột anten (m) đến mặt đất",
                 "Do cao dinh cot anten", "do_cao_dinh_cot_anten"),
             "do_cao_cot_anten": _float_aware(row, excel_cols,
-                "Độ cao cột anten", "Do cao cot anten", "do_cao_cot_anten"),
+                "Độ cao cột anten", "Do cao cot anten", "do_cao_cot_anten", "Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình)"),
             "dia_chi": _v_aware(row, excel_cols, "Địa chỉ", "Dia chi", "dia_chi"),
             "ghi_chu":  _v_aware(row, excel_cols, "Ghi chú", "Ghi chu", "ghi_chu"),
         }
