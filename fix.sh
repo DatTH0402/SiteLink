@@ -1,56 +1,109 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-REVISION_PAGE="frontend/src/pages/revision/RevisionPage.tsx"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FRONTEND_DIR="$SCRIPT_DIR/frontend"
 
-# Verify file exists
-if [ ! -f "$REVISION_PAGE" ]; then
-  echo "ERROR: $REVISION_PAGE not found. Run this script from the project root (SiteLink/)."
-  exit 1
-fi
+FILE="$FRONTEND_DIR/src/api/antenna.ts"
 
-# Add rnc_name column to makeCell3GColumns() specific columns array.
-# We insert it after the 'Chung anten' entry in the specific[] array inside makeCell3GColumns().
-# The anchor line is the CPICH power entry (last item in 3G specific columns).
-# Strategy: find the line with 'CPICH power (dBm)' inside makeCell3GColumns and insert rnc_name before it.
+echo "Fixing $FILE ..."
 
-python3 - <<'PYEOF'
-import re, sys
+cat > "$FILE" << 'TS_EOF'
+import api from './client'
+import type { AntennaFull, CellDryRunResult, ImportResult } from '@/types'
 
-path = "frontend/src/pages/revision/RevisionPage.tsx"
+export type { CellDryRunResult as AntennaDryRunResult, ImportResult as AntennaImportResult }
 
-with open(path, "r", encoding="utf-8") as f:
-    content = f.read()
+// ── CRUD ──────────────────────────────────────────────────────────────────────
 
-# The rnc_name column definition to insert
-rnc_col = """    { title: 'RNC Name', key: 'rnc_name', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => r['rnc_name'] ? <Tag color="cyan">{String(r['rnc_name'])}</Tag> : <span>-</span> },
-"""
+export const getAntennas = (params?: Record<string, unknown>) =>
+  api.get<AntennaFull[]>('/api/v1/antennas/', { params }).then((r) => r.data)
 
-# Anchor: the CPICH power line inside makeCell3GColumns specific array
-anchor = "    { title: 'CPICH power (dBm)', key: 'cpich_power', width: 155,"
+export const getAntenna = (id: number) =>
+  api.get<AntennaFull>(`/api/v1/antennas/${id}`).then((r) => r.data)
 
-if "rnc_name" in content:
-    print("INFO: rnc_name already exists in RevisionPage.tsx – no change needed.")
-    sys.exit(0)
+export const createAntenna = (data: Partial<AntennaFull>) =>
+  api.post<AntennaFull>('/api/v1/antennas/', data).then((r) => r.data)
 
-if anchor not in content:
-    print("ERROR: anchor line not found in file. Please check the file content.")
-    sys.exit(1)
+export const updateAntenna = (id: number, data: Partial<AntennaFull>) =>
+  api.put<AntennaFull>(`/api/v1/antennas/${id}`, data).then((r) => r.data)
 
-# Insert rnc_name BEFORE the CPICH power line
-new_content = content.replace(anchor, rnc_col + anchor, 1)
+export const deleteAntenna = (id: number) =>
+  api.delete(`/api/v1/antennas/${id}`)
 
-with open(path, "w", encoding="utf-8") as f:
-    f.write(new_content)
+// ── Excel import ──────────────────────────────────────────────────────────────
 
-print("SUCCESS: rnc_name column added to makeCell3GColumns() in RevisionPage.tsx")
-PYEOF
+/**
+ * Dry-run: returns a preview without saving anything.
+ * Uses post<unknown> so the intermediate cast to Record<string, unknown>
+ * is always valid, avoiding TS2352.
+ */
+export const dryRunAntennaExcel = (file: File): Promise<CellDryRunResult> => {
+  const form = new FormData()
+  form.append('file', file)
+  return api
+    .post<unknown>('/api/v1/antennas/import-excel/dry-run', form)
+    .then((r) => {
+      const d = r.data as Record<string, unknown>
+      return {
+        to_create:         Number(d.to_create      ?? 0),
+        to_update:         Number(d.to_update      ?? 0),
+        sites_to_create:   0,
+        errors:            Number(d.errors         ?? 0),
+        error_details:     (d.error_details  as string[]) ?? [],
+        preview_create:    (d.preview_create as string[]) ?? [],
+        preview_update:    (d.preview_update as string[]) ?? [],
+        preview_new_sites: [],
+        dry_run:           true as const,
+      } satisfies CellDryRunResult
+    })
+}
 
+/**
+ * Real import: creates / updates antennas and returns counts.
+ */
+export const importAntennaExcel = (file: File): Promise<ImportResult> => {
+  const form = new FormData()
+  form.append('file', file)
+  return api
+    .post<ImportResult>('/api/v1/antennas/import-excel', form)
+    .then((r) => r.data)
+}
+
+// ── Spec file management ──────────────────────────────────────────────────────
+
+export const uploadAntennaSpecFile = (id: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api
+    .post<AntennaFull>(`/api/v1/antennas/${id}/spec-file`, form)
+    .then((r) => r.data)
+}
+
+export const deleteAntennaSpecFile = (id: number) =>
+  api.delete<AntennaFull>(`/api/v1/antennas/${id}/spec-file`).then((r) => r.data)
+
+export async function downloadAntennaSpecFile(
+  id: number,
+  fileName: string,
+): Promise<void> {
+  const token = localStorage.getItem('sl_token') || ''
+  const res   = await fetch(`/api/v1/antennas/${id}/spec-file/download`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`Download failed (${res.status})`)
+  const blob = await res.blob()
+  const link = document.createElement('a')
+  link.href     = URL.createObjectURL(blob)
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
+}
+TS_EOF
+
+echo "  ✓  fixed $FILE"
 echo ""
-echo "Done. Summary of change:"
-echo "  File   : $REVISION_PAGE"
-echo "  Added  : 'RNC Name' column (key: rnc_name, width: 130) in makeCell3GColumns()"
-echo "  Position: before 'CPICH power (dBm)' column in the 3G-specific columns array"
-echo ""
-echo "To apply: rebuild/restart the frontend dev server."
+echo "Now rebuild:"
+echo "  sudo docker compose up --build -d"

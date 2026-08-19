@@ -19,6 +19,25 @@ import { exportAntennas } from '@/api/export'
 import type { AntennaFull } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
 
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+/** Sort so "CHƯA XÁC ĐỊNH" entries float to the top. */
+function sortAntennas(list: AntennaFull[]): AntennaFull[] {
+  return [...list].sort((a, b) => {
+    const aU = a.name.toUpperCase()
+    const bU = b.name.toUpperCase()
+    const aFirst =
+      aU.includes('CHƯA XÁC ĐỊNH') || aU.includes('CHUA XAC DINH')
+    const bFirst =
+      bU.includes('CHƯA XÁC ĐỊNH') || bU.includes('CHUA XAC DINH')
+    if (aFirst && !bFirst) return -1
+    if (!aFirst && bFirst) return  1
+    return 0
+  })
+}
+
+// ── component ─────────────────────────────────────────────────────────────────
+
 export default function AntennaPage() {
   const [data,          setData]          = useState<AntennaFull[]>([])
   const [loading,       setLoading]       = useState(false)
@@ -33,27 +52,22 @@ export default function AntennaPage() {
   const [specDeleting,  setSpecDeleting]  = useState<number | null>(null)
   const [form] = Form.useForm()
 
+  // ── data loading ────────────────────────────────────────────────────────────
+
   const load = async () => {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { limit: 2000 }
       if (search) params.search = search
-      const raw = await getAntennas(params)
-      // Move "CHƯA XÁC ĐỊNH" to first position
-      const sorted = [...raw].sort((a, b) => {
-        const aU = a.name.toUpperCase()
-        const bU = b.name.toUpperCase()
-        const aFirst = aU.includes('CHƯA XÁC ĐỊNH') || aU.includes('CHUA XAC DINH')
-        const bFirst = bU.includes('CHƯA XÁC ĐỊNH') || bU.includes('CHUA XAC DINH')
-        if (aFirst) return -1
-        if (bFirst) return 1
-        return 0
-      })
-      setData(sorted)
-    } finally { setLoading(false) }
+      setData(sortAntennas(await getAntennas(params)))
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => { load() }, [search])
+
+  // ── export ──────────────────────────────────────────────────────────────────
 
   const handleExport = async () => {
     setExporting(true)
@@ -62,14 +76,31 @@ export default function AntennaPage() {
       message.success(`Xuất Excel thành công (${data.length} antennas)`)
     } catch (e: any) {
       message.error(e?.message || 'Xuất thất bại')
-    } finally { setExporting(false) }
+    } finally {
+      setExporting(false)
+    }
   }
 
-  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
-  const openEdit   = (r: AntennaFull) => {
-    setEditing(r); form.setFieldsValue(r); setModalOpen(true)
+  // ── modal helpers ───────────────────────────────────────────────────────────
+
+  const openCreate = () => {
+    setEditing(null)
+    form.resetFields()
+    setModalOpen(true)
   }
-  const openDetail = (r: AntennaFull) => { setSelected(r); setDetailOpen(true) }
+
+  const openEdit = (r: AntennaFull) => {
+    setEditing(r)
+    form.setFieldsValue(r)
+    setModalOpen(true)
+  }
+
+  const openDetail = (r: AntennaFull) => {
+    setSelected(r)
+    setDetailOpen(true)
+  }
+
+  // ── CRUD handlers ───────────────────────────────────────────────────────────
 
   const handleSave = async () => {
     const values = await form.validateFields()
@@ -93,6 +124,8 @@ export default function AntennaPage() {
     message.success('Đã xóa')
     load()
   }
+
+  // ── spec-file handlers ──────────────────────────────────────────────────────
 
   const handleSpecUpload = async (file: File, antenna: AntennaFull) => {
     if (file.type !== 'application/pdf') {
@@ -129,19 +162,23 @@ export default function AntennaPage() {
 
   const handleSpecDownload = async (antenna: AntennaFull) => {
     try {
-      await downloadAntennaSpecFile(antenna.id, antenna.spec_file_name || 'spec.pdf')
+      await downloadAntennaSpecFile(
+        antenna.id,
+        antenna.spec_file_name || 'spec.pdf',
+      )
     } catch (e: any) {
       message.error(e?.message || 'Tải xuống thất bại')
     }
   }
 
+  // ── table columns ───────────────────────────────────────────────────────────
+
   const columns: ColumnsType<AntennaFull> = [
     {
-      // ── Wider action column so buttons are never clipped ─────────────────
       title: 'Hành động',
       key: 'action',
       fixed: 'left',
-      width: 160,                     // was 110 – now 160
+      width: 160,
       render: (_: unknown, r: AntennaFull) => (
         <Space size={4} wrap>
           <Button size="small" onClick={() => openDetail(r)}>Chi tiết</Button>
@@ -197,11 +234,12 @@ export default function AntennaPage() {
                     : r.spec_file_name}
                 </Button>
               </Tooltip>
-              <Popconfirm title="Xóa file spec này?" onConfirm={() => handleSpecDelete(r)}>
+              <Popconfirm
+                title="Xóa file spec này?"
+                onConfirm={() => handleSpecDelete(r)}
+              >
                 <Button
-                  size="small"
-                  danger
-                  icon={<DeleteFilled />}
+                  size="small" danger icon={<DeleteFilled />}
                   loading={specDeleting === r.id}
                 />
               </Popconfirm>
@@ -229,8 +267,11 @@ export default function AntennaPage() {
 
   const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
+  // ── render ──────────────────────────────────────────────────────────────────
+
   return (
     <div>
+      {/* ── page header ── */}
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>
           Thư viện Antenna
@@ -246,6 +287,7 @@ export default function AntennaPage() {
               Xuất Excel ({data.length})
             </Button>
           </Tooltip>
+          {/* ── Import button – now opens the full DryRunModal ── */}
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>
             Import Excel
           </Button>
@@ -255,7 +297,7 @@ export default function AntennaPage() {
         </Space>
       </Row>
 
-      {/* ── Filter bar: search only (5G AAU filter removed) ── */}
+      {/* ── filter bar ── */}
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="320px">
           <Input
@@ -274,6 +316,7 @@ export default function AntennaPage() {
         </Col>
       </Row>
 
+      {/* ── main table ── */}
       <Table
         columns={columns}
         dataSource={data}
@@ -312,26 +355,32 @@ export default function AntennaPage() {
       >
         {selected && (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            {([
-              ['5G AAU',         selected.is_5g_aau ? 'Có ✓' : 'Không'],
-              ['Band',           selected.band],
-              ['No of Ports',    selected.no_of_ports],
-              ['No of Beam',     selected.no_of_beam],
-              ['Horizontal BW',  selected.horizontal_bw],
-              ['Vertical BW',    selected.vertical_bw],
-              ['Gain',           selected.gain],
-              ['Etilt',          selected.etilt],
-              ['H (mm)',         selected.h],
-              ['W (mm)',         selected.w],
-              ['D (mm)',         selected.d],
-              ['Weight',         selected.weight],
-              ['Connector type', selected.connector_type],
-              ['Specification',  selected.spec_file_name || '(chưa đính kèm)'],
-              ['Ghi chu',        selected.ghi_chu],
-            ] as [string, unknown][]).map(([label, val]) => (
+            {(
+              [
+                ['5G AAU',         selected.is_5g_aau ? 'Có ✓' : 'Không'],
+                ['Band',           selected.band],
+                ['No of Ports',    selected.no_of_ports],
+                ['No of Beam',     selected.no_of_beam],
+                ['Horizontal BW',  selected.horizontal_bw],
+                ['Vertical BW',    selected.vertical_bw],
+                ['Gain',           selected.gain],
+                ['Etilt',          selected.etilt],
+                ['H (mm)',         selected.h],
+                ['W (mm)',         selected.w],
+                ['D (mm)',         selected.d],
+                ['Weight',         selected.weight],
+                ['Connector type', selected.connector_type],
+                ['Specification',  selected.spec_file_name || '(chưa đính kèm)'],
+                ['Ghi chu',        selected.ghi_chu],
+              ] as [string, unknown][]
+            ).map(([label, val]) => (
               <tr key={label} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                <td style={{ padding: '6px 12px', fontWeight: 600,
-                             width: 160, color: '#666' }}>{label}</td>
+                <td style={{
+                  padding: '6px 12px', fontWeight: 600,
+                  width: 160, color: '#666',
+                }}>
+                  {label}
+                </td>
                 <td style={{ padding: '6px 12px' }}>
                   {label === 'Specification' && selected.spec_file_name ? (
                     <Button
@@ -443,6 +492,7 @@ export default function AntennaPage() {
                 <Input.TextArea rows={2} />
               </Form.Item>
             </Col>
+
             {/* Spec file – only shown when editing an existing record */}
             {editing && (
               <Col span={24}>
@@ -452,7 +502,10 @@ export default function AntennaPage() {
                       <Button
                         icon={<FilePdfOutlined style={{ color: '#f5222d' }} />}
                         onClick={() =>
-                          downloadAntennaSpecFile(editing.id, editing.spec_file_name!)
+                          downloadAntennaSpecFile(
+                            editing.id,
+                            editing.spec_file_name!,
+                          )
                         }
                       >
                         {editing.spec_file_name}
@@ -463,7 +516,8 @@ export default function AntennaPage() {
                           const updated = await deleteAntennaSpecFile(editing.id)
                           setEditing(updated)
                           setData((prev) =>
-                            prev.map((a) => (a.id === updated.id ? updated : a)))
+                            prev.map((a) => (a.id === updated.id ? updated : a)),
+                          )
                         }}
                       >
                         <Button danger size="small">Xóa file</Button>
@@ -474,10 +528,13 @@ export default function AntennaPage() {
                       accept=".pdf"
                       showUploadList={false}
                       beforeUpload={async (file) => {
-                        const updated = await uploadAntennaSpecFile(editing.id, file)
+                        const updated = await uploadAntennaSpecFile(
+                          editing.id, file,
+                        )
                         setEditing(updated)
                         setData((prev) =>
-                          prev.map((a) => (a.id === updated.id ? updated : a)))
+                          prev.map((a) => (a.id === updated.id ? updated : a)),
+                        )
                         message.success('Tải lên thành công')
                         return false
                       }}
@@ -494,11 +551,12 @@ export default function AntennaPage() {
         </Form>
       </Modal>
 
+      {/* ── DryRunModal – full import wizard with template download ── */}
       <DryRunModal
         open={dryRunOpen}
         onClose={() => setDryRunOpen(false)}
         title="Import Antenna từ Excel"
-        templateKey={undefined}
+        templateKey="antenna"
         dryRunFn={dryRunAntennaExcel}
         importFn={importAntennaExcel}
         onSuccess={load}

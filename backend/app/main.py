@@ -123,6 +123,7 @@ def _generate_templates():
     required = [
         "template_site.xlsx", "template_cell_3g.xlsx",
         "template_cell_4g.xlsx", "template_cell_5g.xlsx",
+        "template_antenna.xlsx",
     ]
     missing = [f for f in required if not os.path.exists(os.path.join(template_dir, f))]
     if missing:
@@ -139,6 +140,8 @@ def _generate_templates():
                 mod.create_cell3g_template()
                 mod.create_cell4g_template()
                 mod.create_cell5g_template()
+                if hasattr(mod, 'create_antenna_template'):
+                    mod.create_antenna_template()
                 print("[startup] Excel templates generated.")
         except Exception as exc:
             print(f"[startup] Warning: could not generate templates: {exc}")

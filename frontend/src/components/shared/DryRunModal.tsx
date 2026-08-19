@@ -35,7 +35,7 @@ export interface ImportResultData {
   errors: string[]
 }
 
-export type TemplateKey = 'site' | 'cell-3g' | 'cell-4g' | 'cell-5g'
+export type TemplateKey = 'site' | 'cell-3g' | 'cell-4g' | 'cell-5g' | 'antenna'
 
 interface Props {
   open:         boolean
@@ -52,6 +52,7 @@ const TEMPLATE_LABELS: Record<TemplateKey, string> = {
   'cell-3g': 'Template_Cell_3G.xlsx',
   'cell-4g': 'Template_Cell_4G.xlsx',
   'cell-5g': 'Template_Cell_5G.xlsx',
+  'antenna': 'Template_Antenna.xlsx',
 }
 
 function downloadTemplate(key: TemplateKey) {

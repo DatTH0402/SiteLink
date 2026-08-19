@@ -1,5 +1,9 @@
 import api from './client'
-import type { AntennaFull } from '@/types'
+import type { AntennaFull, CellDryRunResult, ImportResult } from '@/types'
+
+export type { CellDryRunResult as AntennaDryRunResult, ImportResult as AntennaImportResult }
+
+// ── CRUD ──────────────────────────────────────────────────────────────────────
 
 export const getAntennas = (params?: Record<string, unknown>) =>
   api.get<AntennaFull[]>('/api/v1/antennas/', { params }).then((r) => r.data)
@@ -16,24 +20,47 @@ export const updateAntenna = (id: number, data: Partial<AntennaFull>) =>
 export const deleteAntenna = (id: number) =>
   api.delete(`/api/v1/antennas/${id}`)
 
-export const dryRunAntennaExcel = (file: File) => {
+// ── Excel import ──────────────────────────────────────────────────────────────
+
+/**
+ * Dry-run: returns a preview without saving anything.
+ * Uses post<unknown> so the intermediate cast to Record<string, unknown>
+ * is always valid, avoiding TS2352.
+ */
+export const dryRunAntennaExcel = (file: File): Promise<CellDryRunResult> => {
   const form = new FormData()
   form.append('file', file)
   return api
-    .post('/api/v1/antennas/import-excel?dry_run=true', form)
-    .then((r) => r.data)
-}
-
-export const importAntennaExcel = (file: File) => {
-  const form = new FormData()
-  form.append('file', file)
-  return api.post('/api/v1/antennas/import-excel', form).then((r) => r.data)
+    .post<unknown>('/api/v1/antennas/import-excel/dry-run', form)
+    .then((r) => {
+      const d = r.data as Record<string, unknown>
+      return {
+        to_create:         Number(d.to_create      ?? 0),
+        to_update:         Number(d.to_update      ?? 0),
+        sites_to_create:   0,
+        errors:            Number(d.errors         ?? 0),
+        error_details:     (d.error_details  as string[]) ?? [],
+        preview_create:    (d.preview_create as string[]) ?? [],
+        preview_update:    (d.preview_update as string[]) ?? [],
+        preview_new_sites: [],
+        dry_run:           true as const,
+      } satisfies CellDryRunResult
+    })
 }
 
 /**
- * Upload a PDF spec file for an antenna.
- * Returns the updated AntennaFull object.
+ * Real import: creates / updates antennas and returns counts.
  */
+export const importAntennaExcel = (file: File): Promise<ImportResult> => {
+  const form = new FormData()
+  form.append('file', file)
+  return api
+    .post<ImportResult>('/api/v1/antennas/import-excel', form)
+    .then((r) => r.data)
+}
+
+// ── Spec file management ──────────────────────────────────────────────────────
+
 export const uploadAntennaSpecFile = (id: number, file: File) => {
   const form = new FormData()
   form.append('file', file)
@@ -42,15 +69,9 @@ export const uploadAntennaSpecFile = (id: number, file: File) => {
     .then((r) => r.data)
 }
 
-/**
- * Remove the spec file from an antenna.
- */
 export const deleteAntennaSpecFile = (id: number) =>
   api.delete<AntennaFull>(`/api/v1/antennas/${id}/spec-file`).then((r) => r.data)
 
-/**
- * Download the spec file (opens as Blob → triggers browser download).
- */
 export async function downloadAntennaSpecFile(
   id: number,
   fileName: string,
