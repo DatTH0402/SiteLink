@@ -15,6 +15,7 @@ from app.api.routes import templates as templates_router
 from app.api.routes import export    as export_router
 from app.api.routes import revision  as revision_router
 from app.api.routes import rnc       as rnc_router
+from app.api.routes import sync       as sync_router
 
 Base.metadata.create_all(bind=engine)
 
@@ -190,6 +191,7 @@ app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=
 app.include_router(export_router.router,    prefix=f"{PREFIX}/export",     tags=["Export"])
 app.include_router(revision_router.router,  prefix=f"{PREFIX}/revisions",  tags=["Revisions"])
 app.include_router(rnc_router.router,       prefix=f"{PREFIX}/rnc",        tags=["RNC"])
+app.include_router(sync_router.router,         prefix=f"{PREFIX}/sync",       tags=["Sync"])
 
 
 @app.get("/health")

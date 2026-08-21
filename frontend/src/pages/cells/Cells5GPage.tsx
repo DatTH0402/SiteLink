@@ -18,6 +18,8 @@ import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+import { useCellSync } from '@/hooks/useCellSync'
+
 
 export default function Cells5GPage() {
   const [data,         setData]         = useState<Cell5G[]>([])
@@ -97,6 +99,8 @@ export default function Cells5GPage() {
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
+  const { syncAfterCreate, syncAfterImport } = useCellSync('5g', load)
+
 
   const clearFilters = () => {
     setSearch(''); setCellNameOld(''); setMien([]); setTinh([]); setPhuongXa([]); setVendor([])
@@ -114,7 +118,11 @@ export default function Cells5GPage() {
     const values = await form.validateFields()
     try {
       if (editing) { await cells5gApi.update(editing.id, values); message.success('Cập nhật thành công') }
-      else         { await cells5gApi.create(values);             message.success('Tạo cell thành công') }
+      else         {
+        const created = await cells5gApi.create(values)
+        message.success('Tạo cell thành công')
+        syncAfterCreate([created])
+      }
       setModalOpen(false); load()
     } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
@@ -364,7 +372,16 @@ export default function Cells5GPage() {
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 5G từ Excel" templateKey="cell-5g"
-        dryRunFn={cells5gApi.dryRunExcel} importFn={cells5gApi.importExcel} onSuccess={load} />
+        dryRunFn={cells5gApi.dryRunExcel}
+        importFn={async (file) => {
+          // Capture timestamp BEFORE import so /recent query is precise
+          const importStarted = new Date().toISOString()
+          const result = await cells5gApi.importExcel(file)
+          // Trigger sync with exact start timestamp — finds ALL created cells
+          syncAfterImport(result, 'cells_5g', importStarted).catch(() => { load() })
+          return result
+        }}
+        onSuccess={load} />
     </div>
   )
 }

@@ -19,6 +19,8 @@ import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+import { useCellSync } from '@/hooks/useCellSync'
+
 
 const CHUNG_ANTEN_3G = ['3G', '3G/4G', '2G/3G/4G', '3G/4G/5G', '3G/5G']
 
@@ -96,6 +98,8 @@ export default function Cells3GPage() {
       setRncOptions([])
     }
   }
+  const { syncAfterCreate, syncAfterImport } = useCellSync('3g', load)
+
 
   // When opening edit modal, populate RNC options based on existing vendor
   const openEdit = (r: Cell3G) => {
@@ -145,7 +149,11 @@ export default function Cells3GPage() {
     const values = await form.validateFields()
     try {
       if (editing) { await cells3gApi.update(editing.id, values); message.success('Cập nhật thành công') }
-      else         { await cells3gApi.create(values);             message.success('Tạo cell thành công') }
+      else         {
+        const created = await cells3gApi.create(values)
+        message.success('Tạo cell thành công')
+        syncAfterCreate([created])
+      }
       setModalOpen(false); load()
     } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
@@ -490,7 +498,16 @@ export default function Cells3GPage() {
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 3G từ Excel" templateKey="cell-3g"
-        dryRunFn={cells3gApi.dryRunExcel} importFn={cells3gApi.importExcel} onSuccess={load} />
+        dryRunFn={cells3gApi.dryRunExcel}
+        importFn={async (file) => {
+          // Capture timestamp BEFORE import so /recent query is precise
+          const importStarted = new Date().toISOString()
+          const result = await cells3gApi.importExcel(file)
+          // Trigger sync with exact start timestamp — finds ALL created cells
+          syncAfterImport(result, 'cells_3g', importStarted).catch(() => { load() })
+          return result
+        }}
+        onSuccess={load} />
     </div>
   )
 }

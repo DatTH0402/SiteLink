@@ -18,6 +18,8 @@ import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
 import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+import { useCellSync } from '@/hooks/useCellSync'
+
 
 const CHUNG_ANTEN_4G = ['4G', '2G/4G', '3G/4G', '2G/3G/4G', '4G/5G']
 
@@ -99,6 +101,8 @@ export default function Cells4GPage() {
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
+  const { syncAfterCreate, syncAfterImport } = useCellSync('4g', load)
+
 
   const clearFilters = () => {
     setSearch(''); setCellNameOld(''); setMien([]); setTinh([]); setPhuongXa([]); setVendor([])
@@ -116,7 +120,11 @@ export default function Cells4GPage() {
     const values = await form.validateFields()
     try {
       if (editing) { await cells4gApi.update(editing.id, values); message.success('Cập nhật thành công') }
-      else         { await cells4gApi.create(values);             message.success('Tạo cell thành công') }
+      else         {
+        const created = await cells4gApi.create(values)
+        message.success('Tạo cell thành công')
+        syncAfterCreate([created])
+      }
       setModalOpen(false); load()
     } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
   }
@@ -362,7 +370,16 @@ export default function Cells4GPage() {
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
         title="Import Cell 4G từ Excel" templateKey="cell-4g"
-        dryRunFn={cells4gApi.dryRunExcel} importFn={cells4gApi.importExcel} onSuccess={load} />
+        dryRunFn={cells4gApi.dryRunExcel}
+        importFn={async (file) => {
+          // Capture timestamp BEFORE import so /recent query is precise
+          const importStarted = new Date().toISOString()
+          const result = await cells4gApi.importExcel(file)
+          // Trigger sync with exact start timestamp — finds ALL created cells
+          syncAfterImport(result, 'cells_4g', importStarted).catch(() => { load() })
+          return result
+        }}
+        onSuccess={load} />
     </div>
   )
 }
