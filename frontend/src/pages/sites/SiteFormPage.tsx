@@ -202,12 +202,12 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_dinh_cot_anten" label="Độ cao đỉnh cột anten (m)">
+              <Form.Item name="do_cao_dinh_cot_anten" label="Độ cao đỉnh cột anten đến mặt đất (m)">
                 <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_cot_anten" label="Độ cao cột anten mặt đất (m)">
+              <Form.Item name="do_cao_cot_anten" label="Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình) (m)">
                 <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
