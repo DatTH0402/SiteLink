@@ -17,7 +17,7 @@ import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
-import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator } from '@/utils/validators'
 import { useCellSync } from '@/hooks/useCellSync'
 
 
@@ -323,13 +323,30 @@ export default function Cells5GPage() {
             <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
               <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="vendor" label="Vendor">
-              <Select allowClear>{['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-            </Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="vendor" label="Vendor *"
+                rules={[{ required: true, message: 'Vui lòng chọn Vendor' }]}>
+                <Select allowClear>
+                  {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
+                    <Select.Option key={v} value={v}>{v}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col span={8}><Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}><InputNumber style={{ width: '100%' }} min={0} max={359} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="m_tilt" label="M-tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="e_tilt" label="E-Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="m_tilt" label="M-tilt *"
+                rules={[{ required: true, message: 'Vui lòng nhập M-tilt' }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="e_tilt" label="E-Tilt *"
+                rules={[{ required: true, message: 'Vui lòng nhập E-Tilt' }]}>
+                <InputNumber style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="total_tilt" label="Total Tilt"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
               <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>

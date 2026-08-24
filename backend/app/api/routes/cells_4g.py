@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.cell_4g import Cell4G
 from app.models.site import Site
-from app.schemas.cell import Cell4GCreate, Cell4GUpdate, Cell4GRead
+from app.schemas.cell import Cell4GCreate, Cell4GUpdate, Cell4GRead, CellCreate, CellUpdate
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
@@ -154,6 +154,7 @@ async def dry_run_excel(
         "preview_update": [u["anchor"] for u in result["to_update"][:5]],
         "preview_new_sites": [r["site_name"] for r in result["sites_to_create"][:5]],
         "dry_run": True,
+        "has_fatal_errors": len(result["errors"]) > 0 and len(result["to_create"]) + len(result["to_update"]) == 0,
     }
 
 
@@ -167,6 +168,18 @@ async def import_excel(
     except Exception as e: raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
     errors  = list(result["errors"])
     created, updated, skipped, sites_auto_created = 0, 0, 0, 0
+
+    # Block import if there are fatal validation errors and nothing valid to import
+    if errors and len(result["to_create"]) == 0 and len(result["to_update"]) == 0:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "File Excel có lỗi dữ liệu nghiêm trọng, không thể import. "
+                           "Vui lòng sửa các lỗi sau và thử lại.",
+                "errors": errors[:50],
+            }
+        )
     for rec in result["to_create"]:
         try:
             site_id = _ensure_site(db, rec, current_user)

@@ -9,6 +9,9 @@ import { getSite, createSite, updateSite } from '@/api/sites'
 import { getDropdown, getTinhList, getTinhXaPhuong } from '@/api/report'
 import type { TinhItem, PhuongXaItem } from '@/types'
 
+const VN_LAT_MIN = 8.33,  VN_LAT_MAX = 23.39
+const VN_LON_MIN = 102.14, VN_LON_MAX = 109.47
+
 export default function SiteFormPage() {
   const [form]   = Form.useForm()
   const navigate = useNavigate()
@@ -89,7 +92,7 @@ export default function SiteFormPage() {
           <Row gutter={16}>
             <Col span={4}>
               <Form.Item name="mien" label="Miền">
-                <Select placeholder="Chon mien" allowClear>
+                <Select placeholder="Chọn miền" allowClear>
                   {['MB', 'MT', 'MN'].map((m) => (
                     <Select.Option key={m} value={m}>{m}</Select.Option>
                   ))}
@@ -144,7 +147,7 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="site_name" label="Site name"
+              <Form.Item name="site_name" label="Site name *"
                          rules={[{ required: true, message: 'Vui lòng nhập site name' }]}>
                 <Input />
               </Form.Item>
@@ -170,15 +173,20 @@ export default function SiteFormPage() {
             <Col span={6}>
               <Form.Item
                 name="lat"
-                label="Latitude"
-                rules={[{
-                  validator: (_: unknown, value: number) => {
-                    if (value === undefined || value === null) return Promise.resolve()
-                    if (value < 8.33 || value > 23.39)
-                      return Promise.reject('Latitude phải trong khoảng 8.33 – 23.39 (Việt Nam)')
-                    return Promise.resolve()
+                label="Latitude *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Latitude' },
+                  {
+                    validator: (_: unknown, value: number) => {
+                      if (value === undefined || value === null) return Promise.resolve()
+                      if (value < VN_LAT_MIN || value > VN_LAT_MAX)
+                        return Promise.reject(
+                          `Latitude phải trong khoảng ${VN_LAT_MIN} – ${VN_LAT_MAX} (Việt Nam)`
+                        )
+                      return Promise.resolve()
+                    }
                   }
-                }]}
+                ]}
               >
                 <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
                   placeholder="8.33 – 23.39" />
@@ -187,28 +195,64 @@ export default function SiteFormPage() {
             <Col span={6}>
               <Form.Item
                 name="long"
-                label="Longitude"
-                rules={[{
-                  validator: (_: unknown, value: number) => {
-                    if (value === undefined || value === null) return Promise.resolve()
-                    if (value < 102.14 || value > 109.47)
-                      return Promise.reject('Longitude phải trong khoảng 102.14 – 109.47 (Việt Nam)')
-                    return Promise.resolve()
+                label="Longitude *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Longitude' },
+                  {
+                    validator: (_: unknown, value: number) => {
+                      if (value === undefined || value === null) return Promise.resolve()
+                      if (value < VN_LON_MIN || value > VN_LON_MAX)
+                        return Promise.reject(
+                          `Longitude phải trong khoảng ${VN_LON_MIN} – ${VN_LON_MAX} (Việt Nam)`
+                        )
+                      return Promise.resolve()
+                    }
                   }
-                }]}
+                ]}
               >
                 <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
                   placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_dinh_cot_anten" label="Độ cao đỉnh cột anten đến mặt đất (m)">
+              <Form.Item
+                name="do_cao_dinh_cot_anten"
+                label="Độ cao đỉnh cột anten tới mặt đất (m) *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập độ cao đỉnh cột anten' },
+                  {
+                    validator: (_: unknown, value: number) => {
+                      if (value === undefined || value === null) return Promise.resolve()
+                      if (value < 0)
+                        return Promise.reject('Độ cao phải >= 0')
+                      return Promise.resolve()
+                    }
+                  }
+                ]}
+              >
                 <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="do_cao_cot_anten" label="Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình) (m)">
+              <Form.Item
+                name="do_cao_cot_anten"
+                label="Độ cao cột anten (m)"
+              >
                 <InputNumber style={{ width: '100%' }} min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Card>
+
+        <Card title="Địa chỉ" style={{ marginBottom: 16 }}>
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item
+                name="dia_chi"
+                label="Địa chỉ *"
+                rules={[{ required: true, message: 'Vui lòng nhập địa chỉ' }]}
+              >
+                <Input.TextArea rows={2} placeholder="Nhập địa chỉ đầy đủ của trạm..." />
               </Form.Item>
             </Col>
           </Row>
@@ -262,11 +306,6 @@ export default function SiteFormPage() {
 
         <Card title="Thông tin khác" style={{ marginBottom: 16 }}>
           <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="dia_chi" label="Địa chỉ">
-                <Input.TextArea rows={2} />
-              </Form.Item>
-            </Col>
             <Col span={12}>
               <Form.Item name="ghi_chu" label="Ghi chú">
                 <Input.TextArea rows={2} />

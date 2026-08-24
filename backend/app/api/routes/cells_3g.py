@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.cell_3g import Cell3G
 from app.models.site import Site
-from app.schemas.cell import Cell3GCreate, Cell3GUpdate, Cell3GRead
+from app.schemas.cell import Cell3GCreate, Cell3GUpdate, Cell3GRead, CellCreate, CellUpdate
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
 from app.models.user import User
@@ -193,6 +193,18 @@ async def import_excel(
 
     errors  = list(result["errors"])
     created, updated, skipped, sites_auto_created = 0, 0, 0, 0
+
+    # Block import if there are fatal validation errors and nothing valid to import
+    if errors and len(result["to_create"]) == 0 and len(result["to_update"]) == 0:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "File Excel có lỗi dữ liệu nghiêm trọng, không thể import. "
+                           "Vui lòng sửa các lỗi sau và thử lại.",
+                "errors": errors[:50],
+            }
+        )
 
     for rec in result["to_create"]:
         try:

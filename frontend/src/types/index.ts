@@ -10,14 +10,14 @@ export interface User {
 
 export interface Site {
   id: number
-  mien: string
-  tinh: string
+  mien?: string
+  tinh?: string
   phuong_xa?: string
   site_name_cu?: string
   site_name: string
   site_vip?: string
-  lat: number
-  long: number
+  lat: number        // required
+  long: number       // required
   tram_2g: boolean
   tram_3g: boolean
   tram_4g: boolean
@@ -30,10 +30,10 @@ export interface Site {
   moran_3g?: string
   moran_4g?: string
   moran_5g?: string
-  ma_ptm: string
-  do_cao_dinh_cot_anten?: number
+  ma_ptm?: string
+  do_cao_dinh_cot_anten: number  // required
   do_cao_cot_anten?: number
-  dia_chi?: string
+  dia_chi: string                // required
   ghi_chu?: string
 }
 
@@ -49,14 +49,14 @@ export interface CellBase {
   cell_name_old?: string
   cell_vip?: string
   moran?: string
-  lat?: number
-  long?: number
+  lat: number        // required
+  long: number       // required
   vung_phu_song?: string
-  vendor?: string
-  do_cao_anten?: number
-  azimuth?: number
-  m_tilt?: number
-  e_tilt?: number
+  vendor: string     // required
+  do_cao_anten: number  // required
+  azimuth: number    // required
+  m_tilt: number     // required
+  e_tilt: number     // required
   total_tilt?: number
   loai_anten?: string
   baseband?: string
@@ -182,6 +182,7 @@ export interface SiteDryRunResult {
   preview_create: string[]
   preview_update: string[]
   dry_run: true
+  has_fatal_errors?: boolean
 }
 
 export interface CellDryRunResult {
@@ -194,6 +195,7 @@ export interface CellDryRunResult {
   preview_update: string[]
   preview_new_sites: string[]
   dry_run: true
+  has_fatal_errors?: boolean
 }
 
 export interface ImportResult {

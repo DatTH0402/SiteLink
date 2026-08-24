@@ -61,12 +61,16 @@ function makeCellApi<T>(tech: string) {
         .then((r) => r.data)
     },
 
-    importExcel: (file: File) => {
+    importExcel: async (file: File) => {
       const form = new FormData()
       form.append('file', file)
-      return api
-        .post<ImportResult>(`/api/v1/cells-${tech}/import-excel`, form)
-        .then((r) => r.data)
+      try {
+        const r = await api.post<ImportResult>(`/api/v1/cells-${tech}/import-excel`, form)
+        return r.data
+      } catch (err: any) {
+        // Re-throw so DryRunModal can handle structured 422 errors
+        throw err
+      }
     },
   }
 }

@@ -122,14 +122,16 @@ async def dry_run_sites_excel(
     to_update = result["to_update"]
     errors    = result["errors"]
 
+    has_fatal = len(errors) > 0 and len(to_create) + len(to_update) == 0
     return {
-        "to_create":      len(to_create),
-        "to_update":      len(to_update),
-        "errors":         len(errors),
-        "error_details":  errors[:50],
-        "preview_create": [r["site_name"] for r in to_create[:5]],
-        "preview_update": [u["anchor"]    for u in to_update[:5]],
-        "dry_run":        True,
+        "to_create":        len(to_create),
+        "to_update":        len(to_update),
+        "errors":           len(errors),
+        "error_details":    errors[:50],
+        "preview_create":   [r["site_name"] for r in to_create[:5]],
+        "preview_update":   [u["anchor"]    for u in to_update[:5]],
+        "dry_run":          True,
+        "has_fatal_errors": has_fatal,
     }
 
 
@@ -149,6 +151,17 @@ async def import_sites_excel(
     to_update = result["to_update"]
     errors    = list(result["errors"])
     created, updated, skipped = 0, 0, 0
+
+    # Block import if there are fatal validation errors and nothing valid to import
+    if errors and len(to_create) == 0 and len(to_update) == 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "File Excel có lỗi dữ liệu nghiêm trọng, không thể import. "
+                           "Vui lòng sửa các lỗi sau và thử lại.",
+                "errors": errors[:50],
+            }
+        )
 
     for rec in to_create:
         try:

@@ -18,7 +18,7 @@ import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
-import { latValidator, lonValidator, azimuthValidator } from '@/utils/validators'
+import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator } from '@/utils/validators'
 import { useCellSync } from '@/hooks/useCellSync'
 
 
@@ -374,13 +374,21 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} />
+              <Form.Item name="lat" label="Lat *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Latitude' },
+                  { validator: latValidator },
+                ]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="8.33 – 23.39" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}>
-                <InputNumber style={{ width: '100%' }} precision={5} />
+              <Form.Item name="long" label="Long *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Longitude' },
+                  { validator: lonValidator },
+                ]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -393,7 +401,8 @@ export default function Cells3GPage() {
             </Col>
             {/* Vendor + RNC Name: cascading like province/ward */}
             <Col span={8}>
-              <Form.Item name="vendor" label="Vendor">
+              <Form.Item name="vendor" label="Vendor *"
+                rules={[{ required: true, message: 'Vui lòng chọn Vendor' }]}>
                 <Select allowClear onChange={handleVendorChange}>
                   {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
                     <Select.Option key={v} value={v}>{v}</Select.Option>
@@ -425,12 +434,26 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="do_cao_anten" label="Độ cao anten (m)">
-                <InputNumber style={{ width: '100%' }} />
+              <Form.Item name="do_cao_anten" label="Độ cao anten (m) *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập độ cao anten' },
+                  {
+                    validator: (_: unknown, value: number) => {
+                      if (value === undefined || value === null) return Promise.resolve()
+                      if (value < 0) return Promise.reject('Độ cao anten phải >= 0')
+                      return Promise.resolve()
+                    }
+                  }
+                ]}>
+                <InputNumber style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0–359)" rules={[{ validator: azimuthValidator }]}>
+              <Form.Item name="azimuth" label="Azimuth (0–359) *"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Azimuth' },
+                  { validator: azimuthValidator },
+                ]}>
                 <InputNumber style={{ width: '100%' }} min={0} max={359} />
               </Form.Item>
             </Col>

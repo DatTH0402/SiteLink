@@ -20,7 +20,6 @@ from app.models.user import User
 
 router = APIRouter()
 
-# ── upload directory ──────────────────────────────────────────────────────────
 UPLOAD_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "uploads", "antenna_specs")
 )
@@ -29,8 +28,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_MIME   = {"application/pdf"}
 MAX_FILE_SIZE  = 20 * 1024 * 1024   # 20 MB
 
+# Allowed values for antenna dropdowns
+ALLOWED_BANDS = None  # free-form text field, no strict list
 
-# ── tiny helpers ──────────────────────────────────────────────────────────────
 def _or_404(db: Session, antenna_id: int) -> Antenna:
     obj = db.query(Antenna).filter(Antenna.id == antenna_id).first()
     if not obj:
@@ -48,21 +48,16 @@ def _delete_spec_file(antenna: Antenna) -> None:
             pass
 
 
-# ── Excel parser (shared by dry-run and real import) ─────────────────────────
-
 def _parse_antenna_excel(content: bytes, db: Session):
     """
-    Parse the antenna Excel file.
-
-    Returns a dict:
+    Parse the antenna Excel file with full validation.
+    Returns:
         {
-            "to_create": [ {rec}, ... ],
-            "to_update": [ {"existing": <Antenna>, "rec": {rec}}, ... ],
-            "errors":    [ "Row N: …", ... ],
+            "to_create": [...],
+            "to_update": [...],
+            "errors":    [...],
         }
-
-    Flexible column aliases match the template column names and the
-    existing import_antenna_excel() parser.
+    Rows with fatal errors are skipped and reported.
     """
     try:
         df = pd.read_excel(io.BytesIO(content), dtype=str)
@@ -71,7 +66,6 @@ def _parse_antenna_excel(content: bytes, db: Session):
     except Exception as exc:
         raise ValueError(f"Cannot read Excel file: {exc}") from exc
 
-    # ── value extractors ──────────────────────────────────────────────────────
     def _v(row, *keys):
         for k in keys:
             val = row.get(k)
@@ -94,25 +88,90 @@ def _parse_antenna_excel(content: bytes, db: Session):
             return False
         return str(v).strip().lower() in ("x", "true", "yes", "1", "co", "có")
 
+    def _positive_int(row, field_label, row_num, label, errors, *keys):
+        v = _v(row, *keys)
+        if v is None:
+            return None
+        try:
+            val = int(float(v))
+        except (ValueError, TypeError):
+            errors.append(
+                f"Row {row_num} ({label}): Giá trị '{v}' không phải số nguyên hợp lệ "
+                f"cho trường '{field_label}'."
+            )
+            return None
+        if val < 0:
+            errors.append(
+                f"Row {row_num} ({label}): Trường '{field_label}' phải >= 0 "
+                f"(giá trị hiện tại: {val})."
+            )
+            return None
+        return val
+
     to_create: list = []
     to_update: list = []
     errors:    list = []
 
     for i, row in df.iterrows():
         row_num = int(str(i)) + 2
+        row_errors: list = []
 
         name = _v(row,
                   "Name", "name", "NAME",
                   "Ten anten", "Ten Anten", "Antenna Name")
         if not name:
-            errors.append(f"Row {row_num}: 'Name' column is empty – skipped")
+            errors.append(
+                f"Row {row_num}: Trường bắt buộc 'Name' bị để trống – bỏ qua dòng này."
+            )
+            continue
+
+        label = f"antenna '{name}'"
+
+        # Validate No_of_ports
+        ports_raw = _v(row, "No_of_ports", "No of ports", "Ports")
+        ports_val = None
+        if ports_raw is not None:
+            try:
+                ports_val = int(float(ports_raw))
+                if ports_val < 0:
+                    row_errors.append(
+                        f"Row {row_num} ({label}): 'No of Ports' phải >= 0 "
+                        f"(giá trị: {ports_val})."
+                    )
+                    ports_val = None
+            except (ValueError, TypeError):
+                row_errors.append(
+                    f"Row {row_num} ({label}): Giá trị '{ports_raw}' không hợp lệ "
+                    f"cho trường 'No of Ports' (phải là số nguyên)."
+                )
+
+        # Validate No_of_beam
+        beam_raw = _v(row, "No_of_beam", "No of beam")
+        beam_val = None
+        if beam_raw is not None:
+            try:
+                beam_val = int(float(beam_raw))
+                if beam_val < 0:
+                    row_errors.append(
+                        f"Row {row_num} ({label}): 'No of Beam' phải >= 0 "
+                        f"(giá trị: {beam_val})."
+                    )
+                    beam_val = None
+            except (ValueError, TypeError):
+                row_errors.append(
+                    f"Row {row_num} ({label}): Giá trị '{beam_raw}' không hợp lệ "
+                    f"cho trường 'No of Beam' (phải là số nguyên)."
+                )
+
+        if row_errors:
+            errors.extend(row_errors)
             continue
 
         rec = {
             "name":           name,
-            "no_of_ports":    _i(row, "No_of_ports", "No of ports", "Ports"),
+            "no_of_ports":    ports_val,
             "band":           _v(row, "Band", "band", "BAND"),
-            "no_of_beam":     _i(row, "No_of_beam", "No of beam"),
+            "no_of_beam":     beam_val,
             "horizontal_bw":  _v(row, "Horizontal BW", "Horizontal_BW", "HBW"),
             "vertical_bw":    _v(row, "Vertical BW",   "Vertical_BW",   "VBW"),
             "gain":           _v(row, "Gain", "gain"),
@@ -134,8 +193,6 @@ def _parse_antenna_excel(content: bytes, db: Session):
 
     return {"to_create": to_create, "to_update": to_update, "errors": errors}
 
-
-# ── List / search ─────────────────────────────────────────────────────────────
 
 @router.get("/", response_model=List[AntennaRead])
 def list_antennas(
@@ -162,18 +219,12 @@ def count_antennas(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return {"count": db.query(Antenna).count()}
 
 
-# ── Excel import: DRY-RUN ─────────────────────────────────────────────────────
-
 @router.post("/import-excel/dry-run")
 async def dry_run_antenna_excel(
     file: UploadFile = File(...),
     db:   Session    = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """
-    Dry-run: parse the Excel file and return a preview without saving anything.
-    Response shape matches DryRunPreview in the frontend.
-    """
     content = await file.read()
     try:
         result = _parse_antenna_excel(content, db)
@@ -192,10 +243,9 @@ async def dry_run_antenna_excel(
         "preview_create": [item["rec"]["name"] for item in to_create[:5]],
         "preview_update": [item["existing"].name for item in to_update[:5]],
         "dry_run":        True,
+        "has_fatal_errors": len(errors) > 0 and len(to_create) + len(to_update) == 0,
     }
 
-
-# ── Excel import: REAL ────────────────────────────────────────────────────────
 
 @router.post("/import-excel")
 async def import_antenna_excel(
@@ -203,22 +253,29 @@ async def import_antenna_excel(
     db:           Session    = Depends(get_db),
     current_user: User       = Depends(get_current_user),
 ):
-    """
-    Real import: parse, create / update, commit.
-    Response shape matches ImportResultData in the frontend.
-    """
     content = await file.read()
     try:
         result = _parse_antenna_excel(content, db)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # Block import if ALL rows have errors (nothing to import)
+    if (len(result["errors"]) > 0
+            and len(result["to_create"]) == 0
+            and len(result["to_update"]) == 0):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "File Excel có lỗi dữ liệu, không thể import. Vui lòng sửa và thử lại.",
+                "errors": result["errors"][:50],
+            }
+        )
+
     to_create = result["to_create"]
     to_update = result["to_update"]
-    errors    = list(result["errors"])   # copy so we can append runtime errors
+    errors    = list(result["errors"])
     created = updated = 0
 
-    # ── create new records ────────────────────────────────────────────────────
     for item in to_create:
         rec     = item["rec"]
         row_num = item["row_num"]
@@ -232,14 +289,13 @@ async def import_antenna_excel(
             db.rollback()
             errors.append(f"Row {row_num} (create '{rec.get('name')}'): {exc}")
 
-    # ── update existing records ───────────────────────────────────────────────
     for item in to_update:
         existing = item["existing"]
         rec      = item["rec"]
         row_num  = item["row_num"]
         try:
             for k, v in rec.items():
-                if k != "name":          # never overwrite the primary key / name
+                if k != "name":
                     setattr(existing, k, v)
             db.commit()
             db.refresh(existing)
@@ -260,8 +316,6 @@ async def import_antenna_excel(
         "dry_run": False,
     }
 
-
-# ── Spec file upload ──────────────────────────────────────────────────────────
 
 @router.post("/{antenna_id}/spec-file", response_model=AntennaRead)
 async def upload_spec_file(
@@ -332,8 +386,6 @@ def download_spec_file(
         media_type="application/pdf",
     )
 
-
-# ── CRUD ──────────────────────────────────────────────────────────────────────
 
 @router.get("/{antenna_id}", response_model=AntennaRead)
 def get_antenna(

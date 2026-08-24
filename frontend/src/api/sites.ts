@@ -46,10 +46,14 @@ export const dryRunSitesExcel = (file: File) => {
     .then((r) => r.data)
 }
 
-export const importSitesExcel = (file: File) => {
+export const importSitesExcel = async (file: File) => {
   const form = new FormData()
   form.append('file', file)
-  return api
-    .post<ImportResult>('/api/v1/sites/import-excel', form)
-    .then((r) => r.data)
+  try {
+    const r = await api.post<ImportResult>('/api/v1/sites/import-excel', form)
+    return r.data
+  } catch (err: any) {
+    // Re-throw so DryRunModal can handle structured 422 errors
+    throw err
+  }
 }

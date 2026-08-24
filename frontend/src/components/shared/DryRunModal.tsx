@@ -4,6 +4,9 @@
  * Generic 2-step import wizard with template download:
  *   Step 1 – upload file  → call dryRunFn  → show preview
  *   Step 2 – user confirms → call importFn → show result
+ *
+ * If has_fatal_errors is true, the Confirm button is disabled and the user
+ * must fix the file and re-upload.
  */
 import React, { useState } from 'react'
 import {
@@ -13,7 +16,7 @@ import {
 import {
   UploadOutlined, CheckCircleOutlined,
   ExclamationCircleOutlined, LoadingOutlined,
-  DownloadOutlined, FileExcelOutlined,
+  DownloadOutlined, FileExcelOutlined, StopOutlined,
 } from '@ant-design/icons'
 
 export interface DryRunPreview {
@@ -25,6 +28,7 @@ export interface DryRunPreview {
   preview_create: string[]
   preview_update: string[]
   preview_new_sites?: string[]
+  has_fatal_errors?: boolean
 }
 
 export interface ImportResultData {
@@ -118,11 +122,31 @@ export default function DryRunModal({
       setStep(2)
       onSuccess()
     } catch (e: any) {
-      setFatalErr(e?.response?.data?.detail || 'Import failed')
+      // Handle structured error from backend (422 with errors array)
+      const detail = e?.response?.data?.detail
+      if (detail && typeof detail === 'object' && detail.errors) {
+        setFatalErr(detail.message || 'Import thất bại')
+        // Show as a new preview with errors
+        setPreview({
+          ...(preview || { to_create: 0, to_update: 0, errors: 0,
+            error_details: [], preview_create: [], preview_update: [] }),
+          has_fatal_errors: true,
+          errors: detail.errors.length,
+          error_details: detail.errors,
+        })
+        setBusy(false)
+        return
+      }
+      setFatalErr(
+        typeof detail === 'string' ? detail : 'Import thất bại. Vui lòng thử lại.'
+      )
     } finally {
       setBusy(false)
     }
   }
+
+  const hasFatal = preview?.has_fatal_errors === true
+  const canConfirm = !hasFatal && ((preview?.to_create ?? 0) + (preview?.to_update ?? 0) > 0)
 
   const footer = () => {
     if (step === 0) return (
@@ -137,12 +161,22 @@ export default function DryRunModal({
       <Space>
         <Button onClick={reset}>Chọn lại file</Button>
         <Button onClick={handleClose}>Hủy</Button>
-        <Button
-          type="primary" loading={busy} onClick={handleConfirm}
-          disabled={(preview?.to_create ?? 0) + (preview?.to_update ?? 0) === 0}
+        <Tooltip
+          title={hasFatal
+            ? 'File có lỗi dữ liệu nghiêm trọng. Vui lòng sửa file và chọn lại.'
+            : !canConfirm
+            ? 'Không có dữ liệu hợp lệ để import'
+            : ''}
         >
-          Xác nhận import
-        </Button>
+          <Button
+            type="primary" loading={busy} onClick={handleConfirm}
+            disabled={!canConfirm}
+            danger={hasFatal}
+            icon={hasFatal ? <StopOutlined /> : undefined}
+          >
+            {hasFatal ? 'Không thể import – có lỗi' : 'Xác nhận import'}
+          </Button>
+        </Tooltip>
       </Space>
     )
     return <Button type="primary" onClick={handleClose}>Đóng</Button>
@@ -151,13 +185,13 @@ export default function DryRunModal({
   return (
     <Modal
       title={title} open={open} onCancel={handleClose}
-      footer={footer()} width={700} destroyOnClose
+      footer={footer()} width={740} destroyOnClose
     >
       <Steps
         current={step} size="small" style={{ marginBottom: 24 }}
         items={[
           { title: 'Chọn file' },
-          { title: 'Xem trước' },
+          { title: 'Xem trước & Kiểm tra' },
           { title: 'Hoàn thành' },
         ]}
       />
@@ -181,7 +215,6 @@ export default function DryRunModal({
                   <br />
                   <Typography.Text type="secondary" style={{ fontSize: 11 }}>
                     Tải file Excel mẫu, điền dữ liệu và import lên hệ thống.
-                    Để trống một ô = xóa dữ liệu của trường đó.
                   </Typography.Text>
                 </div>
               </Space>
@@ -201,12 +234,15 @@ export default function DryRunModal({
             type="info"
             showIcon
             style={{ marginBottom: 12 }}
-            message="Quy tắc import"
+            message="Quy tắc import & Validation"
             description={
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
-                <li>Cột <strong>có mặt trong file</strong> + ô <strong>trống</strong> → xóa dữ liệu trường đó</li>
-                <li>Cột <strong>không có trong file</strong> → giữ nguyên dữ liệu hiện tại</li>
-                <li>Trường boolean (checkbox): để trống = tắt (false), nhập <code>x</code> = bật (true)</li>
+                <li>Hệ thống sẽ <strong>kiểm tra dữ liệu</strong> trước khi import – các dòng có lỗi sẽ bị từ chối.</li>
+                <li>Trường bắt buộc để trống → dòng đó bị bỏ qua, hiển thị lỗi chi tiết.</li>
+                <li>Giá trị dropdown không hợp lệ → hiển thị lỗi và yêu cầu liên hệ quản trị viên.</li>
+                <li>Toạ độ Lat/Long phải trong phạm vi lãnh thổ Việt Nam.</li>
+                <li>Cột <strong>có mặt trong file</strong> + ô <strong>trống</strong> → xóa dữ liệu trường đó.</li>
+                <li>Cột <strong>không có trong file</strong> → giữ nguyên dữ liệu hiện tại.</li>
               </ul>
             }
           />
@@ -246,12 +282,30 @@ export default function DryRunModal({
       {/* ── Step 1: preview ── */}
       {step === 1 && preview && (
         <div>
+          {hasFatal && (
+            <Alert
+              type="error"
+              showIcon
+              icon={<StopOutlined />}
+              style={{ marginBottom: 16 }}
+              message="File có lỗi dữ liệu nghiêm trọng – không thể import"
+              description={
+                <div>
+                  <Typography.Text>
+                    Vui lòng sửa tất cả lỗi trong file Excel và chọn lại file để tiếp tục.
+                    Import bị chặn cho đến khi không còn lỗi nghiêm trọng.
+                  </Typography.Text>
+                </div>
+              }
+            />
+          )}
+
           <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
             <Descriptions.Item label="Sẽ tạo mới">
-              <Tag color="green">{preview.to_create}</Tag>
+              <Tag color={hasFatal ? 'default' : 'green'}>{preview.to_create}</Tag>
             </Descriptions.Item>
             <Descriptions.Item label="Sẽ cập nhật">
-              <Tag color="blue">{preview.to_update}</Tag>
+              <Tag color={hasFatal ? 'default' : 'blue'}>{preview.to_update}</Tag>
             </Descriptions.Item>
             {preview.sites_to_create !== undefined && (
               <Descriptions.Item label="Site sẽ tự động tạo">
@@ -263,7 +317,7 @@ export default function DryRunModal({
             </Descriptions.Item>
           </Descriptions>
 
-          {preview.preview_create.length > 0 && (
+          {!hasFatal && preview.preview_create.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <Typography.Text strong>
                 <CheckCircleOutlined style={{ color: '#52c41a' }} />{' '}
@@ -279,7 +333,7 @@ export default function DryRunModal({
             </div>
           )}
 
-          {preview.preview_update.length > 0 && (
+          {!hasFatal && preview.preview_update.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <Typography.Text strong>
                 <CheckCircleOutlined style={{ color: '#1890ff' }} />{' '}
@@ -290,34 +344,44 @@ export default function DryRunModal({
             </div>
           )}
 
-          {(preview.preview_new_sites?.length ?? 0) > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <Typography.Text strong>Site sẽ tự động tạo (mẫu):</Typography.Text>
-              <List size="small" dataSource={preview.preview_new_sites}
-                    renderItem={(item) => <List.Item>{item}</List.Item>} />
-            </div>
-          )}
-
           {preview.error_details.length > 0 && (
             <Alert
-              type="warning" showIcon
-              icon={<ExclamationCircleOutlined />}
-              message={`${preview.errors} dòng có lỗi / cảnh báo (sẽ bị bỏ qua hoặc giữ nguyên)`}
+              type={hasFatal ? 'error' : 'warning'}
+              showIcon
+              icon={hasFatal ? <StopOutlined /> : <ExclamationCircleOutlined />}
+              message={
+                hasFatal
+                  ? `${preview.errors} lỗi nghiêm trọng – BẮT BUỘC phải sửa trước khi import`
+                  : `${preview.errors} dòng có lỗi / cảnh báo (sẽ bị bỏ qua hoặc giữ nguyên)`
+              }
               description={
-                <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-                  {preview.error_details.slice(0, 20).map((e, i) => (
-                    <div key={i} style={{ fontSize: 12, fontFamily: 'monospace', marginBottom: 2 }}>
+                <div style={{ maxHeight: 250, overflowY: 'auto' }}>
+                  {preview.error_details.slice(0, 50).map((e, i) => (
+                    <div key={i} style={{
+                      fontSize: 12, fontFamily: 'monospace', marginBottom: 4,
+                      padding: '3px 6px',
+                      background: hasFatal ? '#fff2f0' : '#fffbe6',
+                      borderLeft: `3px solid ${hasFatal ? '#ff4d4f' : '#faad14'}`,
+                    }}>
                       {e}
                     </div>
                   ))}
-                  {preview.error_details.length > 20 && (
-                    <div style={{ color: '#999' }}>
-                      ... và {preview.error_details.length - 20} lỗi khác
+                  {preview.error_details.length > 50 && (
+                    <div style={{ color: '#999', marginTop: 4 }}>
+                      ... và {preview.error_details.length - 50} lỗi khác
                     </div>
                   )}
                 </div>
               }
             />
+          )}
+
+          {hasFatal && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button type="primary" onClick={reset} icon={<UploadOutlined />}>
+                Chọn lại file đã sửa
+              </Button>
+            </div>
           )}
         </div>
       )}
