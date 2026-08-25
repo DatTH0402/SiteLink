@@ -46,30 +46,82 @@ from openpyxl.worksheet.worksheet import Worksheet
 # 1.  DATABASE HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-DB_PARAMS = {
-    "host":     os.getenv("DB_HOST",     "localhost"),
-    "port":     os.getenv("DB_PORT",     "5432"),
-    "dbname":   os.getenv("DB_NAME",     "sitelink_db"),
-    "user":     os.getenv("DB_USER",     "sitelink"),
-    "password": os.getenv("DB_PASSWORD", "sitelink_pass"),
-}
+# ── DB connection ─────────────────────────────────────────────────────────────
+# Priority:
+#   1. DATABASE_URL env var (set by template_regen.py from backend settings)
+#   2. Individual POSTGRES_* env vars (standard Docker .env names)
+#   3. Legacy DB_* env vars
+#   4. Hardcoded defaults (last resort, only for standalone manual runs)
+
+def _build_db_params() -> dict:
+    """Build psycopg2 connection params from available env vars."""
+    import urllib.parse
+
+    # 1. Full DATABASE_URL (highest priority – injected by template_regen.py)
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url:
+        try:
+            p = urllib.parse.urlparse(db_url)
+            return {
+                "host":     p.hostname or "localhost",
+                "port":     str(p.port  or 5432),
+                "dbname":   (p.path or "/sitelink_db").lstrip("/"),
+                "user":     p.username or "sitelink",
+                "password": p.password or "sitelink_pass",
+            }
+        except Exception:
+            pass  # fall through to individual vars
+
+    # 2. Standard Docker env var names (POSTGRES_*)
+    # 3. Legacy names (DB_*) as fallback
+    return {
+        "host":     os.getenv("POSTGRES_HOST",     os.getenv("DB_HOST",     "localhost")),
+        "port":     os.getenv("POSTGRES_PORT",     os.getenv("DB_PORT",     "5432")),
+        "dbname":   os.getenv("POSTGRES_DB",       os.getenv("DB_NAME",     "sitelink_db")),
+        "user":     os.getenv("POSTGRES_USER",     os.getenv("DB_USER",     "sitelink")),
+        "password": os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASSWORD", "sitelink_pass")),
+    }
+
+
+DB_PARAMS = _build_db_params()
 
 _DB_AVAILABLE = False
 _db_conn      = None
 
 
 def _get_conn():
-    global _db_conn, _DB_AVAILABLE
+    global _db_conn, _DB_AVAILABLE, DB_PARAMS
+
+    # Re-read params every call so env var injection by template_regen works
+    # even if the module was already loaded (importlib caches the module object
+    # but we can still refresh the connection params here).
+    DB_PARAMS = _build_db_params()
+
     if _db_conn is not None:
-        return _db_conn
+        # Test if existing connection is still alive
+        try:
+            _db_conn.cursor().execute("SELECT 1")
+            return _db_conn
+        except Exception:
+            _db_conn = None
+
     try:
         import psycopg2
         _db_conn      = psycopg2.connect(**DB_PARAMS)
         _DB_AVAILABLE = True
-        print("[DB] Connected to PostgreSQL successfully.")
+        print(
+            f"[DB] Connected to PostgreSQL at "
+            f"{DB_PARAMS['host']}:{DB_PARAMS['port']}/"
+            f"{DB_PARAMS['dbname']} successfully."
+        )
         return _db_conn
     except Exception as exc:
-        print(f"[DB] Cannot connect ({exc}). Templates will use static fallback values.")
+        print(
+            f"[DB] Cannot connect to PostgreSQL "
+            f"({DB_PARAMS['host']}:{DB_PARAMS['port']}/"
+            f"{DB_PARAMS['dbname']}): {exc}"
+        )
+        print("[DB] Templates will use static fallback values.")
         _DB_AVAILABLE = False
         return None
 
@@ -371,7 +423,13 @@ VN_LAT_MIN, VN_LAT_MAX = 8.33,   23.39
 VN_LON_MIN, VN_LON_MAX = 102.14, 109.47
 AZI_MIN,    AZI_MAX    = 0,      359
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "backend", "templates")
+# Allow the calling process (template_regen.py) to override the output dir
+# via environment variable, so templates always land in the right place
+# regardless of whether we are running inside Docker or locally.
+OUTPUT_DIR = (
+    os.environ.get("SITELINK_TEMPLATE_DIR")
+    or os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", "templates")
+)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 

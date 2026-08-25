@@ -17,6 +17,7 @@ from app.schemas.antenna import AntennaCreate, AntennaUpdate, AntennaRead
 from app.utils.deps import get_current_user, require_admin
 from app.utils.audit import log_action
 from app.models.user import User
+from app.utils.template_regen import schedule_template_regen
 
 router = APIRouter()
 
@@ -308,6 +309,8 @@ async def import_antenna_excel(
         db, current_user, "IMPORT", "antennas", 0,
         new_value={"created": created, "updated": updated},
     )
+    if created + updated > 0:
+        schedule_template_regen()
 
     return {
         "created": created,
@@ -412,6 +415,7 @@ def create_antenna(
     db.refresh(obj)
     log_action(db, current_user, "CREATE", "antennas", obj.id,
                new_value=payload.model_dump())
+    schedule_template_regen()
     return obj
 
 
@@ -430,6 +434,7 @@ def update_antenna(
     db.refresh(obj)
     log_action(db, current_user, "UPDATE", "antennas", obj.id,
                old_value=old, new_value=payload.model_dump(exclude_unset=True))
+    schedule_template_regen()
     return obj
 
 
@@ -444,4 +449,5 @@ def delete_antenna(
     db.delete(obj)
     db.commit()
     log_action(db, current_user, "DELETE", "antennas", antenna_id)
+    schedule_template_regen()
     return {"message": "Deleted"}

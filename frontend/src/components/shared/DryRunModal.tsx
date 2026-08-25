@@ -61,7 +61,7 @@ const TEMPLATE_LABELS: Record<TemplateKey, string> = {
 
 function downloadTemplate(key: TemplateKey) {
   const token = localStorage.getItem('sl_token') || ''
-  fetch(`/api/v1/templates/${key}`, {
+  fetch(`/api/v1/templates/${key}?t=${Date.now()}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
     .then((res) => {

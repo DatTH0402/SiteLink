@@ -16,6 +16,7 @@ from app.api.routes import export    as export_router
 from app.api.routes import revision  as revision_router
 from app.api.routes import rnc       as rnc_router
 from app.api.routes import sync       as sync_router
+from app.utils.template_regen import regen_now
 
 Base.metadata.create_all(bind=engine)
 
@@ -116,36 +117,8 @@ def _seed_initial_data():
         db.close()
 
 
-def _generate_templates():
-    template_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "templates")
-    )
-    os.makedirs(template_dir, exist_ok=True)
-    required = [
-        "template_site.xlsx", "template_cell_3g.xlsx",
-        "template_cell_4g.xlsx", "template_cell_5g.xlsx",
-        "template_antenna.xlsx",
-    ]
-    missing = [f for f in required if not os.path.exists(os.path.join(template_dir, f))]
-    if missing:
-        try:
-            script = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "..", "create_templates.py")
-            )
-            if os.path.exists(script):
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("create_templates", script)
-                mod  = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                mod.create_site_template()
-                mod.create_cell3g_template()
-                mod.create_cell4g_template()
-                mod.create_cell5g_template()
-                if hasattr(mod, 'create_antenna_template'):
-                    mod.create_antenna_template()
-                print("[startup] Excel templates generated.")
-        except Exception as exc:
-            print(f"[startup] Warning: could not generate templates: {exc}")
+# _generate_templates() removed – template regeneration is now handled
+# by app.utils.template_regen (background thread, debounced).
 
 
 app = FastAPI(
@@ -173,7 +146,7 @@ app.mount(
 @app.on_event("startup")
 def on_startup():
     _seed_initial_data()
-    _generate_templates()
+    regen_now()   # regenerate all templates in background on every startup
 
 
 PREFIX = "/api/v1"
