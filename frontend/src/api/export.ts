@@ -101,3 +101,14 @@ export function exportAntennas(filters: {
   const qs = buildQS(filters)
   return downloadBlob(`/api/v1/export/antennas${qs}`, 'Antennas_Export.xlsx')
 }
+
+export function exportSitesKmz(filters: {
+  search?:       string
+  site_name_cu?: string
+  mien?:         string[]
+  tinh?:         string[]
+  phuong_xa?:    string[]
+}) {
+  const qs = buildQS(filters)
+  return downloadBlob(`/api/v1/export/sites-kmz${qs}`, 'Sites_Export.kmz')
+}
