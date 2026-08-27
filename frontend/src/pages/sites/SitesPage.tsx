@@ -14,7 +14,7 @@ import {
   getSites, deleteSite, dryRunSitesExcel, importSitesExcel,
   bulkDeleteSites, bulkUpdateSites,
 } from '@/api/sites'
-import { exportSites } from '@/api/export'
+import { exportSites, exportSitesKmz } from '@/api/export'
 import { getDropdown, getTinhList, getPhuongXaList } from '@/api/report'
 import type { Site, TinhItem } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
@@ -28,6 +28,7 @@ export default function SitesPage() {
   const [sites,        setSites]        = useState<Site[]>([])
   const [loading,      setLoading]      = useState(false)
   const [exporting,    setExporting]    = useState(false)
+  const [exportingKmz,    setExportingKmz]    = useState(false)
   const [search,       setSearch]       = useState('')
   const [siteNameCu,   setSiteNameCu]   = useState('')
   const [mien,         setMien]         = useState<string[]>([])
@@ -151,6 +152,25 @@ export default function SitesPage() {
     }
   }
 
+
+  const handleKmzExport = async () => {
+    setExportingKmz(true)
+    try {
+      await exportSitesKmz({
+        search:       search || undefined,
+        site_name_cu: siteNameCu || undefined,
+        mien:         mien.length ? mien : undefined,
+        tinh:         tinh.length ? tinh : undefined,
+        phuong_xa:    phuongXa.length ? phuongXa : undefined,
+      })
+      message.success(`Xuất KMZ thành công (${sites.length} sites)`)
+    } catch (e: any) {
+      message.error(e?.message || 'Xuất KMZ thất bại')
+    } finally {
+      setExportingKmz(false)
+    }
+  }
+
   const clearFilters = () => {
     setSearch('')
     setSiteNameCu('')
@@ -224,6 +244,16 @@ export default function SitesPage() {
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Quản lý site</Typography.Title>
         <Space>
+                    <Tooltip title="Xuất dữ liệu hiện tại ra KMZ (Google Earth)">
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exportingKmz}
+              onClick={handleKmzExport}
+              style={{ borderColor: '#722ed1', color: '#722ed1' }}
+            >
+              Xuất KMZ ({sites.length})
+            </Button>
+          </Tooltip>
           <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>

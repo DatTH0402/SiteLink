@@ -354,3 +354,121 @@ def export_antennas(
         _style_row(ws, row, len(headers), idx % 2 == 0)
     ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
     return _stream(wb, "Antennas_Export.xlsx")
+
+
+# =============================================================================
+# KMZ Export  (KML inside a ZIP — readable by Google Earth)
+# =============================================================================
+import zipfile as _zipfile
+import xml.sax.saxutils as _saxutils
+
+
+def _build_kml(sites: list) -> str:
+    """
+    Build a KML document string for the given list of Site ORM objects.
+    Each site becomes a <Placemark> with:
+      - name        : site_name
+      - description : province / ward / site_name / site_name_old
+      - coordinates : lon,lat (Google Earth order)
+    """
+    def esc(v) -> str:
+        """XML-escape a value; return empty string for None."""
+        if v is None:
+            return ""
+        return _saxutils.escape(str(v))
+
+    placemarks = []
+    for s in sites:
+        # Skip sites with no valid coordinates
+        if s.lat is None or s.long is None:
+            continue
+
+        description = (
+            f"<b>Tỉnh/TP:</b> {esc(s.tinh)}<br/>"
+            f"<b>Phường/Xã:</b> {esc(s.phuong_xa)}<br/>"
+            f"<b>Site name:</b> {esc(s.site_name)}<br/>"
+            f"<b>Site name (cũ):</b> {esc(s.site_name_cu)}<br/>"
+        )
+
+        placemarks.append(f"""  <Placemark>
+    <name>{esc(s.site_name)}</name>
+    <description><![CDATA[{description}]]></description>
+    <Point>
+      <coordinates>{s.long},{s.lat},0</coordinates>
+    </Point>
+  </Placemark>""")
+
+    kml_body = "\n".join(placemarks)
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>SiteLink – Site Locations</name>
+    <description>Exported from SiteLink</description>
+    <Style id="siteIcon">
+      <IconStyle>
+        <color>ff0000ff</color>
+        <scale>1.0</scale>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+{kml_body}
+  </Document>
+</kml>"""
+
+
+def _build_kmz(kml_content: str) -> bytes:
+    """Wrap a KML string inside a KMZ (zip) archive, return raw bytes."""
+    buf = io.BytesIO()
+    with _zipfile.ZipFile(buf, mode="w", compression=_zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("doc.kml", kml_content.encode("utf-8"))
+    buf.seek(0)
+    return buf.read()
+
+
+@router.get("/sites-kmz")
+def export_sites_kmz(
+    search:       Optional[str]        = Query(None),
+    site_name_cu: Optional[str]        = Query(None),
+    mien:         Optional[List[str]]  = Query(None),
+    tinh:         Optional[List[str]]  = Query(None),
+    phuong_xa:    Optional[List[str]]  = Query(None),
+    tram_3g:      Optional[bool]       = Query(None),
+    tram_4g:      Optional[bool]       = Query(None),
+    tram_5g:      Optional[bool]       = Query(None),
+    db:           Session              = Depends(get_db),
+    _:            User                 = Depends(get_optional_user),
+):
+    """
+    Export filtered sites as a KMZ file (Google Earth compatible).
+    Accepts the same filter parameters as the Sites list and Excel export.
+    Token may be passed as Bearer header OR ?token= query param.
+    """
+    q = db.query(Site)
+    if search:       q = q.filter(Site.site_name.ilike(f"%{search}%"))
+    if site_name_cu: q = q.filter(Site.site_name_cu.ilike(f"%{site_name_cu}%"))
+    if mien:         q = q.filter(Site.mien.in_(mien))
+    if tinh:         q = q.filter(Site.tinh.in_(tinh))
+    if phuong_xa:    q = q.filter(Site.phuong_xa.in_(phuong_xa))
+    if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
+    if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
+    if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
+
+    sites = q.order_by(Site.mien, Site.tinh, Site.site_name).all()
+
+    valid_count = sum(1 for s in sites if s.lat is not None and s.long is not None)
+
+    kml_content = _build_kml(sites)
+    kmz_bytes   = _build_kmz(kml_content)
+
+    return StreamingResponse(
+        iter([kmz_bytes]),
+        media_type="application/vnd.google-earth.kmz",
+        headers={
+            "Content-Disposition": 'attachment; filename="Sites_Export.kmz"',
+            "X-Site-Count": str(len(sites)),
+            "X-Valid-Coords": str(valid_count),
+        },
+    )
