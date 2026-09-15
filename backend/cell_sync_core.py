@@ -142,6 +142,14 @@ def _bw4g(val) -> Optional[int]:
             "CELL_BW_N50": 10,  "CELL_BW_N25": 5}.get(str(val).strip())
 
 
+def _cast_ints(df: pd.DataFrame) -> pd.DataFrame:
+    """Helper function to safely cast specific columns to nullable Int64."""
+    int_cols = ["pci", "root_sequence_id", "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power", "nci"]
+    for col in int_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").round().astype("Int64")
+    return df
+
 # ── Builders ──────────────────────────────────────────────────────────────────
 
 def _b3g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
@@ -160,7 +168,7 @@ def _b3g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]             = _col(r, "hw_productName")
     t["bbu_name"]       = _col(r, "node_name")
     t["cell_status"]    = _col(r, "rnc_adminState")
-    return t
+    return _cast_ints(t)
 
 def _b3g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -178,7 +186,7 @@ def _b3g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]             = _col(r, "RRU ManufacturerData").astype(str).str.split(",").str[0]
     t["bbu_name"]       = _col(r, "NEname")
     t["cell_status"]    = _col(r, "BLKSTATUS")
-    return t
+    return _cast_ints(t)
 
 def _b3g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -196,7 +204,7 @@ def _b3g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]             = _col(r, "RRU productName")
     t["bbu_name"]       = _col(r, "WBTS_name")
     t["cell_status"]    = _col(r, "AdminCellState")
-    return t
+    return _cast_ints(t)
 
 def _b4g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -215,7 +223,7 @@ def _b4g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]               = _col(r, "hw_productName")
     t["bbu_name"]         = _col(r, "node")
     t["cell_status"]      = _col(r, "administrativeState")
-    return t
+    return _cast_ints(t)
 
 def _b4g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -235,7 +243,7 @@ def _b4g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]               = _col(r, "RRU ManufacturerData").astype(str).str.split(",").str[0]
     t["bbu_name"]         = _col(r, "NE")
     t["cell_status"]      = _col(r, "Cell admin state")
-    return t
+    return _cast_ints(t)
 
 def _b4g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -253,7 +261,7 @@ def _b4g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t["rf"]               = _col(r, "RRU productName")
     t["bbu_name"]         = _col(r, "MRBTS_btsname")
     t["cell_status"]      = _col(r, "blockingState")
-    return t
+    return _cast_ints(t)
 
 def _b5g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -275,7 +283,7 @@ def _b5g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t["bbu_name"]         = _col(r, "Node")
     t["mu_mimo"]          = None
     t["cell_status"]      = _col(r, "AdministrativeState_SC")
-    return t
+    return _cast_ints(t)
 
 def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -308,7 +316,7 @@ def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t["bbu_name"]         = _col(r, "NE")
     t["mu_mimo"]          = None
     t["cell_status"]      = _col(r, "Cell admin state")
-    return t
+    return _cast_ints(t)
 
 def _b5g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
@@ -336,7 +344,7 @@ def _b5g_nokia(r: pd.DataFrame) -> pd.DataFrame:
     t["bbu_name"]         = _col(r, "MRBTS_btsname")
     t["mu_mimo"]          = _col(r, "nrCellType")
     t["cell_status"]      = _col(r, "administrativeState")
-    return t
+    return _cast_ints(t)
 
 
 _BUILDERS = {

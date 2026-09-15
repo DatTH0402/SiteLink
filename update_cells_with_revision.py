@@ -545,9 +545,15 @@ def load_3g():
         t["cell_status"]   = df.get("AdminCellState")
         frames.append(t)
 
-    return clean_data(
-        pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
-    )
+    df_res = pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
+    
+    # Cast target columns to nullable integer type
+    int_cols = ["pci", "root_sequence_id", "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power", "nci"]
+    for col in int_cols:
+        if col in df_res.columns:
+            df_res[col] = pd.to_numeric(df_res[col], errors="coerce").round().astype("Int64")
+            
+    return clean_data(df_res)
 
 
 def load_4g():
@@ -611,9 +617,15 @@ def load_4g():
         t["cell_status"]     = df.get("blockingState")
         frames.append(t)
 
-    return clean_data(
-        pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
-    )
+    df_res = pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
+    
+    # Cast target columns to nullable integer type
+    int_cols = ["pci", "root_sequence_id", "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power", "nci"]
+    for col in int_cols:
+        if col in df_res.columns:
+            df_res[col] = pd.to_numeric(df_res[col], errors="coerce").round().astype("Int64")
+
+    return clean_data(df_res)
 
 
 def load_5g():
@@ -646,10 +658,7 @@ def load_5g():
         t = pd.DataFrame()
         t["cell_name"]       = df.get("CELLNAME")
         t["cell_id"]         = df.get("GNBID").astype(str) + "-" + df.get("CELLID").astype(str)
-
-        # SSB-ARFCN: take directly from "SSB-ARFCN" column
         t["ssb_arfcn"]       = df.get("SSB-ARFCN")
-
         t["center_arfcn"]    = df.get("DLNARFCN")
         t["pci"]             = df.get("Physical cell ID")
         t["root_sequence_id"]= df.get("Logical Root sequence index")
@@ -657,11 +666,8 @@ def load_5g():
         t["gscn"]            = df.get("SSB GSCN")
         t["tac"]             = df.get("TAC")
         t["bandwidth"]       = df.get("DLBANDWIDTH").astype(str).str.extract(r"(\d+)").astype(float)
-
-        # Cell max power: take directly from "MAXTRANSMITPOWER" column
         t["cell_max_power"]  = pd.to_numeric(df.get("MAXTRANSMITPOWER"), errors="coerce")
 
-        # NCI: GNBID * 2^(36 - GNBIDLENGTH) + CELLID
         gnb     = pd.to_numeric(df.get("GNBID"),       errors="coerce")
         gnb_len = pd.to_numeric(df.get("GNBIDLENGTH"),  errors="coerce")
         cid     = pd.to_numeric(df.get("CELLID"),       errors="coerce")
@@ -695,9 +701,15 @@ def load_5g():
         t["cell_status"]     = df.get("administrativeState")
         frames.append(t)
 
-    return clean_data(
-        pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
-    )
+    df_res = pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
+    
+    # Cast target columns to nullable integer type
+    int_cols = ["pci", "root_sequence_id", "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power", "nci"]
+    for col in int_cols:
+        if col in df_res.columns:
+            df_res[col] = pd.to_numeric(df_res[col], errors="coerce").round().astype("Int64")
+
+    return clean_data(df_res)
 
 # ── Main ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
