@@ -146,7 +146,7 @@ class Cell5GRevision(Base):
     tac              = Column(String(50))
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
-    mimo             = Column(String(20))
+    mimo             = Column(String(50))
     ssb_arfcn        = Column(String(50))
     center_arfcn     = Column(String(50))
     gscn             = Column(String(50))
