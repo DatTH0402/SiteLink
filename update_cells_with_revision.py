@@ -629,7 +629,7 @@ def load_5g():
         t["pci"]             = df.get("PCI")
         t["root_sequence_id"]= df.get("rachRootSequence")
         tx = pd.to_numeric(df.get("NoOfUsedTxAntennas"), errors="coerce").fillna(0)
-        t["mimo"]            = (tx * tx).astype(int).astype(str)
+        t["mimo"]            = tx.astype(int).astype(str) + "x" + tx.astype(int).astype(str)
         t["gscn"]            = None
         t["tac"]             = df.get("TAC")
         t["bandwidth"]       = pd.to_numeric(df.get("BSChannelBwDL"), errors="coerce")

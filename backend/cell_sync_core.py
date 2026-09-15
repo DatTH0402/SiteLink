@@ -265,7 +265,7 @@ def _b5g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
     t["pci"]              = _col(r, "PCI")
     t["root_sequence_id"] = _col(r, "rachRootSequence")
     tx = pd.to_numeric(_col(r, "NoOfUsedTxAntennas"), errors="coerce").fillna(0)
-    t["mimo"]             = (tx * tx).astype(int).astype(str)
+    t["mimo"]            = tx.astype(int).astype(str) + "x" + tx.astype(int).astype(str)
     t["gscn"]             = None
     t["tac"]              = _col(r, "TAC")
     t["bandwidth"]        = pd.to_numeric(_col(r, "BSChannelBwDL"), errors="coerce")
