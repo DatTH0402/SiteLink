@@ -281,7 +281,10 @@ def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t = pd.DataFrame(index=r.index)
     t["cell_name"]        = _col(r, "CELLNAME")
     t["cell_id"]          = _col(r, "GNBID").astype(str) + "-" + _col(r, "CELLID").astype(str)
-    t["ssb_arfcn"]        = None
+
+    # SSB-ARFCN: take directly from "SSB-ARFCN" column (was None before)
+    t["ssb_arfcn"]        = _col(r, "SSB-ARFCN")
+
     t["center_arfcn"]     = _col(r, "DLNARFCN")
     t["pci"]              = _col(r, "Physical cell ID")
     t["root_sequence_id"] = _col(r, "Logical Root sequence index")
@@ -291,11 +294,16 @@ def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
     t["bandwidth"]        = (_col(r, "DLBANDWIDTH").astype(str)
                              .str.extract(r"(\d+)", expand=False).astype(float)
                              if "DLBANDWIDTH" in r.columns else None)
-    t["cell_max_power"]   = None
-    gnb     = pd.to_numeric(_col(r, "GNBID"),      errors="coerce")
-    gnb_len = pd.to_numeric(_col(r, "GNBIDLENGTH"), errors="coerce")
-    cid     = pd.to_numeric(_col(r, "CELLID"),      errors="coerce")
+
+    # Cell max power: take directly from "MAXTRANSMITPOWER" column (was None before)
+    t["cell_max_power"]   = pd.to_numeric(_col(r, "MAXTRANSMITPOWER"), errors="coerce")
+
+    # NCI: GNBID * 2^(36 - GNBIDLENGTH) + CELLID (unchanged, already correct)
+    gnb     = pd.to_numeric(_col(r, "GNBID"),       errors="coerce")
+    gnb_len = pd.to_numeric(_col(r, "GNBIDLENGTH"),  errors="coerce")
+    cid     = pd.to_numeric(_col(r, "CELLID"),       errors="coerce")
     t["nci"]              = gnb * (2 ** (36 - gnb_len)) + cid
+
     t["rf"]               = _col(r, "RRU ManufacturerData").astype(str).str.split(",").str[0]
     t["bbu_name"]         = _col(r, "NE")
     t["mu_mimo"]          = None

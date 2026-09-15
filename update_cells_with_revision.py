@@ -646,7 +646,10 @@ def load_5g():
         t = pd.DataFrame()
         t["cell_name"]       = df.get("CELLNAME")
         t["cell_id"]         = df.get("GNBID").astype(str) + "-" + df.get("CELLID").astype(str)
-        t["ssb_arfcn"]       = None
+
+        # SSB-ARFCN: take directly from "SSB-ARFCN" column
+        t["ssb_arfcn"]       = df.get("SSB-ARFCN")
+
         t["center_arfcn"]    = df.get("DLNARFCN")
         t["pci"]             = df.get("Physical cell ID")
         t["root_sequence_id"]= df.get("Logical Root sequence index")
@@ -654,11 +657,16 @@ def load_5g():
         t["gscn"]            = df.get("SSB GSCN")
         t["tac"]             = df.get("TAC")
         t["bandwidth"]       = df.get("DLBANDWIDTH").astype(str).str.extract(r"(\d+)").astype(float)
-        t["cell_max_power"]  = None
+
+        # Cell max power: take directly from "MAXTRANSMITPOWER" column
+        t["cell_max_power"]  = pd.to_numeric(df.get("MAXTRANSMITPOWER"), errors="coerce")
+
+        # NCI: GNBID * 2^(36 - GNBIDLENGTH) + CELLID
         gnb     = pd.to_numeric(df.get("GNBID"),       errors="coerce")
         gnb_len = pd.to_numeric(df.get("GNBIDLENGTH"),  errors="coerce")
         cid     = pd.to_numeric(df.get("CELLID"),       errors="coerce")
         t["nci"]             = gnb * (2 ** (36 - gnb_len)) + cid
+
         t["rf"]              = df.get("RRU ManufacturerData", pd.Series(dtype=str)).astype(str).str.split(",").str[0]
         t["bbu_name"]        = df.get("NE")
         t["mu_mimo"]         = None
@@ -690,7 +698,6 @@ def load_5g():
     return clean_data(
         pd.concat(frames).drop_duplicates("cell_name") if frames else pd.DataFrame()
     )
-
 
 # ── Main ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
