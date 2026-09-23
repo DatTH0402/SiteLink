@@ -32,8 +32,8 @@ class Site(Base):
     moran_4g              = Column(String(50))
     moran_5g              = Column(String(50))
     ma_ptm                = Column(String(100), nullable=True)
-    do_cao_dinh_cot_anten = Column(Float)
-    do_cao_cot_anten      = Column(Float)
+    do_cao_dinh_cot_anten = Column(String(50))   # changed: Float → String
+    do_cao_cot_anten      = Column(String(50))   # changed: Float → String
     dia_chi               = Column(Text)
     ghi_chu               = Column(Text)
     created_at            = Column(

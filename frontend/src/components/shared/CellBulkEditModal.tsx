@@ -2,19 +2,19 @@
  * CellBulkEditModal
  * -----------------
  * Generic bulk-edit modal for Cell 3G / 4G / 5G.
- * Uses the same field tracking approach as SiteBulkEditModal.
- * Only touched fields are sent in the changes payload.
  *
- * Props:
- *   tech: '3g' | '4g' | '5g'  – controls which tech-specific fields to show
+ * do_cao_anten, azimuth, m_tilt, e_tilt, total_tilt are now STRING fields.
+ * They use <Input> instead of <InputNumber>.
+ * Validators still warn if a numeric value is out of range, but accept
+ * any non-numeric string (e.g. "IBC", "N/A").
  */
 import React, { useState, useRef } from 'react'
 import {
   Modal, Form, Input, Select, Row, Col,
-  InputNumber, Alert, Space, Typography, Divider,
+  Alert, Space, Typography, Divider,
 } from 'antd'
 import { EditOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
-import { azimuthValidator } from '@/utils/validators'
+import { azimuthValidator, tiltValidator, positiveNumberValidator } from '@/utils/validators'
 
 export type CellTech = '3g' | '4g' | '5g'
 
@@ -198,33 +198,38 @@ export default function CellBulkEditModal({
               </Form.Item>
             </Col>
           )}
+          {/* String fields – use Input, soft numeric validation */}
           <Col span={6}>
             <Form.Item
               name="azimuth"
-              label="Azimuth (0–359)"
+              label="Azimuth"
               rules={[{ validator: azimuthValidator }]}
             >
-              <InputNumber style={{ width: '100%' }} min={0} max={359} placeholder="(giữ nguyên)" />
+              <Input placeholder="vd: 120 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="m_tilt" label="M-tilt">
-              <InputNumber style={{ width: '100%' }} placeholder="(giữ nguyên)" />
+            <Form.Item name="m_tilt" label="M-tilt"
+              rules={[{ validator: tiltValidator }]}>
+              <Input placeholder="vd: 2 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="e_tilt" label="E-Tilt">
-              <InputNumber style={{ width: '100%' }} placeholder="(giữ nguyên)" />
+            <Form.Item name="e_tilt" label="E-Tilt"
+              rules={[{ validator: tiltValidator }]}>
+              <Input placeholder="vd: 4 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="total_tilt" label="Total Tilt">
-              <InputNumber style={{ width: '100%' }} placeholder="(giữ nguyên)" />
+            <Form.Item name="total_tilt" label="Total Tilt"
+              rules={[{ validator: tiltValidator }]}>
+              <Input placeholder="vd: 6 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="do_cao_anten" label="Độ cao anten (m)">
-              <InputNumber style={{ width: '100%' }} placeholder="(giữ nguyên)" />
+            <Form.Item name="do_cao_anten" label="Độ cao anten"
+              rules={[{ validator: positiveNumberValidator }]}>
+              <Input placeholder="vd: 28 hoặc IBC" />
             </Form.Item>
           </Col>
         </Row>

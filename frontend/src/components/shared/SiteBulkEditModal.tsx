@@ -173,13 +173,13 @@ export default function SiteBulkEditModal({
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="do_cao_dinh_cot_anten" label="Cao đỉnh cột anten (m)">
-              <InputNumber style={{ width: '100%' }} min={0} placeholder="(giữ nguyên)" />
+            <Form.Item name="do_cao_dinh_cot_anten" label="Cao đỉnh cột anten">
+              <Input placeholder="vd: 35 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name="do_cao_cot_anten" label="Cao cột anten (m)">
-              <InputNumber style={{ width: '100%' }} min={0} placeholder="(giữ nguyên)" />
+            <Form.Item name="do_cao_cot_anten" label="Cao cột anten">
+              <Input placeholder="vd: 30 hoặc IBC" />
             </Form.Item>
           </Col>
           <Col span={12}>

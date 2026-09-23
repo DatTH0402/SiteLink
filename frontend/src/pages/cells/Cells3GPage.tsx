@@ -459,17 +459,17 @@ export default function Cells3GPage() {
             </Col>
             <Col span={8}>
               <Form.Item name="m_tilt" label="M-tilt">
-                <InputNumber style={{ width: '100%' }} />
+                <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="e_tilt" label="E-Tilt">
-                <InputNumber style={{ width: '100%' }} />
+                <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="total_tilt" label="Total Tilt">
-                <InputNumber style={{ width: '100%' }} />
+                <Input placeholder="vd: 6 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={24}>

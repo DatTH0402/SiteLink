@@ -4,10 +4,11 @@ import_excel.py – Excel → DB record conversion for Sites, Cell3G, Cell4G, Ce
 Key design decisions:
   1. Column PRESENT in Excel + blank value → intentional clear → set field to None/False
   2. Column ABSENT from Excel → do not touch that field
-  3. Required fields are validated and errors are collected (not raised) so all
-     row errors are reported at once instead of stopping at the first error.
-  4. Dropdown values are validated against allowed lists / DB values.
-  5. Geo/numeric range validation mirrors the frontend form validators.
+  3. Required fields are validated and errors collected (not raised).
+  4. do_cao_dinh_cot_anten, do_cao_cot_anten (sites) and
+     do_cao_anten, azimuth, m_tilt, e_tilt, total_tilt (cells)
+     are now STRING fields – they accept any non-empty string value
+     (numeric like "35.5" or special like "IBC").
 """
 from __future__ import annotations
 
@@ -20,18 +21,17 @@ import pandas as pd
 
 VN_LAT_MIN, VN_LAT_MAX = 8.33,   23.39
 VN_LON_MIN, VN_LON_MAX = 102.14, 109.47
-AZI_MIN,    AZI_MAX    = 0,       359
 
 # Sentinel: column exists in Excel but is blank → intentional clear
 _CLEAR = object()
 
 # ── Required fields ────────────────────────────────────────────────────────────
 SITE_REQUIRED_FIELDS = {
-    "site_name":              "Site name",
-    "lat":                    "Lat",
-    "long":                   "Long",
-    "dia_chi":                "Địa chỉ",
-    "do_cao_dinh_cot_anten":  "Độ cao đỉnh cột anten tới mặt đất",
+    "site_name":             "Site name",
+    "lat":                   "Lat",
+    "long":                  "Long",
+    "dia_chi":               "Địa chỉ",
+    "do_cao_dinh_cot_anten": "Độ cao đỉnh cột anten tới mặt đất",
 }
 
 CELL_REQUIRED_FIELDS = {
@@ -154,6 +154,31 @@ def _float_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
         return _CLEAR
 
 
+def _str_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
+    """
+    Like _v_aware but for fields that were previously float (now string).
+    Returns the raw string value if present, None if blank, _CLEAR if column absent.
+    """
+    col_found = False
+    for key in keys:
+        if key in excel_cols:
+            col_found = True
+            val = row.get(key)
+            if val is not None and str(val).strip() not in ("", "nan", "None"):
+                # Normalise: if it looks like an integer float (e.g. "35.0"), strip ".0"
+                s = str(val).strip()
+                try:
+                    f = float(s)
+                    if f == int(f):
+                        s = str(int(f))
+                except (ValueError, TypeError):
+                    pass
+                return s
+            return None
+    if not col_found:
+        return _CLEAR
+
+
 def _bool_aware(row: Dict, excel_cols: Set[str], *keys) -> Any:
     col_found = False
     for key in keys:
@@ -188,7 +213,6 @@ def _bool(row: Dict, *keys) -> bool:
 
 def _check_required(value: Any, field_label: str, row_num: int,
                     record_label: str, errors: List[str]) -> bool:
-    """Returns True if value is present and non-empty, False and appends error otherwise."""
     is_missing = (
         value is None
         or value is _CLEAR
@@ -205,7 +229,6 @@ def _check_required(value: Any, field_label: str, row_num: int,
 def _check_dropdown(value: Any, field_label: str, allowed: Set[str],
                     row_num: int, record_label: str, errors: List[str],
                     required: bool = False) -> bool:
-    """Validate dropdown value. Returns True if valid (or empty and not required)."""
     if value is None or value is _CLEAR or (isinstance(value, str) and value.strip() == ""):
         if required:
             errors.append(
@@ -226,7 +249,6 @@ def _check_dropdown(value: Any, field_label: str, allowed: Set[str],
 def _check_db_dropdown(value: Any, field_label: str, allowed_set: Set[str],
                        row_num: int, record_label: str, errors: List[str],
                        required: bool = False) -> bool:
-    """Validate dropdown value against DB-sourced set."""
     if value is None or value is _CLEAR or (isinstance(value, str) and value.strip() == ""):
         if required:
             errors.append(
@@ -247,16 +269,12 @@ def _validate_lat(lat: Any, row_num: int, label: str, errors: List[str],
                   required: bool = False) -> Optional[float]:
     if lat is None:
         if required:
-            errors.append(
-                f"Row {row_num} ({label}): Trường bắt buộc 'Lat' bị để trống."
-            )
+            errors.append(f"Row {row_num} ({label}): Trường bắt buộc 'Lat' bị để trống.")
         return None
     try:
         lat_f = float(lat)
     except (ValueError, TypeError):
-        errors.append(
-            f"Row {row_num} ({label}): Giá trị Lat '{lat}' không phải số hợp lệ."
-        )
+        errors.append(f"Row {row_num} ({label}): Giá trị Lat '{lat}' không phải số hợp lệ.")
         return None
     if not (VN_LAT_MIN <= lat_f <= VN_LAT_MAX):
         errors.append(
@@ -271,16 +289,12 @@ def _validate_lon(lon: Any, row_num: int, label: str, errors: List[str],
                   required: bool = False) -> Optional[float]:
     if lon is None:
         if required:
-            errors.append(
-                f"Row {row_num} ({label}): Trường bắt buộc 'Long' bị để trống."
-            )
+            errors.append(f"Row {row_num} ({label}): Trường bắt buộc 'Long' bị để trống.")
         return None
     try:
         lon_f = float(lon)
     except (ValueError, TypeError):
-        errors.append(
-            f"Row {row_num} ({label}): Giá trị Long '{lon}' không phải số hợp lệ."
-        )
+        errors.append(f"Row {row_num} ({label}): Giá trị Long '{lon}' không phải số hợp lệ.")
         return None
     if not (VN_LON_MIN <= lon_f <= VN_LON_MAX):
         errors.append(
@@ -289,80 +303,6 @@ def _validate_lon(lon: Any, row_num: int, label: str, errors: List[str],
         )
         return None
     return lon_f
-
-
-def _validate_azimuth(azi: Any, row_num: int, label: str, errors: List[str],
-                      required: bool = False) -> Optional[float]:
-    if azi is None:
-        if required:
-            errors.append(
-                f"Row {row_num} ({label}): Trường bắt buộc 'Azimuth' bị để trống."
-            )
-        return None
-    try:
-        azi_f = float(azi)
-    except (ValueError, TypeError):
-        errors.append(
-            f"Row {row_num} ({label}): Giá trị Azimuth '{azi}' không phải số hợp lệ."
-        )
-        return None
-    if not (AZI_MIN <= azi_f <= AZI_MAX):
-        errors.append(
-            f"Row {row_num} ({label}): Azimuth {azi_f} phải trong khoảng {AZI_MIN}–{AZI_MAX} độ."
-        )
-        return None
-    return azi_f
-
-
-def _validate_positive_float(value: Any, field_label: str, row_num: int,
-                              label: str, errors: List[str],
-                              required: bool = False) -> Optional[float]:
-    if value is None or value is _CLEAR:
-        if required:
-            errors.append(
-                f"Row {row_num} ({label}): Trường bắt buộc '{field_label}' bị để trống."
-            )
-        return None
-    try:
-        f = float(value)
-    except (ValueError, TypeError):
-        errors.append(
-            f"Row {row_num} ({label}): Giá trị '{value}' không phải số hợp lệ "
-            f"cho trường '{field_label}'."
-        )
-        return None
-    if f < 0:
-        errors.append(
-            f"Row {row_num} ({label}): Trường '{field_label}' phải >= 0 (giá trị hiện tại: {f})."
-        )
-        return None
-    return f
-
-
-def _apply_changes_to_obj(obj: Any, changes: Dict[str, Any],
-                           skip_keys: Set[str] = None,
-                           bool_fields: Set[str] = None) -> bool:
-    if skip_keys is None:
-        skip_keys = set()
-    if bool_fields is None:
-        bool_fields = set()
-    changed = False
-    for k, v in changes.items():
-        if k in skip_keys:
-            continue
-        if k.startswith("_"):
-            continue
-        if v is _CLEAR:
-            continue
-        if not hasattr(obj, k):
-            continue
-        old_val = getattr(obj, k)
-        old_norm = _norm_compare(old_val, k in bool_fields)
-        new_norm = _norm_compare(v, k in bool_fields)
-        if old_norm != new_norm:
-            setattr(obj, k, v)
-            changed = True
-    return changed
 
 
 def _norm_compare(v: Any, is_bool: bool = False) -> Any:
@@ -392,7 +332,6 @@ _SITE_BOOL_FIELDS = {
 
 
 def _get_phan_loai_opts(db) -> Set[str]:
-    """Fetch allowed phan_loai_tram values from DB."""
     if db is None:
         return set()
     try:
@@ -406,7 +345,6 @@ def _get_phan_loai_opts(db) -> Set[str]:
 
 
 def _get_antenna_names(db) -> Set[str]:
-    """Fetch allowed antenna names from DB."""
     if db is None:
         return set()
     try:
@@ -418,7 +356,6 @@ def _get_antenna_names(db) -> Set[str]:
 
 
 def _get_rnc_names(db) -> Set[str]:
-    """Fetch allowed RNC names from DB."""
     if db is None:
         return set()
     try:
@@ -438,8 +375,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
     to_create: List[Dict] = []
     to_update: List[Dict] = []
     errors:    List[str]  = []
-    # Rows that have validation errors (fatal) – skip them entirely
-    fatal_rows: Set[int] = set()
+    fatal_rows: Set[int]  = set()
 
     from app.models.site import Site
 
@@ -463,8 +399,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
             tinh_official = geo.resolve_tinh(raw_tinh)
             if not tinh_official:
                 row_errors.append(
-                    f"Row {row_num} ({label}): Tỉnh/TP '{raw_tinh}' không tìm thấy trong hệ thống. "
-                    f"Vui lòng liên hệ quản trị viên để thêm tỉnh/TP này."
+                    f"Row {row_num} ({label}): Tỉnh/TP '{raw_tinh}' không tìm thấy trong hệ thống."
                 )
                 fatal_rows.add(row_num)
                 errors.extend(row_errors)
@@ -476,7 +411,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 if not phuong_xa_official:
                     row_errors.append(
                         f"Row {row_num} ({label}): Phường/Xã '{raw_phuong}' không tìm thấy "
-                        f"trong '{tinh_official}'. Vui lòng liên hệ quản trị viên."
+                        f"trong '{tinh_official}'."
                     )
         else:
             tinh_official      = raw_tinh or ""
@@ -486,7 +421,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         if not tinh_official:
             row_errors.append(f"Row {row_num} ({label}): Trường 'Tỉnh' bị để trống.")
 
-        # ── Lat / Long (required for sites) ──────────────────────────────────
+        # ── Lat / Long (required, must be numeric) ───────────────────────────
         raw_lat  = _float(row, "Lat", "LAT", "lat", "Latitude")
         raw_long = _float(row, "Long", "LONG", "long", "Longitude")
         lat  = _validate_lat(raw_lat,  row_num, label, row_errors, required=True)
@@ -499,8 +434,8 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 f"Row {row_num} ({label}): Trường bắt buộc 'Địa chỉ' bị để trống."
             )
 
-        # ── Độ cao đỉnh cột anten (required) ─────────────────────────────────
-        raw_dcant = _float_aware(row, excel_cols,
+        # ── Độ cao đỉnh cột anten (required, now STRING) ──────────────────────
+        raw_dcant = _str_aware(row, excel_cols,
             "Độ cao đỉnh cột anten (m) đến mặt đất",
             "Do cao dinh cot anten", "do_cao_dinh_cot_anten")
         if raw_dcant is None or raw_dcant is _CLEAR:
@@ -508,11 +443,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 f"Row {row_num} ({label}): Trường bắt buộc "
                 f"'Độ cao đỉnh cột anten tới mặt đất' bị để trống."
             )
-        elif isinstance(raw_dcant, float) and raw_dcant < 0:
-            row_errors.append(
-                f"Row {row_num} ({label}): 'Độ cao đỉnh cột anten' phải >= 0 "
-                f"(giá trị hiện tại: {raw_dcant})."
-            )
+        # No numeric range validation – accepts any non-empty string
 
         # ── Optional dropdown validations ─────────────────────────────────────
         site_vip_val = _v_aware(row, excel_cols, "Site VIP", "site_vip")
@@ -528,8 +459,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         phan_loai_val = _v_aware(row, excel_cols,
             "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
             "Phan loai tram", "phan_loai_tram")
-        if (phan_loai_val and phan_loai_val is not _CLEAR
-                and phan_loai_opts):
+        if (phan_loai_val and phan_loai_val is not _CLEAR and phan_loai_opts):
             _check_db_dropdown(phan_loai_val, "Phân loại trạm", phan_loai_opts,
                                row_num, label, row_errors)
 
@@ -549,7 +479,6 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 _check_dropdown(moran_val, moran_label, ALLOWED_MORAN,
                                 row_num, label, row_errors)
 
-        # If any fatal errors in this row, skip it
         if row_errors:
             errors.extend(row_errors)
             fatal_rows.add(row_num)
@@ -573,9 +502,10 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                 "Node truyền dẫn only", "Node truyen dan only", "node_truyen_dan_only"),
             "tram_phu_song_tsca": _bool_aware(row, excel_cols,
                 "Trạm phủ sóng TSCA", "Tram phu song TSCA", "tram_phu_song_tsca"),
-            "phan_loai_tram": phan_loai_val if (phan_loai_val and phan_loai_val is not _CLEAR) else _v_aware(row, excel_cols,
-                "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
-                "Phan loai tram", "phan_loai_tram"),
+            "phan_loai_tram": phan_loai_val if (phan_loai_val and phan_loai_val is not _CLEAR)
+                              else _v_aware(row, excel_cols,
+                                  "IBC/ Macro outdoor / IBC + Outdoor / miniDAS / Smallcell",
+                                  "Phan loai tram", "phan_loai_tram"),
             "moran_3g": _v_aware(row, excel_cols,
                 "TRẠM MORAN 3G (VNPT HOST, MBF HOST)", "MORAN 3G", "moran_3g"),
             "moran_4g": _v_aware(row, excel_cols,
@@ -583,8 +513,9 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
             "moran_5g": _v_aware(row, excel_cols,
                 "TRẠM MORAN 5G (VNPT HOST, MBF HOST)", "MORAN 5G", "moran_5g"),
             "ma_ptm": _v_aware(row, excel_cols, "Mã PTM", "Ma PTM", "ma_ptm", "MaPTM", "PTM"),
-            "do_cao_dinh_cot_anten": raw_dcant if isinstance(raw_dcant, float) else None,
-            "do_cao_cot_anten": _float_aware(row, excel_cols,
+            # Now string fields:
+            "do_cao_dinh_cot_anten": raw_dcant if (raw_dcant and raw_dcant is not _CLEAR) else raw_dcant,
+            "do_cao_cot_anten": _str_aware(row, excel_cols,
                 "Độ cao cột anten", "Do cao cot anten", "do_cao_cot_anten",
                 "Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình)"),
             "dia_chi": dia_chi_val,
@@ -610,11 +541,9 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                     "changes": rec, "is_rename": False,
                 })
             else:
-                create_rec = _resolve_create_rec(rec)
-                to_create.append(create_rec)
+                to_create.append(_resolve_create_rec(rec))
         else:
-            create_rec = _resolve_create_rec(rec)
-            to_create.append(create_rec)
+            to_create.append(_resolve_create_rec(rec))
 
     return {
         "to_create": to_create, "to_update": to_update,
@@ -653,8 +582,7 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
         tinh_official = geo.resolve_tinh(raw_tinh)
         if not tinh_official:
             errors_out.append(
-                f"Row {row_num}: Tỉnh/TP '{raw_tinh}' không tìm thấy trong hệ thống. "
-                f"Vui lòng liên hệ quản trị viên."
+                f"Row {row_num}: Tỉnh/TP '{raw_tinh}' không tìm thấy trong hệ thống."
             )
             tinh_official = raw_tinh
         mien = geo.mien_for(tinh_official) or raw_mien or ""
@@ -669,56 +597,51 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
     cell_name = _v(row, "Cell Name", "Cell name", "cell_name") or ""
     label     = cell_name or f"row {row_num}"
 
-    # ── Required: Lat, Long ──────────────────────────────────────────────────
+    # ── Required: Lat, Long (must be numeric) ────────────────────────────────
     raw_lat  = _float(row, "Lat", "LAT", "lat")
     raw_long = _float(row, "Long", "LONG", "long")
     lat  = _validate_lat(raw_lat,  row_num, label, errors_out, required=True)
     lon  = _validate_lon(raw_long, row_num, label, errors_out, required=True)
 
-    # ── Required: Azimuth ────────────────────────────────────────────────────
-    raw_azi  = _float(row, "Azimuth", "azimuth")
-    azi  = _validate_azimuth(raw_azi, row_num, label, errors_out, required=True)
+    # ── Required: Azimuth (now STRING – any non-empty value accepted) ─────────
+    azimuth_val = _str_aware(row, excel_cols, "Azimuth", "azimuth")
+    if azimuth_val is None or azimuth_val is _CLEAR:
+        errors_out.append(
+            f"Row {row_num} ({label}): Trường bắt buộc 'Azimuth' bị để trống."
+        )
+        azimuth_val = None
+    # No numeric range check – accepts "IBC" or "120" equally
 
-    # ── Required: Độ cao anten ───────────────────────────────────────────────
-    raw_dca = _float_aware(row, excel_cols, "Độ cao anten", "Do cao anten", "do_cao_anten")
-    dca_val: Optional[float] = None
-    if raw_dca is None or raw_dca is _CLEAR:
+    # ── Required: Độ cao anten (now STRING) ───────────────────────────────────
+    dca_val = _str_aware(row, excel_cols, "Độ cao anten", "Do cao anten", "do_cao_anten")
+    if dca_val is None or dca_val is _CLEAR:
         errors_out.append(
             f"Row {row_num} ({label}): Trường bắt buộc 'Độ cao anten' bị để trống."
         )
-    elif isinstance(raw_dca, float):
-        if raw_dca < 0:
-            errors_out.append(
-                f"Row {row_num} ({label}): 'Độ cao anten' phải >= 0 (giá trị: {raw_dca})."
-            )
-        else:
-            dca_val = raw_dca
+        dca_val = None
 
-    # ── Required: M-tilt, E-Tilt ────────────────────────────────────────────
-    raw_mtilt = _float_aware(row, excel_cols, "M-tilt", "M-Tilt", "m_tilt")
-    mtilt_val: Optional[float] = None
-    if raw_mtilt is None or raw_mtilt is _CLEAR:
+    # ── Required: M-tilt (now STRING) ─────────────────────────────────────────
+    mtilt_val = _str_aware(row, excel_cols, "M-tilt", "M-Tilt", "m_tilt")
+    if mtilt_val is None or mtilt_val is _CLEAR:
         errors_out.append(
             f"Row {row_num} ({label}): Trường bắt buộc 'M-tilt' bị để trống."
         )
-    elif isinstance(raw_mtilt, float):
-        mtilt_val = raw_mtilt
+        mtilt_val = None
 
-    raw_etilt = _float_aware(row, excel_cols, "E-Tilt", "E-tilt", "e_tilt")
-    etilt_val: Optional[float] = None
-    if raw_etilt is None or raw_etilt is _CLEAR:
+    # ── Required: E-Tilt (now STRING) ─────────────────────────────────────────
+    etilt_val = _str_aware(row, excel_cols, "E-Tilt", "E-tilt", "e_tilt")
+    if etilt_val is None or etilt_val is _CLEAR:
         errors_out.append(
             f"Row {row_num} ({label}): Trường bắt buộc 'E-Tilt' bị để trống."
         )
-    elif isinstance(raw_etilt, float):
-        etilt_val = raw_etilt
+        etilt_val = None
 
     # ── Required: Vendor ─────────────────────────────────────────────────────
     vendor_val = _v_aware(row, excel_cols, "Vendor", "vendor")
     _check_dropdown(vendor_val, "Vendor", ALLOWED_VENDORS,
                     row_num, label, errors_out, required=True)
 
-    # ── Optional dropdown validations ─────────────────────────────────────────
+    # ── Optional dropdowns ────────────────────────────────────────────────────
     vung_val = _v_aware(row, excel_cols, "Vùng phủ sóng", "Vung phu song", "vung_phu_song")
     if vung_val and vung_val is not _CLEAR:
         _check_dropdown(vung_val, "Vùng phủ sóng", ALLOWED_VUNG,
@@ -740,10 +663,12 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
                         row_num, label, errors_out)
 
     loai_anten_val = _v_aware(row, excel_cols, "Loại Anten", "Loai Anten", "loai_anten")
-    if (loai_anten_val and loai_anten_val is not _CLEAR
-            and antenna_names):
+    if (loai_anten_val and loai_anten_val is not _CLEAR and antenna_names):
         _check_db_dropdown(loai_anten_val, "Loại Anten", antenna_names,
                            row_num, label, errors_out)
+
+    # ── Total Tilt (optional, now STRING) ─────────────────────────────────────
+    total_tilt_val = _str_aware(row, excel_cols, "Total Tilt", "Total tilt", "total_tilt")
 
     return {
         "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
@@ -758,11 +683,11 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
         "lat": lat, "long": lon,
         "vung_phu_song": vung_val,
         "vendor":        vendor_val,
-        "do_cao_anten":  dca_val,
-        "azimuth": azi,
-        "m_tilt":        mtilt_val,
-        "e_tilt":        etilt_val,
-        "total_tilt":    _float_aware(row, excel_cols, "Total Tilt", "Total tilt", "total_tilt"),
+        "do_cao_anten":  dca_val,       # string now
+        "azimuth":       azimuth_val,   # string now
+        "m_tilt":        mtilt_val,     # string now
+        "e_tilt":        etilt_val,     # string now
+        "total_tilt":    total_tilt_val, # string now
         "loai_anten":    loai_anten_val,
         "baseband":      _v_aware(row, excel_cols, "Baseband", "baseband"),
         "rf":            _v_aware(row, excel_cols, "RF", "rf"),
@@ -800,7 +725,6 @@ def _parse_cell_excel(
         row_num    = int(str(i)) + 2
         row_errors: List[str] = []
 
-        # Quick required check before expensive processing
         cell_name_raw = _v(row, "Cell Name", "Cell name", "cell_name")
         site_name_raw = _v(row, "Site Name", "Site name", "site_name")
 
@@ -838,13 +762,11 @@ def _parse_cell_excel(
 
         extra = extra_fields_fn(row, excel_cols, row_num, errors, rnc_names, antenna_names)
         if extra is None:
-            # extra_fields_fn signals a fatal error
             fatal_rows.add(row_num)
             continue
 
-        rec   = {**common, **extra}
+        rec = {**common, **extra}
 
-        # ── Site resolution ───────────────────────────────────────────────────
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
@@ -871,7 +793,6 @@ def _parse_cell_excel(
 
         rec["site_id"] = site_id
 
-        # ── Cell resolution ───────────────────────────────────────────────────
         existing_cell = None
         if db:
             if site_obj:
@@ -909,8 +830,7 @@ def _parse_cell_excel(
                 "is_rename":   False,
             })
         else:
-            create_rec = _resolve_cell_create_rec(rec)
-            to_create.append(create_rec)
+            to_create.append(_resolve_cell_create_rec(rec))
 
     return {
         "to_create":       to_create,
@@ -1000,10 +920,8 @@ def parse_cell4g_excel(file_bytes, db=None, dry_run=False):
             "earfcn":           _v_aware(row, excel_cols, "EARFCN", "earfcn"),
             "tac":              _v_aware(row, excel_cols, "TAC", "tac"),
             "pci":              _v_aware(row, excel_cols, "PCI", "pci"),
-            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID",
-                                          "root_sequence_id"),
-            "bandwidth":        _v_aware(row, excel_cols, "Bandwitdh", "Bandwidth",
-                                          "bandwidth"),
+            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID", "root_sequence_id"),
+            "bandwidth":        _v_aware(row, excel_cols, "Bandwitdh", "Bandwidth", "bandwidth"),
             "eci":              _v_aware(row, excel_cols, "ECI", "eci"),
         }
     return _parse_cell_excel(file_bytes, Cell4G, extra, db=db, dry_run=dry_run)
@@ -1031,13 +949,11 @@ def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
             "gnodeb_id":        _v_aware(row, excel_cols, "gNodeB ID", "gnodeb_id"),
             "tac":              _v_aware(row, excel_cols, "TAC", "tac"),
             "pci":              _v_aware(row, excel_cols, "PCI", "pci"),
-            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID",
-                                          "root_sequence_id"),
+            "root_sequence_id": _v_aware(row, excel_cols, "Root Sequence ID", "root_sequence_id"),
             "ssb_arfcn":        _v_aware(row, excel_cols, "SSB-ARFCN", "ssb_arfcn"),
             "center_arfcn":     _v_aware(row, excel_cols, "Center-ARFCN", "center_arfcn"),
             "gscn":             _v_aware(row, excel_cols, "GSCN", "gscn"),
-            "bandwidth":        _v_aware(row, excel_cols, "Bandwidth (MHz)", "Bandwidth",
-                                          "bandwidth"),
+            "bandwidth":        _v_aware(row, excel_cols, "Bandwidth (MHz)", "Bandwidth", "bandwidth"),
             "nci":              _v_aware(row, excel_cols, "NCI", "nci"),
             "mu_mimo":          mu_mimo_val,
         }

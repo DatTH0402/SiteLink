@@ -16,8 +16,8 @@ export interface Site {
   site_name_cu?: string
   site_name: string
   site_vip?: string
-  lat: number        // required
-  long: number       // required
+  lat: number
+  long: number
   tram_2g: boolean
   tram_3g: boolean
   tram_4g: boolean
@@ -31,9 +31,9 @@ export interface Site {
   moran_4g?: string
   moran_5g?: string
   ma_ptm?: string
-  do_cao_dinh_cot_anten: number  // required
-  do_cao_cot_anten?: number
-  dia_chi: string                // required
+  do_cao_dinh_cot_anten?: string   // changed: number → string
+  do_cao_cot_anten?: string        // changed: number → string
+  dia_chi: string
   ghi_chu?: string
 }
 
@@ -49,15 +49,15 @@ export interface CellBase {
   cell_name_old?: string
   cell_vip?: string
   moran?: string
-  lat: number        // required
-  long: number       // required
+  lat: number
+  long: number
   vung_phu_song?: string
-  vendor: string     // required
-  do_cao_anten: number  // required
-  azimuth: number    // required
-  m_tilt: number     // required
-  e_tilt: number     // required
-  total_tilt?: number
+  vendor: string
+  do_cao_anten?: string    // changed: number → string
+  azimuth?: string         // changed: number → string
+  m_tilt?: string          // changed: number → string
+  e_tilt?: string          // changed: number → string
+  total_tilt?: string      // changed: number → string
   loai_anten?: string
   baseband?: string
   rf?: string

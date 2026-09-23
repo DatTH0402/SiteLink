@@ -1,13 +1,5 @@
 """
 schemas/cell.py
-
-Design:
-  CellBase      – all fields Optional  → safe for DB reads/serialization
-  CellCreate    – inherits CellBase + model_validator for required fields
-  CellUpdate    – all Optional
-  Cell3GRead    – response model for 3G cells
-  Cell4GRead    – response model for 4G cells
-  Cell5GRead    – response model for 5G cells
 """
 from __future__ import annotations
 from typing import Optional
@@ -29,11 +21,11 @@ class CellBase(BaseModel):
     long:           Optional[float] = None
     vung_phu_song:  Optional[str]   = None
     vendor:         Optional[str]   = None
-    do_cao_anten:   Optional[float] = None
-    azimuth:        Optional[float] = None
-    m_tilt:         Optional[float] = None
-    e_tilt:         Optional[float] = None
-    total_tilt:     Optional[float] = None
+    do_cao_anten:   Optional[str]   = None   # changed: float → str
+    azimuth:        Optional[str]   = None   # changed: float → str
+    m_tilt:         Optional[str]   = None   # changed: float → str
+    e_tilt:         Optional[str]   = None   # changed: float → str
+    total_tilt:     Optional[str]   = None   # changed: float → str
     loai_anten:     Optional[str]   = None
     baseband:       Optional[str]   = None
     rf:             Optional[str]   = None
@@ -83,24 +75,17 @@ class CellCreate(CellBase):
                 f"'long' = {self.long} nằm ngoài phạm vi Việt Nam (102.14 – 109.47)."
             )
 
-        if self.azimuth is None:
+        # azimuth, do_cao_anten, m_tilt, e_tilt: required, now strings
+        if not self.azimuth or not str(self.azimuth).strip():
             errors.append("'azimuth' là trường bắt buộc.")
-        elif not (0 <= self.azimuth <= 359):
-            errors.append(
-                f"'azimuth' = {self.azimuth} phải trong khoảng 0 – 359."
-            )
 
-        if self.do_cao_anten is None:
+        if not self.do_cao_anten or not str(self.do_cao_anten).strip():
             errors.append("'do_cao_anten' (Độ cao anten) là trường bắt buộc.")
-        elif self.do_cao_anten < 0:
-            errors.append(
-                f"'do_cao_anten' phải >= 0 (giá trị: {self.do_cao_anten})."
-            )
 
-        if self.m_tilt is None:
+        if not self.m_tilt or not str(self.m_tilt).strip():
             errors.append("'m_tilt' (M-tilt) là trường bắt buộc.")
 
-        if self.e_tilt is None:
+        if not self.e_tilt or not str(self.e_tilt).strip():
             errors.append("'e_tilt' (E-Tilt) là trường bắt buộc.")
 
         if errors:
@@ -109,7 +94,6 @@ class CellCreate(CellBase):
 
 
 class CellUpdate(BaseModel):
-    """All fields optional – supports partial updates."""
     site_id:        Optional[int]   = None
     site_name:      Optional[str]   = None
     site_name_old:  Optional[str]   = None
@@ -124,11 +108,11 @@ class CellUpdate(BaseModel):
     long:           Optional[float] = None
     vung_phu_song:  Optional[str]   = None
     vendor:         Optional[str]   = None
-    do_cao_anten:   Optional[float] = None
-    azimuth:        Optional[float] = None
-    m_tilt:         Optional[float] = None
-    e_tilt:         Optional[float] = None
-    total_tilt:     Optional[float] = None
+    do_cao_anten:   Optional[str]   = None   # changed: float → str
+    azimuth:        Optional[str]   = None   # changed: float → str
+    m_tilt:         Optional[str]   = None   # changed: float → str
+    e_tilt:         Optional[str]   = None   # changed: float → str
+    total_tilt:     Optional[str]   = None   # changed: float → str
     loai_anten:     Optional[str]   = None
     baseband:       Optional[str]   = None
     rf:             Optional[str]   = None

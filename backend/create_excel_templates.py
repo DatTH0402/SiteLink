@@ -644,8 +644,8 @@ def create_site_template() -> None:
         ("MORAN 3G",              "MORAN 3G: VNPT HOST hoặc MBF HOST",                        18,  False),
         ("MORAN 4G",              "MORAN 4G: VNPT HOST hoặc MBF HOST",                        18,  False),
         ("MORAN 5G",              "MORAN 5G: VNPT HOST hoặc MBF HOST",                        18,  False),
-        ("Do cao dinh cot anten", "Độ cao đỉnh cột anten tới mặt đất (m) – bắt buộc",        22,  True),
-        ("Do cao cot anten",      "Độ cao cột anten – đỉnh đến chân cột (m)",                 20,  False),
+        ("Do cao dinh cot anten", "Độ cao đỉnh cột anten tới mặt đất – bắt buộc (số hoặc chuỗi, vd: 35 hoặc IBC)", 22, True),
+        ("Do cao cot anten",      "Độ cao cột anten – đỉnh đến chân cột (số hoặc chuỗi, vd: 30 hoặc IBC)", 20, False),
         ("Dia chi",               "Địa chỉ chi tiết của trạm – bắt buộc",                     30,  True),
         ("Ghi chu",               "Ghi chú thêm",                                              30,  False),
     ]
@@ -701,12 +701,9 @@ def create_site_template() -> None:
     for col_name in ["MORAN 3G", "MORAN 4G", "MORAN 5G"]:
         _apply_dv(ws, _dv_list_inline(MORAN_LIST), cm[col_name])
 
-    _apply_dv(ws, _dv_decimal(0, 999,
-                               "Độ cao không hợp lệ", "Phải là số dương (m)"),
-              cm["Do cao dinh cot anten"])
-    _apply_dv(ws, _dv_decimal(0, 999,
-                               "Độ cao không hợp lệ", "Phải là số dương (m)"),
-              cm["Do cao cot anten"])
+    # do_cao_dinh_cot_anten / do_cao_cot_anten are now free-text strings
+    # (accept numeric values like "35" or special values like "IBC")
+    # No data validation applied – any non-empty string is valid.
 
     # ── Sample row ────────────────────────────────────────────────────────────
     sample = {
@@ -769,11 +766,11 @@ _COMMON_CELL_COLS: List[Tuple[str, str, float, bool]] = [
     ("Long",           f"Longitude – phải trong {VN_LON_MIN}–{VN_LON_MAX}",           14,  True),
     ("Vung phu song",  "Vùng phủ sóng: Indoor hoặc Outdoor",                          14,  False),
     ("Vendor",         "Hãng thiết bị – bắt buộc, chọn từ danh sách",                 14,  True),
-    ("Do cao anten",   "Độ cao anten (m) – bắt buộc, số dương",                       16,  True),
-    ("Azimuth",        f"Góc phương vị – bắt buộc, trong {AZI_MIN}–{AZI_MAX}",        12,  True),
-    ("M-tilt",         "Mechanical tilt – bắt buộc",                                   10,  True),
-    ("E-Tilt",         "Electrical tilt – bắt buộc",                                   10,  True),
-    ("Total Tilt",     "Tổng tilt = M-tilt + E-Tilt (tự tính hoặc để trống)",         12,  False),
+    ("Do cao anten",   "Độ cao anten – bắt buộc (số hoặc chuỗi, vd: 28 hoặc IBC)",    16,  True),
+    ("Azimuth",        "Góc phương vị – bắt buộc (số hoặc chuỗi, vd: 120 hoặc IBC)", 12,  True),
+    ("M-tilt",         "Mechanical tilt – bắt buộc (số hoặc chuỗi, vd: 2 hoặc IBC)", 10,  True),
+    ("E-Tilt",         "Electrical tilt – bắt buộc (số hoặc chuỗi, vd: 4 hoặc IBC)", 10,  True),
+    ("Total Tilt",     "Tổng tilt (số hoặc chuỗi, tự tính hoặc để trống)",            12,  False),
     ("Loai Anten",     "Loại anten – chọn từ danh sách antenna",                       35,  False),
     ("Baseband",       "Tên thiết bị baseband",                                         18,  False),
     ("RF",             "Tên thiết bị RF",                                              16,  False),
@@ -815,18 +812,9 @@ def _apply_common_cell_validations(
     _apply_dv(ws, _dv_list_inline(VUNG_LIST),   cm["Vung phu song"])
     _apply_dv(ws, _dv_list_inline(VENDOR_LIST), cm["Vendor"])
 
-    _apply_dv(ws, _dv_decimal(0, 999, "Độ cao không hợp lệ", "Phải là số dương (m)"),
-              cm["Do cao anten"])
-    _apply_dv(ws, _dv_whole(AZI_MIN, AZI_MAX,
-                             "Azimuth không hợp lệ",
-                             f"Azimuth phải trong khoảng {AZI_MIN}–{AZI_MAX}"),
-              cm["Azimuth"])
-
-    for col_name in ["M-tilt", "E-Tilt", "Total Tilt"]:
-        _apply_dv(ws, _dv_decimal(-30, 30,
-                                   f"{col_name} không hợp lệ",
-                                   f"{col_name} thường trong khoảng -30 đến 30"),
-                  cm[col_name])
+    # do_cao_anten, azimuth, m_tilt, e_tilt, total_tilt are now free-text strings
+    # (accept numeric values like "35" or special values like "IBC")
+    # No numeric data validation applied for these columns.
 
     lk_ant = _write_lookup_col(wb, lc, ANTENNA_NAMES, "LoaiAnten"); lc += 1
     _apply_dv(ws, _dv_list_formula(lk_ant), cm["Loai Anten"])

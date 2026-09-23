@@ -12,15 +12,14 @@ class SiteRevision(Base):
     revision_no     = Column(Integer, nullable=False, default=1)
     changed_by      = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     changed_by_name = Column(String(100), nullable=True)
-    change_source   = Column(String(20), default="form")   # 'form' | 'excel'
+    change_source   = Column(String(20), default="form")
     change_note     = Column(Text, nullable=True)
 
-    # All site fields snapshot
     mien                    = Column(String(10))
     tinh                    = Column(String(100))
     phuong_xa               = Column(String(150))
     site_name_cu            = Column(String(100))
-    site_name_old_ref       = Column(String(100))          # previous name before rename
+    site_name_old_ref       = Column(String(100))
     site_vip                = Column(String(10))
     lat                     = Column(Float)
     long                    = Column(Float)
@@ -37,11 +36,11 @@ class SiteRevision(Base):
     moran_4g                = Column(String(50))
     moran_5g                = Column(String(50))
     ma_ptm                  = Column(String(100))
-    do_cao_dinh_cot_anten   = Column(Float)
-    do_cao_cot_anten        = Column(Float)
+    do_cao_dinh_cot_anten   = Column(String(50))   # changed: Float → String
+    do_cao_cot_anten        = Column(String(50))   # changed: Float → String
     dia_chi                 = Column(Text)
     ghi_chu                 = Column(Text)
 
-    changed_fields  = Column(Text)   # JSON {field: [old_val, new_val]}
+    changed_fields  = Column(Text)
     created_at      = Column(DateTime(timezone=True),
                              default=lambda: datetime.now(timezone.utc))

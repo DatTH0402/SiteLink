@@ -1,16 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Typography, Form, Input, Select, Switch, Button,
-  Row, Col, Card, Space, InputNumber, message,
+  Row, Col, Card, Space, message,
 } from 'antd'
 import { SaveOutlined, ArrowLeftOutlined } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getSite, createSite, updateSite } from '@/api/sites'
 import { getDropdown, getTinhList, getTinhXaPhuong } from '@/api/report'
 import type { TinhItem, PhuongXaItem } from '@/types'
-
-const VN_LAT_MIN = 8.33,  VN_LAT_MAX = 23.39
-const VN_LON_MIN = 102.14, VN_LON_MAX = 109.47
 
 export default function SiteFormPage() {
   const [form]   = Form.useForm()
@@ -179,17 +176,16 @@ export default function SiteFormPage() {
                   {
                     validator: (_: unknown, value: number) => {
                       if (value === undefined || value === null) return Promise.resolve()
-                      if (value < VN_LAT_MIN || value > VN_LAT_MAX)
-                        return Promise.reject(
-                          `Latitude phải trong khoảng ${VN_LAT_MIN} – ${VN_LAT_MAX} (Việt Nam)`
-                        )
+                      const v = Number(value)
+                      if (isNaN(v)) return Promise.reject('Latitude phải là số')
+                      if (v < 8.33 || v > 23.39)
+                        return Promise.reject('Latitude phải trong khoảng 8.33 – 23.39 (Việt Nam)')
                       return Promise.resolve()
                     }
                   }
                 ]}
               >
-                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
-                  placeholder="8.33 – 23.39" />
+                <Input placeholder="8.33 – 23.39" />
               </Form.Item>
             </Col>
             <Col span={6}>
@@ -201,44 +197,35 @@ export default function SiteFormPage() {
                   {
                     validator: (_: unknown, value: number) => {
                       if (value === undefined || value === null) return Promise.resolve()
-                      if (value < VN_LON_MIN || value > VN_LON_MAX)
-                        return Promise.reject(
-                          `Longitude phải trong khoảng ${VN_LON_MIN} – ${VN_LON_MAX} (Việt Nam)`
-                        )
+                      const v = Number(value)
+                      if (isNaN(v)) return Promise.reject('Longitude phải là số')
+                      if (v < 102.14 || v > 109.47)
+                        return Promise.reject('Longitude phải trong khoảng 102.14 – 109.47 (Việt Nam)')
                       return Promise.resolve()
                     }
                   }
                 ]}
               >
-                <InputNumber style={{ width: '100%' }} precision={5} step={0.00001}
-                  placeholder="102.14 – 109.47" />
+                <Input placeholder="102.14 – 109.47" />
               </Form.Item>
             </Col>
             <Col span={6}>
+              {/* Now a free-text string field */}
               <Form.Item
                 name="do_cao_dinh_cot_anten"
-                label="Độ cao đỉnh cột anten tới mặt đất (m) *"
-                rules={[
-                  { required: true, message: 'Vui lòng nhập độ cao đỉnh cột anten' },
-                  {
-                    validator: (_: unknown, value: number) => {
-                      if (value === undefined || value === null) return Promise.resolve()
-                      if (value < 0)
-                        return Promise.reject('Độ cao phải >= 0')
-                      return Promise.resolve()
-                    }
-                  }
-                ]}
+                label="Độ cao đỉnh cột anten tới mặt đất *"
+                rules={[{ required: true, message: 'Vui lòng nhập độ cao đỉnh cột anten' }]}
               >
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <Input placeholder="vd: 35 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={6}>
+              {/* Now a free-text string field */}
               <Form.Item
                 name="do_cao_cot_anten"
-                label="Độ cao cột anten (m)"
+                label="Độ cao cột anten"
               >
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <Input placeholder="vd: 30 hoặc IBC" />
               </Form.Item>
             </Col>
           </Row>
