@@ -74,7 +74,7 @@ export default function Cells4GPage() {
 
   useEffect(() => {
     load()
-    getSites({ limit: 2000 }).then(setSites)
+    getSites({ limit: 100000 }).then(setSites)
     getTinhList().then(setTinhList)
     getAntennaList().then((list: AntennaItem[]) => {
       const sorted = [...list].sort((a, b) => {
