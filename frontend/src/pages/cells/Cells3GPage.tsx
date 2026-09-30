@@ -155,7 +155,13 @@ export default function Cells3GPage() {
         syncAfterCreate([created])
       }
       setModalOpen(false); load()
-    } catch (e: any) { message.error(e.response?.data?.detail || 'Có lỗi xảy ra') }
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail
+      const msg = Array.isArray(detail)
+        ? detail.map((d: any) => `${d.loc?.slice(-1)?.[0] ?? 'field'}: ${d.msg}`).join('; ')
+        : (typeof detail === 'string' ? detail : (e?.message || 'Có lỗi xảy ra'))
+      message.error(msg)
+    }
   }
 
   const handleDelete = async (id: number) => {
