@@ -1,10 +1,11 @@
 import traceback
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.site import Site
+from app.services.list_query import apply_column_filters, apply_sort, register_listing_routes
 from app.models.cell_3g import Cell3G
 from app.models.cell_4g import Cell4G
 from app.models.cell_5g import Cell5G
@@ -16,6 +17,7 @@ from app.services.import_excel import parse_site_excel, _CLEAR, _SITE_BOOL_FIELD
 from app.services.revision import record_site_revision, _site_snapshot
 
 router = APIRouter()
+register_listing_routes(router, Site, "site")  # GET /ids, GET /distinct/{column}
 
 _SITE_BOOL_FIELD_SET = frozenset({
     'tram_2g', 'tram_3g', 'tram_4g', 'tram_5g',
@@ -232,6 +234,7 @@ async def import_sites_excel(
 
 @router.get("/", response_model=List[SiteRead])
 def list_sites(
+    response: Response,
     skip: int = 0,
     limit: int = 500,
     search:       Optional[str]       = Query(None),
@@ -242,6 +245,9 @@ def list_sites(
     tram_3g:      Optional[bool]      = Query(None),
     tram_4g:      Optional[bool]      = Query(None),
     tram_5g:      Optional[bool]      = Query(None),
+    sort_by:  Optional[str] = Query(None),
+    sort_dir: str           = Query("asc"),
+    filters:  Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
@@ -254,6 +260,9 @@ def list_sites(
     if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
     if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
     if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
+    q = apply_column_filters(q, Site, filters)
+    response.headers["X-Total-Count"] = str(q.count())
+    q = apply_sort(q, Site, sort_by, sort_dir)
     return q.offset(skip).limit(limit).all()
 
 

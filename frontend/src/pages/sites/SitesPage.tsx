@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { useExcelColumns } from '@/hooks/useExcelColumns'
-import { useTablePagination } from '@/hooks/useTablePagination'
+import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
@@ -13,7 +12,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
-  getSites, deleteSite, dryRunSitesExcel, importSitesExcel,
+  getSites, getSitesPaged, getSiteIds, getSiteDistinct, deleteSite, dryRunSitesExcel, importSitesExcel,
   bulkDeleteSites, bulkUpdateSites,
 } from '@/api/sites'
 import { exportSites, exportSitesKmz } from '@/api/export'
@@ -61,23 +60,30 @@ export default function SitesPage() {
     }
   }, [tinh])
 
+  const sq = useServerQuery([search, siteNameCu, mien, tinh, phuongXa])
+
   const load = useCallback(() => {
     setLoading(true)
     setLoadError(null)
-    const params: Record<string, unknown> = { limit: 500 }
+    const params: Record<string, unknown> = { ...sq.params }
     if (search)           params.search       = search
     if (siteNameCu)       params.site_name_cu = siteNameCu
     if (mien.length)      params.mien         = mien
     if (tinh.length)      params.tinh         = tinh
     if (phuongXa.length)  params.phuong_xa    = phuongXa
-    getSites(params)
-      .then(setSites)
+    const ticket = sq.nextTicket()
+    getSitesPaged(params)
+      .then((res) => {
+        if (!sq.isCurrent(ticket)) return
+        setSites(res.items)
+        sq.onLoaded(res.total, params)
+      })
       .catch(err => {
         const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
         setLoadError(`Cannot load sites: ${detail}`)
       })
       .finally(() => setLoading(false))
-  }, [search, siteNameCu, mien, tinh, phuongXa])
+  }, [search, siteNameCu, mien, tinh, phuongXa, sq.params])
 
   useEffect(() => { load() }, [load])
 
@@ -146,7 +152,7 @@ export default function SitesPage() {
         tinh:         tinh.length ? tinh : undefined,
         phuong_xa:    phuongXa.length ? phuongXa : undefined,
       })
-      message.success(`Xuất Excel thành công (${sites.length} sites)`)
+      message.success(`Xuất Excel thành công`)
     } catch (e: any) {
       message.error(e?.message || 'Xuất thất bại')
     } finally {
@@ -165,7 +171,7 @@ export default function SitesPage() {
         tinh:         tinh.length ? tinh : undefined,
         phuong_xa:    phuongXa.length ? phuongXa : undefined,
       })
-      message.success(`Xuất KMZ thành công (${sites.length} sites)`)
+      message.success(`Xuất KMZ thành công`)
     } catch (e: any) {
       message.error(e?.message || 'Xuất KMZ thất bại')
     } finally {
@@ -182,10 +188,11 @@ export default function SitesPage() {
     setPhuongXa([])
   }
 
-  const { pagination } = useTablePagination(sites.length, 'sites')
+  const pagination = sq.pagination('sites')
 
   const rowSelection: TableRowSelection<Site> = {
     selectedRowKeys: selectedIds,
+    preserveSelectedRowKeys: true,
     onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
@@ -244,7 +251,11 @@ export default function SitesPage() {
 
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
     filterBar, clearAll: clearColumnFilters } =
-    useExcelColumns(columns, sites, { onFilterChange: () => setSelectedIds([]) })
+    useServerColumns(columns, sites, sq, {
+      fetchDistinct: (field, p) => getSiteDistinct(field, p),
+      fetchIds:      (p) => getSiteIds(p),
+      selectedIds, setSelectedIds, unit: 'site',
+    })
   const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
@@ -259,13 +270,13 @@ export default function SitesPage() {
               onClick={handleKmzExport}
               style={{ borderColor: '#722ed1', color: '#722ed1' }}
             >
-              Xuất KMZ ({sites.length})
+              Xuất KMZ
             </Button>
           </Tooltip>
           <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuất Excel ({sites.length})
+              Xuất Excel
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>

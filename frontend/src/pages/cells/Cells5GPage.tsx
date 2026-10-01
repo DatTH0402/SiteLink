@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { useExcelColumns } from '@/hooks/useExcelColumns'
-import { useTablePagination } from '@/hooks/useTablePagination'
+import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'
+import SiteSelect from '@/components/shared/SiteSelect'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Tooltip,
@@ -47,7 +47,14 @@ export default function Cells5GPage() {
   const tinhOptions   = tinhList.length > 0
     ? tinhList.map(t => t.ten_tinh)
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
-  const vendorOptions = [...new Set(data.map(c => c.vendor).filter(Boolean))].sort() as string[]
+  const [vendorOptions, setVendorOptions] = useState<string[]>([])
+  useEffect(() => {
+    cells5gApi.distinct('vendor', { limit: 200 })
+      .then((r) => setVendorOptions(
+        r.values.map((v) => v.value)
+         .filter((v): v is string => typeof v === 'string' && v !== '')))
+      .catch(() => {})
+  }, [])
 
   // Reload ward options when province filter changes (single province only)
   useEffect(() => {
@@ -58,23 +65,29 @@ export default function Cells5GPage() {
     }
   }, [tinh])
 
+  const sq = useServerQuery([search, cellNameOld, mien, tinh, phuongXa, vendor])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { limit: 1000 }
+      const params: Record<string, unknown> = { ...sq.params }
       if (search)           params.search        = search
       if (cellNameOld)      params.cell_name_old = cellNameOld
       if (mien.length)      params.mien          = mien
       if (tinh.length)      params.tinh          = tinh
       if (phuongXa.length)  params.phuong_xa     = phuongXa
       if (vendor.length)    params.vendor        = vendor
-      setData(await cells5gApi.list(params))
+      const ticket = sq.nextTicket()
+      const res = await cells5gApi.listPaged(params)
+      if (!sq.isCurrent(ticket)) return
+      setData(res.items)
+      sq.onLoaded(res.total, params)
     } finally { setLoading(false) }
-  }, [search, cellNameOld, mien, tinh, phuongXa, vendor])
+  }, [search, cellNameOld, mien, tinh, phuongXa, vendor, sq.params])
+
+  useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    load()
-    getSites({ limit: 100000 }).then(setSites)
     getTinhList().then(setTinhList)
     getAntennaList().then((list: AntennaItem[]) => {
       const sorted = [...list].sort((a, b) => {
@@ -84,7 +97,7 @@ export default function Cells5GPage() {
       })
       setAntennaList(sorted)
     })
-  }, [load])
+  }, [])
 
   const handleExport = async () => {
     setExporting(true)
@@ -97,7 +110,7 @@ export default function Cells5GPage() {
         phuong_xa:     phuongXa.length ? phuongXa : undefined,
         vendor:        vendor.length ? vendor : undefined,
       })
-      message.success(`Xuất Excel thành công (${data.length} cells)`)
+      message.success(`Xuất Excel thành công`)
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
@@ -155,10 +168,11 @@ export default function Cells5GPage() {
     setSelectedIds([]); load()
   }
 
-  const { pagination } = useTablePagination(data.length, 'cells')
+  const pagination = sq.pagination('cells')
 
   const rowSelection: TableRowSelection<Cell5G> = {
     selectedRowKeys: selectedIds,
+    preserveSelectedRowKeys: true,
     onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
@@ -213,7 +227,11 @@ export default function Cells5GPage() {
 
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
     filterBar, clearAll: clearColumnFilters } =
-    useExcelColumns(columns, data, { onFilterChange: () => setSelectedIds([]) })
+    useServerColumns(columns, data, sq, {
+      fetchDistinct: (field, p) => cells5gApi.distinct(field, p),
+      fetchIds:      (p) => cells5gApi.ids(p),
+      selectedIds, setSelectedIds, unit: 'cell',
+    })
   const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
@@ -224,7 +242,7 @@ export default function Cells5GPage() {
           <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuất Excel ({data.length})
+              Xuất Excel
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
@@ -316,12 +334,11 @@ export default function Cells5GPage() {
         <Form form={form} layout="vertical">
           <Row gutter={12}>
             <Col span={12}><Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
-              <Select showSearch optionFilterProp="children" allowClear placeholder="Chọn site..."
-                      onChange={handleSiteSelect} disabled={Boolean(editing)}
-                      filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                {sites.map(s => <Select.Option key={s.id} value={s.id}>{s.site_name}</Select.Option>)}
-              </Select>
-            </Form.Item></Col>
+                <SiteSelect
+                  disabled={Boolean(editing)}
+                  onSiteChange={(s) => { if (s) form.setFieldValue('site_name', s.site_name) }}
+                />
+              </Form.Item></Col>
             <Col span={12}><Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item></Col>
             <Col span={12}><Form.Item name="site_name" label="Site Name">
               <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />

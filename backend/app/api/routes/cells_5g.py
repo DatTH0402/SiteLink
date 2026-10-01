@@ -1,10 +1,11 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.cell_5g import Cell5G
 from app.models.site import Site
+from app.services.list_query import apply_column_filters, apply_sort, register_listing_routes
 from app.services.site_info import apply_site_info
 from app.schemas.cell import Cell5GCreate, Cell5GUpdate, Cell5GRead, CellCreate, CellUpdate
 from app.utils.deps import get_current_user
@@ -14,6 +15,7 @@ from app.services.import_excel import parse_cell5g_excel, _CLEAR
 from app.services.revision import record_cell5g_revision, _cell5g_snapshot
 
 router = APIRouter()
+register_listing_routes(router, Cell5G, "cell")  # GET /ids, GET /distinct/{column}
 
 
 def _or_404(db: Session, record_id: int) -> Cell5G:
@@ -56,6 +58,7 @@ def _apply_cell_changes(existing: Cell5G, changes: dict,
 
 @router.get("/", response_model=List[Cell5GRead])
 def list_cells(
+    response: Response,
     skip: int = 0, limit: int = 500,
     search:        Optional[str]       = Query(None),
     cell_name_old: Optional[str]       = Query(None),
@@ -65,6 +68,9 @@ def list_cells(
     vendor:        Optional[List[str]] = Query(None),
     mimo:          Optional[List[str]] = Query(None),
     vung_phu_song: Optional[List[str]] = Query(None),
+    sort_by:  Optional[str] = Query(None),
+    sort_dir: str           = Query("asc"),
+    filters:  Optional[str] = Query(None),
     db: Session = Depends(get_db), _=Depends(get_current_user),
 ):
     q = db.query(Cell5G)
@@ -76,6 +82,9 @@ def list_cells(
     if vendor:        q = q.filter(Cell5G.vendor.in_(vendor))
     if mimo:          q = q.filter(Cell5G.mimo.in_(mimo))
     if vung_phu_song: q = q.filter(Cell5G.vung_phu_song.in_(vung_phu_song))
+    q = apply_column_filters(q, Cell5G, filters)
+    response.headers["X-Total-Count"] = str(q.count())
+    q = apply_sort(q, Cell5G, sort_by, sort_dir)
     return q.offset(skip).limit(limit).all()
 
 

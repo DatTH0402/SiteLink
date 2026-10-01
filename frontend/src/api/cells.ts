@@ -1,4 +1,5 @@
 import api from './client'
+import { pagedGet, idsGet, distinctGet } from './listing'
 import type { Cell3G, Cell4G, Cell5G, CellDryRunResult, ImportResult } from '@/types'
 
 export type { CellDryRunResult, ImportResult }
@@ -30,6 +31,15 @@ function makeCellApi<T>(tech: string) {
   return {
     list: (params?: Record<string, unknown>) =>
       api.get<T[]>(`/api/v1/cells-${tech}/`, { params }).then((r) => r.data),
+
+    listPaged: (params?: Record<string, unknown>) =>
+      pagedGet<T>(`/api/v1/cells-${tech}/`, params),
+
+    ids: (params?: Record<string, unknown>) =>
+      idsGet(`/api/v1/cells-${tech}`, params),
+
+    distinct: (column: string, params?: Record<string, unknown>) =>
+      distinctGet(`/api/v1/cells-${tech}`, column, params),
 
     get: (id: number) =>
       api.get<T>(`/api/v1/cells-${tech}/${id}`).then((r) => r.data),

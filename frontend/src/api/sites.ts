@@ -1,4 +1,5 @@
 import api from './client'
+import { pagedGet, idsGet, distinctGet } from './listing'
 import type { Site, SiteDryRunResult, ImportResult } from '@/types'
 
 /**
@@ -57,3 +58,13 @@ export const importSitesExcel = async (file: File) => {
     throw err
   }
 }
+
+// ── server-side listing (paging / column filters / select-all) ───────────────
+export const getSitesPaged = (params?: Record<string, unknown>) =>
+  pagedGet<Site>('/api/v1/sites/', params)
+
+export const getSiteIds = (params?: Record<string, unknown>) =>
+  idsGet('/api/v1/sites', params)
+
+export const getSiteDistinct = (column: string, params?: Record<string, unknown>) =>
+  distinctGet('/api/v1/sites', column, params)
