@@ -10,6 +10,7 @@
  *    Empty filters → show all records (sorted by time desc).
  */
 import React, { useState, useCallback, useEffect } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Tabs, Input, Button, Table, Tag, Space,
   Row, Col, Badge, Alert, Select, Divider,
@@ -199,6 +200,7 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
   const [search,  setSearch]  = useState('')
   const [tinh,    setTinh]    = useState<string | undefined>()
   const [data,    setData]    = useState<SiteRevision[]>([])
+  const { pagination } = useTablePagination(data.length, 'phiên bản')
   const [loading, setLoading] = useState(false)
 
   const load = useCallback(async () => {
@@ -313,7 +315,7 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
         columns={columns} dataSource={data} rowKey="id"
         loading={loading} size="small"
         scroll={{ x: scrollX, y: 500 }} bordered
-        pagination={{ pageSize: 50, showTotal: t => `${t} phiên bản`, showSizeChanger: true }}
+        pagination={pagination}
         expandable={{
           expandedRowRender: (r: SiteRevision) => {
             const diff   = r.changed_fields || {}
@@ -551,6 +553,7 @@ function CellRevisionTab({
   const [cellName, setCellName] = useState('')
   const [tinh,     setTinh]     = useState<string | undefined>()
   const [data,     setData]     = useState<CellRevisionBase[]>([])
+  const { pagination } = useTablePagination(data.length, 'phiên bản')
   const [loading,  setLoading]  = useState(false)
 
   const load = useCallback(async () => {
@@ -614,7 +617,7 @@ function CellRevisionTab({
         columns={columns} dataSource={data} rowKey="id"
         loading={loading} size="small"
         scroll={{ x: scrollX, y: 500 }} bordered
-        pagination={{ pageSize: 50, showTotal: t => `${t} phiên bản`, showSizeChanger: true }}
+        pagination={pagination}
         expandable={{
           expandedRowRender: (r: CellRevisionBase) => {
             const diff  = r.changed_fields || {}

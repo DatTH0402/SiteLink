@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Tooltip,
@@ -154,6 +155,8 @@ export default function Cells4GPage() {
     setSelectedIds([]); load()
   }
 
+  const { pagination } = useTablePagination(data.length, 'cells')
+
   const rowSelection: TableRowSelection<Cell4G> = {
     selectedRowKeys: selectedIds,
     onChange: keys => setSelectedIds(keys as number[]),
@@ -298,7 +301,7 @@ export default function Cells4GPage() {
 
       <Table rowSelection={rowSelection} columns={columns} dataSource={data} rowKey="id"
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
-             pagination={{ pageSize: 50, showTotal: t => `${t} cells`, showSizeChanger: true }} />
+             pagination={pagination} />
 
       <Modal title={editing ? 'Chỉnh sửa Cell 4G' : 'Thêm Cell 4G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}

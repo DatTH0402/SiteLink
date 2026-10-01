@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Popconfirm,
   message, Row, Col, Modal, Form, InputNumber, Tooltip,
@@ -51,6 +52,7 @@ export default function AntennaPage() {
   const [specUploading, setSpecUploading] = useState<number | null>(null)
   const [specDeleting,  setSpecDeleting]  = useState<number | null>(null)
   const [form] = Form.useForm()
+  const { pagination } = useTablePagination(data.length, 'antennas')
 
   // ── data loading ────────────────────────────────────────────────────────────
 
@@ -325,11 +327,7 @@ export default function AntennaPage() {
         size="small"
         scroll={{ x: scrollX, y: 600 }}
         bordered
-        pagination={{
-          pageSize: 50,
-          showTotal: (t) => `${t} antennas`,
-          showSizeChanger: true,
-        }}
+        pagination={pagination}
       />
 
       {/* ── Detail modal ── */}

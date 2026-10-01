@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Table, Select, Space, Tag, Row,
   Button, Input, Tooltip,
@@ -24,6 +25,8 @@ export default function AuditPage() {
   const [action,  setAction]  = useState<string | undefined>()
   const [table,   setTable]   = useState<string | undefined>()
   const [search,  setSearch]  = useState('')
+
+  const { pagination } = useTablePagination(logs.length, 'records')
 
   const load = () => {
     setLoading(true)
@@ -219,11 +222,7 @@ export default function AuditPage() {
         size="small"
         scroll={{ x: 1400, y: 600 }}
         bordered
-        pagination={{
-          pageSize: 50,
-          showTotal: (t) => `${t} records`,
-          showSizeChanger: true,
-        }}
+        pagination={pagination}
       />
     </div>
   )

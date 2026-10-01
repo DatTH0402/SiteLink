@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Table, Button, Space, Tag, Modal,
   Form, Input, Select, Popconfirm, message, Row,
@@ -13,6 +14,8 @@ export default function UsersPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing,   setEditing]   = useState<User | null>(null)
   const [form] = Form.useForm()
+
+  const { pagination } = useTablePagination(users.length, 'users', 20)
 
   const load = () => {
     setLoading(true)
@@ -89,7 +92,7 @@ export default function UsersPage() {
       </Row>
 
       <Table columns={columns} dataSource={users} rowKey="id"
-             loading={loading} size="small" pagination={{ pageSize: 20 }} />
+             loading={loading} size="small" pagination={pagination} />
 
       <Modal title={editing ? 'Chỉnh sửa user' : 'Thêm user mới'}
              open={modalOpen} onOk={handleSave}

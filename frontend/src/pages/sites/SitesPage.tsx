@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
@@ -178,6 +179,8 @@ export default function SitesPage() {
     setTinh([])
     setPhuongXa([])
   }
+
+  const { pagination } = useTablePagination(sites.length, 'sites')
 
   const rowSelection: TableRowSelection<Site> = {
     selectedRowKeys: selectedIds,
@@ -387,7 +390,7 @@ export default function SitesPage() {
         size="small"
         scroll={{ x: scrollX, y: 600 }}
         bordered
-        pagination={{ pageSize: 50, showTotal: t => `${t} sites`, showSizeChanger: true }}
+        pagination={pagination}
       />
 
       <SiteBulkEditModal

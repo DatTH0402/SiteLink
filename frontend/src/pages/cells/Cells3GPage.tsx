@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Tooltip,
@@ -183,6 +184,8 @@ export default function Cells3GPage() {
     setSelectedIds([]); load()
   }
 
+  const { pagination } = useTablePagination(data.length, 'cells')
+
   const rowSelection: TableRowSelection<Cell3G> = {
     selectedRowKeys: selectedIds,
     onChange: keys => setSelectedIds(keys as number[]),
@@ -330,7 +333,7 @@ export default function Cells3GPage() {
 
       <Table rowSelection={rowSelection} columns={columns} dataSource={data} rowKey="id"
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
-             pagination={{ pageSize: 50, showTotal: t => `${t} cells`, showSizeChanger: true }} />
+             pagination={pagination} />
 
       {/* ── Create / Edit Modal ── */}
       <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
