@@ -324,13 +324,25 @@ export default function Cells4GPage() {
             <Col span={6}><Form.Item name="moran" label="MORAN">
               <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="lat" label="Lat" rules={[{ validator: latValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
-            <Col span={8}><Form.Item name="long" label="Long" rules={[{ validator: lonValidator }]}><InputNumber style={{ width: '100%' }} precision={5} /></Form.Item></Col>
+            <Col span={8}><Form.Item name="lat" label="Lat"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Latitude' },
+                  { validator: latValidator },
+                ]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="8.33 – 23.39" />
+              </Form.Item></Col>
+            <Col span={8}><Form.Item name="long" label="Long"
+                rules={[
+                  { required: true, message: 'Vui lòng nhập Longitude' },
+                  { validator: lonValidator },
+                ]}>
+                <InputNumber style={{ width: '100%' }} precision={5} placeholder="102.14 – 109.47" />
+              </Form.Item></Col>
             <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
               <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
             </Form.Item></Col>
             <Col span={8}>
-              <Form.Item name="vendor" label="Vendor *"
+              <Form.Item name="vendor" label="Vendor"
                 rules={[{ required: true, message: 'Vui lòng chọn Vendor' }]}>
                 <Select allowClear>
                   {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
@@ -339,22 +351,29 @@ export default function Cells4GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)">
+            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"
+                rules={[
+                  { required: true, whitespace: true, message: 'Vui lòng nhập độ cao anten' },
+                  { validator: positiveNumberValidator },
+                ]}>
                 <Input placeholder="vd: 28 hoặc IBC" />
               </Form.Item></Col>
-            <Col span={8}><Form.Item name="azimuth" label="Azimuth *"
-                rules={[{ required: true, message: 'Vui lòng nhập Azimuth' }, { validator: azimuthValidator }]}>
+            <Col span={8}><Form.Item name="azimuth" label="Azimuth"
+                rules={[
+                  { required: true, whitespace: true, message: 'Vui lòng nhập Azimuth' },
+                  { validator: azimuthValidator },
+                ]}>
                 <Input placeholder="vd: 120 hoặc IBC" />
               </Form.Item></Col>
             <Col span={8}>
-              <Form.Item name="m_tilt" label="M-tilt *"
-                rules={[{ required: true, message: 'Vui lòng nhập M-tilt' }]}>
+              <Form.Item name="m_tilt" label="M-tilt"
+                rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập M-tilt' }]}>
                 <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="e_tilt" label="E-Tilt *"
-                rules={[{ required: true, message: 'Vui lòng nhập E-Tilt' }]}>
+              <Form.Item name="e_tilt" label="E-Tilt"
+                rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập E-Tilt' }]}>
                 <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>

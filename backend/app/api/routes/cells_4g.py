@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.cell_4g import Cell4G
 from app.models.site import Site
+from app.services.site_info import apply_site_info
 from app.schemas.cell import Cell4GCreate, Cell4GUpdate, Cell4GRead, CellCreate, CellUpdate
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
@@ -228,9 +229,10 @@ def create_cell(
     payload: Cell4GCreate, db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not db.query(Site).filter(Site.id == payload.site_id).first():
+    site = db.query(Site).filter(Site.id == payload.site_id).first()
+    if not site:
         raise HTTPException(status_code=400, detail=f"Site id={payload.site_id} not found.")
-    cell = Cell4G(**payload.model_dump(), created_by=current_user.id)
+    cell = Cell4G(**apply_site_info(payload.model_dump(), site), created_by=current_user.id)
     db.add(cell); db.flush()
     record_cell4g_revision(db, cell, old_snapshot=None,
         changed_by_id=current_user.id,

@@ -380,7 +380,7 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="lat" label="Lat *"
+              <Form.Item name="lat" label="Lat"
                 rules={[
                   { required: true, message: 'Vui lòng nhập Latitude' },
                   { validator: latValidator },
@@ -389,7 +389,7 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="long" label="Long *"
+              <Form.Item name="long" label="Long"
                 rules={[
                   { required: true, message: 'Vui lòng nhập Longitude' },
                   { validator: lonValidator },
@@ -407,7 +407,7 @@ export default function Cells3GPage() {
             </Col>
             {/* Vendor + RNC Name: cascading like province/ward */}
             <Col span={8}>
-              <Form.Item name="vendor" label="Vendor *"
+              <Form.Item name="vendor" label="Vendor"
                 rules={[{ required: true, message: 'Vui lòng chọn Vendor' }]}>
                 <Select allowClear onChange={handleVendorChange}>
                   {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
@@ -440,36 +440,32 @@ export default function Cells3GPage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="do_cao_anten" label="Độ cao anten (m) *"
+              <Form.Item name="do_cao_anten" label="Độ cao anten (m)"
                 rules={[
-                  { required: true, message: 'Vui lòng nhập độ cao anten' },
-                  {
-                    validator: (_: unknown, value: number) => {
-                      if (value === undefined || value === null) return Promise.resolve()
-                      if (value < 0) return Promise.reject('Độ cao anten phải >= 0')
-                      return Promise.resolve()
-                    }
-                  }
+                  { required: true, whitespace: true, message: 'Vui lòng nhập độ cao anten' },
+                  { validator: positiveNumberValidator },
                 ]}>
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <Input placeholder="vd: 28 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="azimuth" label="Azimuth (0–359) *"
+              <Form.Item name="azimuth" label="Azimuth"
                 rules={[
-                  { required: true, message: 'Vui lòng nhập Azimuth' },
+                  { required: true, whitespace: true, message: 'Vui lòng nhập Azimuth' },
                   { validator: azimuthValidator },
                 ]}>
-                <InputNumber style={{ width: '100%' }} min={0} max={359} />
+                <Input placeholder="vd: 120 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="m_tilt" label="M-tilt">
+              <Form.Item name="m_tilt" label="M-tilt"
+                rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập M-tilt' }]}>
                 <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="e_tilt" label="E-Tilt">
+              <Form.Item name="e_tilt" label="E-Tilt"
+                rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập E-Tilt' }]}>
                 <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
