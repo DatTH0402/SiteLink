@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useExcelColumns } from '@/hooks/useExcelColumns'
 import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Select,
@@ -106,6 +107,7 @@ export default function Cells4GPage() {
 
 
   const clearFilters = () => {
+    clearColumnFilters()
     setSearch(''); setCellNameOld(''); setMien([]); setTinh([]); setPhuongXa([]); setVendor([])
   }
 
@@ -209,7 +211,10 @@ export default function Cells4GPage() {
     { title: 'Cell status', dataIndex: 'cell_status', width: 140 },
   ]
 
-  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+  const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
+    filterBar, clearAll: clearColumnFilters } =
+    useExcelColumns(columns, data, { onFilterChange: () => setSelectedIds([]) })
+  const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
     <div>
@@ -299,7 +304,9 @@ export default function Cells4GPage() {
         </Row>
       )}
 
-      <Table rowSelection={rowSelection} columns={columns} dataSource={data} rowKey="id"
+      {filterBar}
+
+      <Table rowSelection={rowSelection} columns={excelColumns} onChange={onExcelChange} dataSource={excelData} rowKey="id"
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
              pagination={pagination} />
 

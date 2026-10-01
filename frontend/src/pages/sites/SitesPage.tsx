@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { useExcelColumns } from '@/hooks/useExcelColumns'
 import { useTablePagination } from '@/hooks/useTablePagination'
 import {
   Typography, Button, Space, Table, Input, Select,
@@ -173,6 +174,7 @@ export default function SitesPage() {
   }
 
   const clearFilters = () => {
+    clearColumnFilters()
     setSearch('')
     setSiteNameCu('')
     setMien([])
@@ -240,7 +242,10 @@ export default function SitesPage() {
     { title: 'Ghi chú', dataIndex: 'ghi_chu', width: 200, ellipsis: { showTitle: true } },
   ]
 
-  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+  const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
+    filterBar, clearAll: clearColumnFilters } =
+    useExcelColumns(columns, sites, { onFilterChange: () => setSelectedIds([]) })
+  const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
 
   return (
     <div>
@@ -381,10 +386,12 @@ export default function SitesPage() {
         </Row>
       )}
 
+      {filterBar}
+
       <Table
         rowSelection={rowSelection}
-        columns={columns}
-        dataSource={sites}
+        columns={excelColumns} onChange={onExcelChange}
+        dataSource={excelData}
         rowKey="id"
         loading={loading}
         size="small"
