@@ -397,7 +397,7 @@ export function useServerColumns<T extends object>(
         </>
       )}
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        (Xuất file áp dụng cả bộ lọc cột; nếu đã chọn dòng thì chỉ xuất các dòng đã chọn)
+        (Xuất file chưa áp dụng bộ lọc cột)
       </Typography.Text>
     </div>
   )

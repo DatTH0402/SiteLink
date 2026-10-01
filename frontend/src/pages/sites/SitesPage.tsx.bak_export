@@ -15,7 +15,7 @@ import {
   getSites, getSitesPaged, getSiteIds, getSiteDistinct, deleteSite, dryRunSitesExcel, importSitesExcel,
   bulkDeleteSites, bulkUpdateSites,
 } from '@/api/sites'
-import { exportSites, exportSitesKmz, buildExportScope } from '@/api/export'
+import { exportSites, exportSitesKmz } from '@/api/export'
 import { getDropdown, getTinhList, getPhuongXaList } from '@/api/report'
 import type { Site, TinhItem } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
@@ -145,18 +145,14 @@ export default function SitesPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const res = await exportSites(
-        {
-          search:       search || undefined,
-          site_name_cu: siteNameCu || undefined,
-          mien:         mien.length ? mien : undefined,
-          tinh:         tinh.length ? tinh : undefined,
-          phuong_xa:    phuongXa.length ? phuongXa : undefined,
-        },
-        // selected rows -> exactly those; otherwise filtered rows incl. column filters
-        buildExportScope(sq, selectedIds),
-      )
-      message.success(`Xuất Excel thành công${res.rows != null ? ` (${res.rows.toLocaleString('vi-VN')} dòng)` : ''}`)
+      await exportSites({
+        search:       search || undefined,
+        site_name_cu: siteNameCu || undefined,
+        mien:         mien.length ? mien : undefined,
+        tinh:         tinh.length ? tinh : undefined,
+        phuong_xa:    phuongXa.length ? phuongXa : undefined,
+      })
+      message.success(`Xuất Excel thành công`)
     } catch (e: any) {
       message.error(e?.message || 'Xuất thất bại')
     } finally {
@@ -168,20 +164,14 @@ export default function SitesPage() {
   const handleKmzExport = async () => {
     setExportingKmz(true)
     try {
-      const res = await exportSitesKmz(
-        {
-          search:       search || undefined,
-          site_name_cu: siteNameCu || undefined,
-          mien:         mien.length ? mien : undefined,
-          tinh:         tinh.length ? tinh : undefined,
-          phuong_xa:    phuongXa.length ? phuongXa : undefined,
-        },
-        buildExportScope(sq, selectedIds),
-      )
-      const detail = res.rows != null && res.valid != null
-        ? ` (${res.valid.toLocaleString('vi-VN')}/${res.rows.toLocaleString('vi-VN')} site có tọa độ)`
-        : ''
-      message.success(`Xuất KMZ thành công${detail}`)
+      await exportSitesKmz({
+        search:       search || undefined,
+        site_name_cu: siteNameCu || undefined,
+        mien:         mien.length ? mien : undefined,
+        tinh:         tinh.length ? tinh : undefined,
+        phuong_xa:    phuongXa.length ? phuongXa : undefined,
+      })
+      message.success(`Xuất KMZ thành công`)
     } catch (e: any) {
       message.error(e?.message || 'Xuất KMZ thất bại')
     } finally {
@@ -273,20 +263,20 @@ export default function SitesPage() {
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Quản lý site</Typography.Title>
         <Space>
-                    <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} site đã chọn ra KMZ (Google Earth)` : 'Xuất các site đang lọc (gồm cả bộ lọc cột) ra KMZ (Google Earth)'}>
+                    <Tooltip title="Xuất dữ liệu hiện tại ra KMZ (Google Earth)">
             <Button
               icon={<DownloadOutlined />}
               loading={exportingKmz}
               onClick={handleKmzExport}
               style={{ borderColor: '#722ed1', color: '#722ed1' }}
             >
-              Xuất KMZ{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
+              Xuất KMZ
             </Button>
           </Tooltip>
-          <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} dòng đã chọn ra Excel` : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra Excel'}>
+          <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuất Excel{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
+              Xuất Excel
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>

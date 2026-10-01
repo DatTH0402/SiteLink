@@ -1,1193 +1,907 @@
 #!/usr/bin/env bash
-# update_server_side.sh — server-side paging / sort / column filters / selection
-if [ -z "${BASH_VERSION:-}" ]; then
-  echo "Please run with bash:  bash update_server_side.sh [ROOT]"; exit 1
-fi
-set -uo pipefail
+# apply_export_scope.sh  –  export exactly the selected rows / filtered rows (incl. column filters)
+set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-is_root() { [ -d "$1/backend/app" ] && [ -d "$1/frontend/src" ]; }
-ROOT=""
-if [ -n "${1:-}" ]; then
-  ROOT="$(cd "$1" 2>/dev/null && pwd)" || { echo "ERROR: cannot cd to '$1'"; exit 1; }
-elif is_root "$SCRIPT_DIR"; then ROOT="$SCRIPT_DIR"
-elif TOP="$(git rev-parse --show-toplevel 2>/dev/null)" && is_root "$TOP"; then ROOT="$TOP"
-fi
-if [ -z "$ROOT" ] || ! is_root "$ROOT"; then
-  echo "ERROR: could not find the SiteLink root (needs backend/app and frontend/src)."
-  echo "Usage: bash update_server_side.sh /path/to/SiteLink"; exit 1
-fi
-command -v python3 >/dev/null || { echo "ERROR: python3 required"; exit 1; }
+ROOT="${1:-$(pwd)}"
+cd "$ROOT"
 
-IS_GIT=0
-git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 && IS_GIT=1
-echo "==> Project root : $ROOT"
-echo "==> Git repo     : $([ $IS_GIT -eq 1 ] && git -C "$ROOT" rev-parse --show-toplevel || echo 'NO')"
-STAMP="$(date +%Y%m%d_%H%M%S)"
-BACKUP_DIR="$HOME/.sitelink_patch_backups/serverside_$STAMP"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 1) BACKEND helper module
-# ═════════════════════════════════════════════════════════════════════════════
-mkdir -p "$ROOT/backend/app/services"
-cat > "$ROOT/backend/app/services/list_query.py" <<'PYEOF'
-"""
-services/list_query.py
-
-Server-side helpers for the list screens:
-  * apply_column_filters : Excel-style per-column filters (JSON in ?filters=)
-  * apply_sort           : whitelisted, blank-last, numeric-aware sorting
-  * register_listing_routes : adds GET /ids and GET /distinct/{column}
-
-Column filter JSON:  {"tinh": {"in": [...]}, "vendor": {"not_in": [...]},
-                      "cell_name": {"contains": "abc"}}
-The three keys are ANDed. The value "__SL_EMPTY__" stands for blank/NULL.
-"""
-import json
-import unicodedata
-from typing import Dict, Optional
-
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import (
-    Boolean, Numeric, String, case, cast, false, func, literal_column,
-    not_, or_,
+FILES=(
+  backend/app/api/routes/export.py
+  backend/app/services/list_query.py
+  frontend/src/api/export.ts
+  frontend/src/hooks/useServerTable.tsx
+  frontend/src/pages/sites/SitesPage.tsx
+  frontend/src/pages/cells/Cells3GPage.tsx
+  frontend/src/pages/cells/Cells4GPage.tsx
+  frontend/src/pages/cells/Cells5GPage.tsx
 )
+
+for f in "${FILES[@]}"; do
+  [ -f "$f" ] || { echo "[FAIL] missing file: $f  (run from the SiteLink root)"; exit 1; }
+  [ -e "$f.bak_export" ] || cp "$f" "$f.bak_export"
+done
+echo "[ok] backups created (*.bak_export)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1) backend/app/api/routes/export.py  (full rewrite)
+# ─────────────────────────────────────────────────────────────────────────────
+cat > backend/app/api/routes/export.py <<'PYEOF'
+"""
+export.py – Excel / KMZ export endpoints (Sites, Cells 3G/4G/5G, Antennas)
+
+Scope of a Sites / Cells export:
+  1. `ids` given   -> exactly those rows (the user's selection); other filters ignored
+  2. otherwise     -> top-bar filters + column filters (`filters` JSON) [+ sort]
+
+Every Sites / Cells endpoint comes in two flavours:
+  GET  /export/<x>  query-string (legacy links; token via Bearer header OR ?token=)
+  POST /export/<x>  JSON body {ids, filters, params, sort_by, sort_dir}
+                    (needed because a selection can hold thousands of ids)
+"""
+from __future__ import annotations
+
+import io
+import xml.sax.saxutils as _saxutils
+import zipfile as _zipfile
+from functools import partial
+from typing import Any, Callable, Dict, List, Optional
+
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.utils.deps import get_current_user
+from app.models.site import Site
+from app.models.cell_3g import Cell3G
+from app.models.cell_4g import Cell4G
+from app.models.cell_5g import Cell5G
+from app.models.antenna import Antenna
+from app.models.user import User
+from app.core.security import decode_access_token
+from app.services.list_query import build_export_query
 
-EMPTY = "__SL_EMPTY__"
-_NUM_RE = r"^-?[0-9]+([.][0-9]+)?$"
+router = APIRouter()
 
-# ── accent folding (works without the unaccent extension) ────────────────────
-_VN = {
-    "a": "àáạảãâầấậẩẫăằắặẳẵ",
-    "e": "èéẹẻẽêềếệểễ",
-    "i": "ìíịỉĩ",
-    "o": "òóọỏõôồốộổỗơờớợởỡ",
-    "u": "ùúụủũưừứựửữ",
-    "y": "ỳýỵỷỹ",
-    "d": "đ",
-}
-_FROM = "".join(v + v.upper() for v in _VN.values())
-_TO = "".join(k * (2 * len(v)) for k, v in _VN.items())
-_TABLE = str.maketrans(_FROM, _TO)
+HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
+HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
+CENTER      = Alignment(horizontal="center", vertical="center", wrap_text=True)
+LEFT        = Alignment(horizontal="left",   vertical="center")
+THIN        = Side(style="thin", color="D0D0D0")
+BORDER      = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+ALT_FILL    = PatternFill("solid", fgColor="EBF3FB")
 
-
-def _fold_py(s: str) -> str:
-    return unicodedata.normalize("NFC", s).translate(_TABLE).lower()
+_EXPOSE = "X-Row-Count, X-Site-Count, X-Valid-Coords"
 
 
-def _fold_sql(col):
-    return func.translate(func.lower(cast(col, String)), _FROM, _TO, type_=String)
+# ── auth: Bearer header OR ?token= ────────────────────────────────────────────
+oauth2_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
-# ── column helpers ───────────────────────────────────────────────────────────
-def _check(model, name: str) -> None:
-    if name not in model.__table__.columns:
-        raise HTTPException(status_code=400, detail=f"Unknown column '{name}'")
-
-
-def _kind(model, name: str) -> str:
-    t = model.__table__.columns[name].type
-    if isinstance(t, Boolean):
-        return "bool"
-    if isinstance(t, String):          # String and Text
-        return "str"
-    return "num"
-
-
-def _norm(model, name: str):
-    """Expression used for filtering / grouping / sorting (blank -> NULL)."""
-    col = getattr(model, name)
-    k = _kind(model, name)
-    if k == "str":
-        return func.nullif(func.trim(col), literal_column("''"), type_=String)
-    if k == "bool":
-        return func.coalesce(col, false())
-    return col
-
-
-def _coerce(kind: str, vals):
-    if kind == "bool":
-        return [v.lower() in ("true", "1", "yes") for v in vals]
-    if kind == "num":
-        out = []
-        for v in vals:
-            try:
-                out.append(float(v))
-            except ValueError:
-                pass
-        return out
-    return list(vals)
-
-
-def _member(model, name: str, vals):
-    """Boolean expression that is never NULL."""
-    expr = _norm(model, name)
-    real = [v for v in vals if v != EMPTY]
-    conds = []
-    real = _coerce(_kind(model, name), real)
-    if real:
-        conds.append(func.coalesce(expr.in_(real), false()))
-    if EMPTY in vals and _kind(model, name) != "bool":
-        conds.append(expr.is_(None))
-    return or_(*conds) if conds else false()
-
-
-# ── public: filters ──────────────────────────────────────────────────────────
-def parse_filters(raw: Optional[str]) -> Dict[str, dict]:
+def get_optional_user(
+    token_header: Optional[str] = Depends(oauth2_optional),
+    token_param:  Optional[str] = Query(None, alias="token"),
+    db: Session = Depends(get_db),
+) -> User:
+    raw = token_header or token_param
     if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid 'filters' JSON")
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=400, detail="'filters' must be an object")
-    return data
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    payload = decode_access_token(raw)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    user = db.query(User).filter(User.username == payload.get("sub")).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="User inactive")
+    return user
 
 
-def apply_column_filters(q, model, raw: Optional[str], exclude: Optional[str] = None):
-    for name, spec in parse_filters(raw).items():
-        if name == exclude or not isinstance(spec, dict):
+# ── workbook helpers ──────────────────────────────────────────────────────────
+def _make_wb(headers):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.row_dimensions[1].height = 30
+    ws.freeze_panes = "A2"
+    for col_idx, (header, width) in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = HEADER_FILL; cell.font = HEADER_FONT
+        cell.alignment = CENTER; cell.border = BORDER
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    return wb, ws
+
+
+def _style_row(ws, row_idx, num_cols, alternate):
+    fill = ALT_FILL if alternate else None
+    for col_idx in range(1, num_cols + 1):
+        cell = ws.cell(row=row_idx, column=col_idx)
+        cell.alignment = LEFT; cell.border = BORDER
+        if fill: cell.fill = fill
+
+
+def _stream(wb, filename, row_count=None):
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Expose-Headers": _EXPOSE,
+    }
+    if row_count is not None:
+        headers["X-Row-Count"] = str(row_count)
+    return StreamingResponse(
+        iter([buf.read()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+def _safe_bool_export(v) -> bool:
+    if v is None: return False
+    if isinstance(v, bool): return v
+    if isinstance(v, int): return v != 0
+    if isinstance(v, str): return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
+def _b(val): return "x" if _safe_bool_export(val) else ""
+
+
+# ── column definitions ────────────────────────────────────────────────────────
+SITE_HEADERS = [
+    ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
+    ("Site name (cu)", 22), ("Site name", 25), ("Site VIP", 10),
+    ("Lat", 14), ("Long", 14), ("Tram 2G", 10), ("Tram 3G", 10),
+    ("Tram 4G", 10), ("Tram 5G", 10), ("Repeater", 10), ("Booster", 10),
+    ("Node truyen dan only", 20), ("Tram phu song TSCA", 18),
+    ("Phan loai tram", 22), ("MORAN 3G", 15), ("MORAN 4G", 15),
+    ("MORAN 5G", 15), ("Ma PTM", 14), ("Do cao dinh cot anten (m)", 22),
+    ("Do cao cot anten (m)", 20), ("Dia chi", 30), ("Ghi chu", 30),
+]
+
+
+def _site_row(idx, s):
+    return [
+        idx, s.mien, s.tinh, s.phuong_xa, s.site_name_cu, s.site_name,
+        s.site_vip, s.lat, s.long,
+        _b(s.tram_2g), _b(s.tram_3g), _b(s.tram_4g), _b(s.tram_5g),
+        _b(s.repeater), _b(s.booster), _b(s.node_truyen_dan_only), _b(s.tram_phu_song_tsca),
+        s.phan_loai_tram, s.moran_3g, s.moran_4g, s.moran_5g, s.ma_ptm,
+        s.do_cao_dinh_cot_anten, s.do_cao_cot_anten, s.dia_chi, s.ghi_chu,
+    ]
+
+
+CELL3G_HEADERS = [
+    ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
+    ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
+    ("Cell VIP", 10), ("MORAN", 15), ("Lat", 14), ("Long", 14),
+    ("Vung phu song", 15), ("Vendor", 14), ("RNC Name", 18),
+    ("Do cao anten", 15),
+    ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
+    ("Loai Anten", 30), ("Chung anten", 18), ("Baseband", 18), ("RF", 14),
+    ("Cell ID", 14), ("UARFCN", 12), ("LAC", 10), ("RAC", 10),
+    ("PSC", 10), ("MIMO", 10), ("URAId", 10),
+    ("Cell max power (dBm)", 20), ("CPICH power (dBm)", 18),
+    ("BBUname", 16), ("Cell status (at dump time)", 24),
+]
+
+
+def _cell3g_row(idx, c):
+    return [
+        idx, c.mien, c.tinh, c.phuong_xa,
+        c.site_name, c.site_name_old, c.cell_name, c.cell_name_old,
+        c.cell_vip, c.moran, c.lat, c.long,
+        c.vung_phu_song, c.vendor, c.rnc_name, c.do_cao_anten,
+        c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
+        c.loai_anten, c.chung_anten, c.baseband, c.rf,
+        c.cell_id, c.uarfcn, c.lac, c.rac,
+        c.psc, c.mimo, c.ura_id,
+        c.cell_max_power, c.cpich_power, c.bbu_name, c.cell_status,
+    ]
+
+
+CELL4G_HEADERS = [
+    ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
+    ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
+    ("Cell VIP", 10), ("MORAN", 15), ("Lat", 14), ("Long", 14),
+    ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
+    ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
+    ("Loai Anten", 30), ("Chung anten", 18), ("Baseband", 18), ("RF", 14),
+    ("EnodeB ID", 14), ("Cell ID", 14), ("EARFCN", 12), ("TAC", 10),
+    ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10), ("Bandwidth", 12),
+    ("Cell max power (dBm)", 20), ("ECI", 12),
+    ("BBUname", 16), ("Cell status (at dump time)", 24),
+]
+
+
+def _cell4g_row(idx, c):
+    return [
+        idx, c.mien, c.tinh, c.phuong_xa,
+        c.site_name, c.site_name_old, c.cell_name, c.cell_name_old,
+        c.cell_vip, c.moran, c.lat, c.long,
+        c.vung_phu_song, c.vendor, c.do_cao_anten,
+        c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
+        c.loai_anten, c.chung_anten, c.baseband, c.rf,
+        c.enodeb_id, c.cell_id, c.earfcn, c.tac,
+        c.pci, c.root_sequence_id, c.mimo, c.bandwidth,
+        c.cell_max_power, c.eci, c.bbu_name, c.cell_status,
+    ]
+
+
+CELL5G_HEADERS = [
+    ("STT", 6), ("Mien", 8), ("Tinh", 22), ("Phuong xa", 22),
+    ("Site Name", 25), ("Site Name Old", 22), ("Cell Name", 25), ("Cell Name Old", 22),
+    ("Cell VIP", 10), ("MORAN", 15), ("Lat", 14), ("Long", 14),
+    ("Vung phu song", 15), ("Vendor", 14), ("Do cao anten", 15),
+    ("Azimuth", 10), ("M-tilt", 10), ("E-Tilt", 10), ("Total Tilt", 12),
+    ("Loai Anten", 30), ("Baseband", 18), ("RF", 14),
+    ("gNodeB ID", 14), ("Cell ID", 14), ("TAC", 10),
+    ("PCI", 10), ("Root Sequence ID", 18), ("MIMO", 10),
+    ("SSB-ARFCN", 12), ("Center-ARFCN", 14), ("GSCN", 10),
+    ("Bandwidth (MHz)", 14), ("Cell max power (dBm)", 20), ("NCI", 12),
+    ("BBUname", 16), ("MU-MIMO", 10), ("Cell status (at dump time)", 24),
+]
+
+
+def _cell5g_row(idx, c):
+    return [
+        idx, c.mien, c.tinh, c.phuong_xa,
+        c.site_name, c.site_name_old, c.cell_name, c.cell_name_old,
+        c.cell_vip, c.moran, c.lat, c.long,
+        c.vung_phu_song, c.vendor, c.do_cao_anten,
+        c.azimuth, c.m_tilt, c.e_tilt, c.total_tilt,
+        c.loai_anten, c.baseband, c.rf,
+        c.gnodeb_id, c.cell_id, c.tac,
+        c.pci, c.root_sequence_id, c.mimo,
+        c.ssb_arfcn, c.center_arfcn, c.gscn,
+        c.bandwidth, c.cell_max_power, c.nci,
+        c.bbu_name, c.mu_mimo, c.cell_status,
+    ]
+
+
+_SPECS: Dict[str, Dict[str, Any]] = {
+    "sites": dict(
+        model=Site, kind="site", headers=SITE_HEADERS, row=_site_row,
+        order=(Site.mien, Site.tinh, Site.site_name), filename="Sites_Export.xlsx"),
+    "cells_3g": dict(
+        model=Cell3G, kind="cell", headers=CELL3G_HEADERS, row=_cell3g_row,
+        order=(Cell3G.mien, Cell3G.tinh, Cell3G.site_name, Cell3G.cell_name),
+        filename="Cells_3G_Export.xlsx"),
+    "cells_4g": dict(
+        model=Cell4G, kind="cell", headers=CELL4G_HEADERS, row=_cell4g_row,
+        order=(Cell4G.mien, Cell4G.tinh, Cell4G.site_name, Cell4G.cell_name),
+        filename="Cells_4G_Export.xlsx"),
+    "cells_5g": dict(
+        model=Cell5G, kind="cell", headers=CELL5G_HEADERS, row=_cell5g_row,
+        order=(Cell5G.mien, Cell5G.tinh, Cell5G.site_name, Cell5G.cell_name),
+        filename="Cells_5G_Export.xlsx"),
+}
+
+
+def _rows_for(key, db, params, filters, ids, sort_by, sort_dir):
+    spec = _SPECS[key]
+    q = build_export_query(
+        db, spec["model"], spec["kind"], params,
+        filters=filters, ids=ids, sort_by=sort_by, sort_dir=sort_dir,
+        default_order=spec["order"],
+    )
+    return q.all()
+
+
+def _excel(key, db, params, filters, ids, sort_by, sort_dir):
+    spec = _SPECS[key]
+    rows = _rows_for(key, db, params, filters, ids, sort_by, sort_dir)
+    headers = spec["headers"]
+    wb, ws = _make_wb(headers)
+    for idx, obj in enumerate(rows, start=1):
+        row = idx + 1
+        for col_idx, val in enumerate(spec["row"](idx, obj), start=1):
+            ws.cell(row=row, column=col_idx, value=val)
+        _style_row(ws, row, len(headers), idx % 2 == 0)
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    return _stream(wb, spec["filename"], len(rows))
+
+
+# ── KMZ (KML inside a ZIP — readable by Google Earth) ─────────────────────────
+def _build_kml(sites: list) -> str:
+    def esc(v) -> str:
+        if v is None:
+            return ""
+        return _saxutils.escape(str(v))
+
+    placemarks = []
+    for s in sites:
+        if s.lat is None or s.long is None:
             continue
-        _check(model, name)
-        contains = spec.get("contains")
-        if isinstance(contains, str) and contains.strip():
-            q = q.filter(_fold_sql(getattr(model, name)).contains(
-                _fold_py(contains.strip()), autoescape=True))
-        if isinstance(spec.get("in"), list):
-            q = q.filter(_member(model, name, [str(x) for x in spec["in"]]))
-        if isinstance(spec.get("not_in"), list) and spec["not_in"]:
-            q = q.filter(not_(_member(model, name, [str(x) for x in spec["not_in"]])))
-    return q
+        description = (
+            f"<b>Tỉnh/TP:</b> {esc(s.tinh)}<br/>"
+            f"<b>Phường/Xã:</b> {esc(s.phuong_xa)}<br/>"
+            f"<b>Site name:</b> {esc(s.site_name)}<br/>"
+            f"<b>Site name (cũ):</b> {esc(s.site_name_cu)}<br/>"
+        )
+        placemarks.append(f"""  <Placemark>
+    <name>{esc(s.site_name)}</name>
+    <description><![CDATA[{description}]]></description>
+    <Point>
+      <coordinates>{s.long},{s.lat},0</coordinates>
+    </Point>
+  </Placemark>""")
+
+    kml_body = "\n".join(placemarks)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>SiteLink – Site Locations</name>
+    <description>Exported from SiteLink</description>
+    <Style id="siteIcon">
+      <IconStyle>
+        <color>ff0000ff</color>
+        <scale>1.0</scale>
+        <Icon>
+          <href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href>
+        </Icon>
+      </IconStyle>
+    </Style>
+{kml_body}
+  </Document>
+</kml>"""
 
 
-# ── public: sorting ──────────────────────────────────────────────────────────
-def apply_sort(q, model, sort_by: Optional[str], sort_dir: str = "asc"):
-    if not sort_by:
-        return q.order_by(model.id.desc())          # newest first
-    _check(model, sort_by)
-    desc_ = str(sort_dir).lower() == "desc"
-    d = (lambda e: e.desc()) if desc_ else (lambda e: e.asc())
-    expr = _norm(model, sort_by)
-    if _kind(model, sort_by) == "str":
-        is_num = expr.op("~")(_NUM_RE)
-        keys = [
-            case((expr.is_(None), 1), else_=0).asc(),     # blanks always last
-            d(case((is_num, 0), else_=1)),                # numbers first (asc)
-            d(case((is_num, cast(expr, Numeric)))),       # numeric order
-            d(expr),                                      # text order
+def _build_kmz(kml_content: str) -> bytes:
+    buf = io.BytesIO()
+    with _zipfile.ZipFile(buf, mode="w", compression=_zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("doc.kml", kml_content.encode("utf-8"))
+    buf.seek(0)
+    return buf.read()
+
+
+def _kmz(db, params, filters, ids, sort_by, sort_dir):
+    sites = _rows_for("sites", db, params, filters, ids, sort_by, sort_dir)
+    valid_count = sum(1 for s in sites if s.lat is not None and s.long is not None)
+    kmz_bytes = _build_kmz(_build_kml(sites))
+    return StreamingResponse(
+        iter([kmz_bytes]),
+        media_type="application/vnd.google-earth.kmz",
+        headers={
+            "Content-Disposition": 'attachment; filename="Sites_Export.kmz"',
+            "X-Site-Count": str(len(sites)),
+            "X-Row-Count": str(len(sites)),
+            "X-Valid-Coords": str(valid_count),
+            "Access-Control-Expose-Headers": _EXPOSE,
+        },
+    )
+
+
+# ── route registration (GET + POST for every sites / cells export) ────────────
+class ExportRequest(BaseModel):
+    ids:      Optional[List[int]] = None            # selected rows -> exact export
+    filters:  Optional[str] = None                  # column filters (same JSON as ?filters=)
+    params:   Dict[str, Any] = Field(default_factory=dict)   # top-bar filters
+    sort_by:  Optional[str] = None
+    sort_dir: str = "asc"
+
+
+_RESERVED = {"token", "filters", "sort_by", "sort_dir", "ids"}
+
+
+def _add_routes(path: str, tag: str, run: Callable[..., StreamingResponse]) -> None:
+    def get_endpoint(
+        request: Request,
+        db: Session = Depends(get_db),
+        _: User = Depends(get_optional_user),
+    ):
+        qp = request.query_params
+        params = {k: qp.getlist(k) for k in qp.keys() if k not in _RESERVED}
+        return run(db, params, qp.get("filters"), None,
+                   qp.get("sort_by"), qp.get("sort_dir") or "asc")
+
+    def post_endpoint(
+        body: ExportRequest,
+        db: Session = Depends(get_db),
+        _: User = Depends(get_optional_user),
+    ):
+        return run(db, body.params, body.filters, body.ids,
+                   body.sort_by, body.sort_dir)
+
+    router.add_api_route(path, get_endpoint,  methods=["GET"],  name=f"export_{tag}_get")
+    router.add_api_route(path, post_endpoint, methods=["POST"], name=f"export_{tag}_post")
+
+
+_add_routes("/sites",     "sites",     partial(_excel, "sites"))
+_add_routes("/cells-3g",  "cells_3g",  partial(_excel, "cells_3g"))
+_add_routes("/cells-4g",  "cells_4g",  partial(_excel, "cells_4g"))
+_add_routes("/cells-5g",  "cells_5g",  partial(_excel, "cells_5g"))
+_add_routes("/sites-kmz", "sites_kmz", _kmz)
+
+
+# ── antennas (unchanged) ──────────────────────────────────────────────────────
+@router.get("/antennas")
+def export_antennas(
+    search:    Optional[str]  = Query(None),
+    band:      Optional[str]  = Query(None),
+    is_5g_aau: Optional[bool] = Query(None),
+    db:        Session        = Depends(get_db),
+    _:         User           = Depends(get_optional_user),
+):
+    q = db.query(Antenna)
+    if search:    q = q.filter(Antenna.name.ilike(f"%{search}%"))
+    if band:      q = q.filter(Antenna.band.ilike(f"%{band}%"))
+    if is_5g_aau is not None: q = q.filter(Antenna.is_5g_aau == is_5g_aau)
+    antennas = q.order_by(Antenna.name).all()
+    headers = [
+        ("STT", 6), ("Name", 35), ("Band", 20), ("5G AAU", 10),
+        ("No of Ports", 12), ("No of Beam", 12), ("Horizontal BW", 14),
+        ("Vertical BW", 12), ("Gain (dBi)", 12), ("Etilt range", 14),
+        ("H (mm)", 10), ("W (mm)", 10), ("D (mm)", 10),
+        ("Weight (kg)", 12), ("Connector type", 18),
+        ("Spec File", 30), ("Ghi chu", 30),
+    ]
+    wb, ws = _make_wb(headers)
+    for idx, a in enumerate(antennas, start=1):
+        row = idx + 1
+        values = [
+            idx, a.name, a.band, "x" if a.is_5g_aau else "",
+            a.no_of_ports, a.no_of_beam, a.horizontal_bw, a.vertical_bw,
+            a.gain, a.etilt, a.h, a.w, a.d, a.weight, a.connector_type,
+            a.spec_file_name or "", a.ghi_chu,
         ]
-    else:
-        keys = [d(expr).nulls_last()]
-    keys.append(model.id.asc())                           # stable paging
-    return q.order_by(*keys)
+        for col_idx, val in enumerate(values, start=1):
+            ws.cell(row=row, column=col_idx, value=val)
+        _style_row(ws, row, len(headers), idx % 2 == 0)
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+    return _stream(wb, "Antennas_Export.xlsx", len(antennas))
+PYEOF
+echo "[ok] export.py rewritten"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2) frontend/src/api/export.ts  (full rewrite)
+# ─────────────────────────────────────────────────────────────────────────────
+cat > frontend/src/api/export.ts <<'TSEOF'
+/**
+ * export.ts – Downloads exported Excel / KMZ files from the backend.
+ *
+ * Sites / Cells exports use POST so that a large selection (thousands of ids)
+ * and the column filters fit in the request. Scope rule (enforced server-side):
+ *   - `ids` present  -> exactly the selected rows
+ *   - otherwise      -> top-bar filters + column filters (+ sort)
+ */
+
+function getToken(): string {
+  return localStorage.getItem('sl_token') || ''
+}
+
+export interface ExportResult {
+  /** rows written to the file */
+  rows?: number
+  /** (KMZ only) sites that had valid coordinates */
+  valid?: number
+}
+
+/** Extra scope on top of the top-bar filters. Build it with `buildExportScope`. */
+export interface ExportScope {
+  ids?:      number[]
+  filters?:  string            // column filters JSON (same string as the list `filters` param)
+  sort_by?:  string
+  sort_dir?: 'asc' | 'desc'
+}
+
+/** Minimal shape of `useServerQuery()` that we need. */
+interface ServerQueryLike {
+  filtersJson?: string
+  sort: { field: string; order: 'ascend' | 'descend' } | null
+}
+
+/**
+ * Selected rows win (exact export). With no selection, export everything the
+ * table currently shows as filtered (top-bar + column filters), same sort order.
+ */
+export function buildExportScope(sq: ServerQueryLike, selectedIds: number[] = []): ExportScope {
+  const scope: ExportScope = {}
+  if (sq.sort) {
+    scope.sort_by  = sq.sort.field
+    scope.sort_dir = sq.sort.order === 'ascend' ? 'asc' : 'desc'
+  }
+  if (selectedIds.length > 0) scope.ids = selectedIds
+  else if (sq.filtersJson)    scope.filters = sq.filtersJson
+  return scope
+}
+
+function headerNum(res: Response, name: string): number | undefined {
+  const raw = res.headers.get(name)
+  if (raw === null || raw === '') return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
+async function fetchAndSave(url: string, init: RequestInit, filename: string): Promise<ExportResult> {
+  const res = await fetch(url, init)
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Export failed (${res.status}): ${text}`)
+  }
+  const blob = await res.blob()
+  const link = document.createElement('a')
+  link.href     = URL.createObjectURL(blob)
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
+  return {
+    rows:  headerNum(res, 'X-Row-Count') ?? headerNum(res, 'X-Site-Count'),
+    valid: headerNum(res, 'X-Valid-Coords'),
+  }
+}
+
+function getBlob(url: string, filename: string) {
+  return fetchAndSave(url, { headers: { Authorization: `Bearer ${getToken()}` } }, filename)
+}
+
+type FilterValue = string | string[] | undefined | null
+
+function cleanParams(params: Record<string, FilterValue>): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {}
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return
+    if (Array.isArray(v)) {
+      const arr = v.filter((x) => x !== '' && x !== undefined && x !== null)
+      if (arr.length) out[k] = arr
+    } else {
+      out[k] = v
+    }
+  })
+  return out
+}
+
+function postExport(
+  path: string, filename: string,
+  params: Record<string, FilterValue>, scope?: ExportScope,
+) {
+  const hasIds = Boolean(scope?.ids && scope.ids.length > 0)
+  const body = {
+    // when rows are selected the server ignores every other filter
+    params:   hasIds ? {} : cleanParams(params),
+    ids:      hasIds ? scope!.ids : undefined,
+    filters:  hasIds ? undefined : scope?.filters,
+    sort_by:  scope?.sort_by,
+    sort_dir: scope?.sort_dir ?? 'asc',
+  }
+  return fetchAndSave(
+    `/api/v1/export/${path}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+    filename,
+  )
+}
+
+// ── Sites ────────────────────────────────────────────────────────────────────
+export interface SiteExportFilters {
+  search?:       string
+  site_name_cu?: string
+  mien?:         string[]
+  tinh?:         string[]
+  phuong_xa?:    string[]
+}
+
+export const exportSites = (filters: SiteExportFilters = {}, scope?: ExportScope) =>
+  postExport('sites', 'Sites_Export.xlsx', filters as Record<string, FilterValue>, scope)
+
+export const exportSitesKmz = (filters: SiteExportFilters = {}, scope?: ExportScope) =>
+  postExport('sites-kmz', 'Sites_Export.kmz', filters as Record<string, FilterValue>, scope)
+
+// ── Cells ────────────────────────────────────────────────────────────────────
+export interface CellExportFilters {
+  search?:        string
+  cell_name_old?: string
+  mien?:          string[]
+  tinh?:          string[]
+  phuong_xa?:     string[]
+  vendor?:        string[]
+  mimo?:          string[]
+  vung_phu_song?: string[]
+}
+
+export const exportCells3G = (filters: CellExportFilters = {}, scope?: ExportScope) =>
+  postExport('cells-3g', 'Cells_3G_Export.xlsx', filters as Record<string, FilterValue>, scope)
+
+export const exportCells4G = (filters: CellExportFilters = {}, scope?: ExportScope) =>
+  postExport('cells-4g', 'Cells_4G_Export.xlsx', filters as Record<string, FilterValue>, scope)
+
+export const exportCells5G = (filters: CellExportFilters = {}, scope?: ExportScope) =>
+  postExport('cells-5g', 'Cells_5G_Export.xlsx', filters as Record<string, FilterValue>, scope)
+
+// ── Antennas (unchanged, GET) ────────────────────────────────────────────────
+function buildQS(params: Record<string, FilterValue>): string {
+  const qs = new URLSearchParams()
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null) return
+    if (Array.isArray(v)) {
+      v.forEach((item) => { if (item) qs.append(k, item) })
+    } else if (v !== '') {
+      qs.append(k, v)
+    }
+  })
+  const s = qs.toString()
+  return s ? `?${s}` : ''
+}
+
+export function exportAntennas(filters: { search?: string; band?: string }) {
+  return getBlob(`/api/v1/export/antennas${buildQS(filters)}`, 'Antennas_Export.xlsx')
+}
+TSEOF
+echo "[ok] export.ts rewritten"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 3) patch list_query.py + hook hint text + 4 pages
+# ─────────────────────────────────────────────────────────────────────────────
+python3 - <<'PYEOF'
+import pathlib, re, sys
+
+def read(p):  return pathlib.Path(p).read_text(encoding="utf-8")
+def write(p, s): pathlib.Path(p).write_text(s, encoding="utf-8")
+
+def sub_text(src, old, new, label):
+    if old not in src:
+        sys.exit(f"[FAIL] anchor not found: {label}")
+    return src.replace(old, new, 1)
+
+def sub_regex(src, pattern, new, label):
+    out, n = re.subn(pattern, lambda m: new, src, count=1, flags=re.S)
+    if n != 1:
+        sys.exit(f"[FAIL] anchor not found: {label}")
+    return out
+
+def sub_fn(src, pattern, fn, label):
+    out, n = re.subn(pattern, fn, src, count=1, flags=re.S)
+    if n != 1:
+        sys.exit(f"[FAIL] anchor not found: {label}")
+    return out
+
+# ── list_query.py ────────────────────────────────────────────────────────────
+LQ = "backend/app/services/list_query.py"
+src = read(LQ)
+if "def base_query_from_params" in src:
+    print("[skip] list_query.py already patched")
+else:
+    new_block = '''def _first(params, name):
+    v = params.get(name)
+    if isinstance(v, (list, tuple)):
+        v = v[0] if v else None
+    if v is None or v == "":
+        return None
+    return v
 
 
-# ── top-bar filters (same semantics as the list endpoints) ───────────────────
-def _base_query(db: Session, model, kind: str, request: Request):
-    qp = request.query_params
+def _many(params, name):
+    v = params.get(name)
+    if v is None:
+        return []
+    if not isinstance(v, (list, tuple)):
+        v = [v]
+    return [str(x) for x in v if x is not None and x != ""]
 
-    def many(name):
-        return [v for v in qp.getlist(name) if v != ""]
 
+def _as_bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    return str(v).lower() in ("true", "1", "yes")
+
+
+def base_query_from_params(db: Session, model, kind: str, params):
+    """Top-bar filters from a plain dict (values: str | list[str] | bool)."""
     q = db.query(model)
-    search = qp.get("search")
+    search = _first(params, "search")
     if kind == "cell":
         if search:
             q = q.filter(model.cell_name.ilike(f"%{search}%")
                          | model.site_name.ilike(f"%{search}%"))
-        if qp.get("cell_name_old"):
-            q = q.filter(model.cell_name_old.ilike(f"%{qp.get('cell_name_old')}%"))
+        old = _first(params, "cell_name_old")
+        if old:
+            q = q.filter(model.cell_name_old.ilike(f"%{old}%"))
         names = ("mien", "tinh", "phuong_xa", "vendor", "mimo", "vung_phu_song")
     else:
         if search:
             q = q.filter(model.site_name.ilike(f"%{search}%"))
-        if qp.get("site_name_cu"):
-            q = q.filter(model.site_name_cu.ilike(f"%{qp.get('site_name_cu')}%"))
+        cu = _first(params, "site_name_cu")
+        if cu:
+            q = q.filter(model.site_name_cu.ilike(f"%{cu}%"))
         for n in ("tram_3g", "tram_4g", "tram_5g"):
-            v = qp.get(n)
+            v = _first(params, n)
             if v is not None:
-                q = q.filter(getattr(model, n) == (v.lower() in ("true", "1", "yes")))
+                q = q.filter(getattr(model, n) == _as_bool(v))
         names = ("mien", "tinh", "phuong_xa")
     for n in names:
-        vals = many(n)
+        vals = _many(params, n)
         if vals:
             q = q.filter(getattr(model, n).in_(vals))
     return q
 
 
-# ── public: extra routes ─────────────────────────────────────────────────────
-def register_listing_routes(router: APIRouter, model, kind: str) -> None:
-    """Call right after `router = APIRouter()` so these win over /{id}."""
-
-    @router.get("/ids")
-    def list_ids(
-        request: Request,
-        filters: Optional[str] = Query(None),
-        db: Session = Depends(get_db),
-        _=Depends(get_current_user),
-    ):
-        q = _base_query(db, model, kind, request)
-        q = apply_column_filters(q, model, filters)
-        ids = [r[0] for r in q.with_entities(model.id).order_by(model.id).all()]
-        return {"ids": ids, "total": len(ids)}
-
-    @router.get("/distinct/{column}")
-    def distinct_values(
-        column: str,
-        request: Request,
-        filters: Optional[str] = Query(None),
-        q: Optional[str] = Query(None),
-        limit: int = Query(200, ge=1, le=1000),
-        db: Session = Depends(get_db),
-        _=Depends(get_current_user),
-    ):
-        _check(model, column)
-        expr = _norm(model, column)
-        base = _base_query(db, model, kind, request)
-        # like Excel: this column's own filter is ignored for its own list
-        base = apply_column_filters(base, model, filters, exclude=column)
-        if q and q.strip():
-            base = base.filter(_fold_sql(getattr(model, column)).contains(
-                _fold_py(q.strip()), autoescape=True))
-        grouped = (base.with_entities(expr.label("v"), func.count().label("n"))
-                       .group_by(expr))
-        rows = grouped.order_by(expr.asc().nulls_last()).limit(limit).all()
-        total = (db.query(func.count())
-                   .select_from(grouped.order_by(None).subquery()).scalar() or 0)
-        return {
-            "values": [{"value": r.v, "count": r.n} for r in rows],
-            "total_distinct": total,
-        }
-PYEOF
-echo "    wrote backend/app/services/list_query.py"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 2) FRONTEND new files
-# ═════════════════════════════════════════════════════════════════════════════
-mkdir -p "$ROOT/frontend/src/api" "$ROOT/frontend/src/hooks" "$ROOT/frontend/src/components/shared"
-
-cat > "$ROOT/frontend/src/api/listing.ts" <<'TSEOF'
-import api from './client'
-
-export interface DistinctItem {
-  value: string | number | boolean | null
-  count: number
-}
-export interface DistinctResult {
-  values: DistinctItem[]
-  total_distinct: number
-}
-export interface Paged<T> {
-  items: T[]
-  total: number
-}
-
-/** GET a list endpoint and read the total from the X-Total-Count header. */
-export async function pagedGet<T>(
-  url: string, params?: Record<string, unknown>,
-): Promise<Paged<T>> {
-  const r = await api.get<T[]>(url, { params })
-  const h = Number((r.headers as any)['x-total-count'])
-  return { items: r.data, total: Number.isFinite(h) ? h : r.data.length }
-}
-
-export const distinctGet = (
-  base: string, column: string, params?: Record<string, unknown>,
-) =>
-  api.get<DistinctResult>(`${base}/distinct/${encodeURIComponent(column)}`, { params })
-     .then((r) => r.data)
-
-export const idsGet = (base: string, params?: Record<string, unknown>) =>
-  api.get<{ ids: number[]; total: number }>(`${base}/ids`, { params })
-     .then((r) => r.data.ids)
-TSEOF
-echo "    wrote frontend/src/api/listing.ts"
-
-cat > "$ROOT/frontend/src/components/shared/SiteSelect.tsx" <<'TSEOF'
-/**
- * SiteSelect – searchable site picker (server-side search, 30 results at a time).
- * Replaces loading every site into the cell form.
- * Works as a controlled antd <Form.Item> child (value / onChange).
- */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Select, Spin } from 'antd'
-import { getSites, getSite } from '@/api/sites'
-import type { Site } from '@/types'
-
-interface Props {
-  value?: number
-  onChange?: (value: number | undefined) => void
-  onSiteChange?: (site: Site | undefined) => void
-  disabled?: boolean
-  placeholder?: string
-}
-
-export default function SiteSelect({
-  value, onChange, onSiteChange, disabled,
-  placeholder = 'Gõ tên site để tìm...',
-}: Props) {
-  const [options,  setOptions]  = useState<Site[]>([])
-  const [selected, setSelected] = useState<Site | undefined>()
-  const [loading,  setLoading]  = useState(false)
-  const reqRef   = useRef(0)
-  const timerRef = useRef<number | undefined>(undefined)
-
-  const search = (text: string, delay = 250) => {
-    window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(async () => {
-      const id = ++reqRef.current
-      setLoading(true)
-      try {
-        const rows = await getSites({
-          search: text.trim() || undefined, limit: 30,
-          sort_by: 'site_name', sort_dir: 'asc',
-        })
-        if (id === reqRef.current) setOptions(rows)
-      } catch { /* keep old options */ }
-      finally { if (id === reqRef.current) setLoading(false) }
-    }, delay)
-  }
-
-  useEffect(() => { search('', 0); return () => window.clearTimeout(timerRef.current) }, [])
-
-  // make sure the current value can be displayed (edit mode)
-  useEffect(() => {
-    if (!value) { setSelected(undefined); return }
-    if (selected?.id === value) return
-    getSite(value).then(setSelected).catch(() => {})
-  }, [value])
-
-  const list = useMemo(() => {
-    const m = new Map<number, Site>()
-    if (selected) m.set(selected.id, selected)
-    options.forEach((s) => m.set(s.id, s))
-    return [...m.values()]
-  }, [options, selected])
-
-  return (
-    <Select
-      showSearch allowClear filterOption={false}
-      disabled={disabled} placeholder={placeholder}
-      value={value} loading={loading}
-      onSearch={(t) => search(t)}
-      notFoundContent={loading ? <Spin size="small" /> : 'Không tìm thấy site'}
-      onChange={(v: number | undefined) => {
-        const s = list.find((x) => x.id === v)
-        setSelected(s)
-        onChange?.(v)
-        onSiteChange?.(s)
-      }}
-      options={list.map((s) => ({ value: s.id, label: s.site_name }))}
-    />
-  )
-}
-TSEOF
-echo "    wrote frontend/src/components/shared/SiteSelect.tsx"
-
-cat > "$ROOT/frontend/src/hooks/useServerTable.tsx" <<'TSEOF'
-/**
- * useServerTable.tsx
- *
- * Server-side paging / sorting / Excel-style column filters for <Table>.
- *
- *   const sq = useServerQuery([...top-bar filter values])      // before `load`
- *   ...load() merges sq.params, calls api.listPaged, then sq.onLoaded(total, params)
- *   const { columns, dataSource, onChange, filterBar, clearAll } =
- *     useServerColumns(columns, data, sq, { fetchDistinct, fetchIds, selectedIds, setSelectedIds })
- *   <Table pagination={sq.pagination('cells')} ... />
- */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Button, Checkbox, Divider, Input, Select, Space, Spin, Tag, Typography } from 'antd'
-import {
-  FilterFilled, SearchOutlined, SortAscendingOutlined, SortDescendingOutlined,
-} from '@ant-design/icons'
-import type { ColumnsType, ColumnType, TablePaginationConfig } from 'antd/es/table'
-import type {
-  FilterDropdownProps, FilterValue, SorterResult, SortOrder, TableCurrentDataSource,
-} from 'antd/es/table/interface'
-import type { DistinctResult } from '@/api/listing'
-
-export const EMPTY = '__SL_EMPTY__'
-export const PAGE_SIZE_ALL = 0
-export const ALL_LIMIT = 5000            // "Tất cả" = up to this many rows per page
-const PAGE_SIZES = [10, 20, 50, 100, 200, 500]
-const MAX_VALUES = 200
-const PAGING_KEYS = ['skip', 'limit', 'sort_by', 'sort_dir', 'filters']
-const collator = new Intl.Collator('vi', { numeric: true, sensitivity: 'base' })
-
-export interface ColumnFilter { contains?: string; in?: string[]; not_in?: string[] }
-type FilterMap = Record<string, ColumnFilter>
-type SortState = { field: string; order: 'ascend' | 'descend' } | null
-
-// ─────────────────────────────────────────────────────────────────────────────
-// query state
-// ─────────────────────────────────────────────────────────────────────────────
-export function useServerQuery(resetDeps: unknown[] = [], defaultPageSize = 50) {
-  const [filters,  setFilters]   = useState<FilterMap>({})
-  const [sort,     setSortState] = useState<SortState>(null)
-  const [page,     setPage]      = useState(1)
-  const [pageSize, setPageSize]  = useState(defaultPageSize)
-  const [total,    setTotal]     = useState(0)
-  const ticketRef = useRef(0)
-  const baseRef   = useRef<Record<string, unknown>>({})
-
-  const limit = pageSize === PAGE_SIZE_ALL ? ALL_LIMIT : pageSize
-  const filtersJson = useMemo(
-    () => (Object.keys(filters).length ? JSON.stringify(filters) : undefined),
-    [filters],
-  )
-
-  const params = useMemo(() => {
-    const p: Record<string, unknown> = { skip: (page - 1) * limit, limit }
-    if (sort) { p.sort_by = sort.field; p.sort_dir = sort.order === 'ascend' ? 'asc' : 'desc' }
-    if (filtersJson) p.filters = filtersJson
-    return p
-  }, [page, limit, sort, filtersJson])
-
-  // top-bar filter changed => back to page 1
-  const depsKey = JSON.stringify(resetDeps)
-  const mounted = useRef(false)
-  useEffect(() => {
-    if (!mounted.current) { mounted.current = true; return }
-    setPage(1)
-  }, [depsKey])
-
-  // stale-response guard
-  const nextTicket = useCallback(() => ++ticketRef.current, [])
-  const isCurrent  = useCallback((t: number) => t === ticketRef.current, [])
-
-  const onLoaded = useCallback((t: number, used: Record<string, unknown>) => {
-    setTotal(t)
-    const rest: Record<string, unknown> = {}
-    Object.keys(used).forEach((k) => { if (!PAGING_KEYS.includes(k)) rest[k] = used[k] })
-    baseRef.current = rest                                    // top-bar params only
-    setPage((p) => Math.min(p, Math.max(1, Math.ceil(t / limit))))   // page vanished
-  }, [limit])
-
-  const setFilter = useCallback((field: string, spec: ColumnFilter | null) => {
-    setFilters((prev) => {
-      const n = { ...prev }
-      if (spec) n[field] = spec; else delete n[field]
-      return n
-    })
-    setPage(1)
-  }, [])
-  const clearFilters = useCallback(() => { setFilters({}); setPage(1) }, [])
-  const setSort = useCallback((s: SortState) => { setSortState(s); setPage(1) }, [])
-
-  const pagination = (unit = 'bản ghi'): TablePaginationConfig => ({
-    current: page,
-    pageSize: limit,
-    total,
-    showSizeChanger: false,
-    onChange: (p) => setPage(p),
-    showTotal: (t) => (
-      <Space size={12}>
-        <span>{t.toLocaleString('vi-VN')} {unit}</span>
-        <Select
-          size="small" value={pageSize} style={{ width: 190 }}
-          onChange={(s: number) => { setPageSize(s); setPage(1) }}
-          options={[
-            ...PAGE_SIZES.map((n) => ({ value: n, label: `${n} / trang` })),
-            { value: PAGE_SIZE_ALL, label: `Tất cả (tối đa ${ALL_LIMIT})` },
-          ]}
-        />
-      </Space>
-    ),
-  })
-
-  return {
-    params, filters, filtersJson, sort, total, baseRef,
-    nextTicket, isCurrent, onLoaded,
-    setFilter, clearFilters, setSort, pagination,
-  }
-}
-export type ServerQuery = ReturnType<typeof useServerQuery>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// the header dropdown
-// ─────────────────────────────────────────────────────────────────────────────
-interface PanelProps {
-  field: string
-  filter?: ColumnFilter
-  sortOrder: SortOrder
-  onSort: (o: 'ascend' | 'descend' | null) => void
-  onApply: (f: ColumnFilter | null) => void
-  fetchDistinct: (field: string, params: Record<string, unknown>) => Promise<DistinctResult>
-  getParams: () => Record<string, unknown>
-  dd: FilterDropdownProps
-}
-
-function ServerFilterPanel({
-  field, filter, sortOrder, onSort, onApply, fetchDistinct, getParams, dd,
-}: PanelProps) {
-  const { confirm, visible } = dd
-  const [search,  setSearch]  = useState('')
-  const [base,    setBase]    = useState<'all' | 'none'>('all')
-  const [toggled, setToggled] = useState<Set<string>>(new Set())
-  const [res,     setRes]     = useState<DistinctResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const reqRef = useRef(0)
-
-  // (re)initialise from the active filter every time the panel opens
-  useEffect(() => {
-    if (!visible) return
-    if (filter?.in) {
-      setBase('none'); setToggled(new Set(filter.in)); setSearch('')
-    } else {
-      setBase('all'); setToggled(new Set(filter?.not_in ?? [])); setSearch(filter?.contains ?? '')
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible])
-
-  // values + counts from the server (other columns' filters applied)
-  useEffect(() => {
-    if (!visible) return
-    const id = ++reqRef.current
-    setLoading(true)
-    const t = window.setTimeout(() => {
-      fetchDistinct(field, { ...getParams(), q: search.trim() || undefined, limit: MAX_VALUES })
-        .then((r) => { if (id === reqRef.current) setRes(r) })
-        .catch(() => { if (id === reqRef.current) setRes({ values: [], total_distinct: 0 }) })
-        .finally(() => { if (id === reqRef.current) setLoading(false) })
-    }, search ? 250 : 0)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, search])
-
-  const items = useMemo(() => {
-    const list = (res?.values ?? []).map((v) => {
-      const empty = v.value === null || v.value === undefined || v.value === ''
-      return {
-        key: empty ? EMPTY : String(v.value),
-        label: empty ? '(Trống)'
-          : typeof v.value === 'boolean' ? (v.value ? 'x (Có)' : '- (Không)')
-          : String(v.value),
-        count: v.count,
-      }
-    })
-    return list.sort((a, b) =>
-      a.key === EMPTY ? 1 : b.key === EMPTY ? -1 : collator.compare(a.label, b.label))
-  }, [res])
-
-  const isChecked = (k: string) => (base === 'all' ? !toggled.has(k) : toggled.has(k))
-  const allChecked  = items.length > 0 && items.every((i) => isChecked(i.key))
-  const someChecked = items.some((i) => isChecked(i.key))
-  const searching   = search.trim() !== ''
-
-  const toggleOne = (k: string, on: boolean) => {
-    if (isChecked(k) === on) return
-    setToggled((prev) => {
-      const n = new Set(prev)
-      if (n.has(k)) n.delete(k); else n.add(k)
-      return n
-    })
-  }
-  const toggleAll = (on: boolean) => { setBase(on ? 'all' : 'none'); setToggled(new Set()) }
-  const onSearch  = (v: string)   => { setSearch(v); setBase('all'); setToggled(new Set()) }
-
-  const apply = () => {
-    if (base === 'all') {
-      const spec: ColumnFilter = {}
-      if (searching) spec.contains = search.trim()
-      if (toggled.size) spec.not_in = [...toggled]
-      onApply(Object.keys(spec).length ? spec : null)
-    } else {
-      onApply({ in: [...toggled] })
-    }
-    confirm({ closeDropdown: true })
-  }
-  const reset  = () => { onApply(null); confirm({ closeDropdown: true }) }
-  const sortBy = (o: 'ascend' | 'descend') => {
-    onSort(sortOrder === o ? null : o)
-    confirm({ closeDropdown: true })
-  }
-
-  return (
-    <div style={{ padding: 8, width: 290 }} onKeyDown={(e) => e.stopPropagation()}>
-      <Button block size="small" icon={<SortAscendingOutlined />}
-              type={sortOrder === 'ascend' ? 'primary' : 'text'}
-              style={{ textAlign: 'left' }} onClick={() => sortBy('ascend')}>
-        Sắp xếp A → Z (tăng dần)
-      </Button>
-      <Button block size="small" icon={<SortDescendingOutlined />}
-              type={sortOrder === 'descend' ? 'primary' : 'text'}
-              style={{ textAlign: 'left' }} onClick={() => sortBy('descend')}>
-        Sắp xếp Z → A (giảm dần)
-      </Button>
-      <Divider style={{ margin: '6px 0' }} />
-
-      <Input size="small" allowClear prefix={<SearchOutlined />} placeholder="Tìm kiếm..."
-             value={search} onChange={(e) => onSearch(e.target.value)} />
-
-      <div style={{ marginTop: 8, border: '1px solid #f0f0f0', borderRadius: 4 }}>
-        <div style={{ padding: '4px 8px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
-          <Checkbox checked={allChecked} indeterminate={!allChecked && someChecked}
-                    disabled={items.length === 0}
-                    onChange={(e) => toggleAll(e.target.checked)}>
-            {searching ? 'Chọn tất cả kết quả tìm kiếm' : '(Chọn tất cả)'}
-          </Checkbox>
-        </div>
-        <div style={{ maxHeight: 240, overflowY: 'auto', padding: '4px 8px', minHeight: 40 }}>
-          {loading && <div style={{ textAlign: 'center', padding: 8 }}><Spin size="small" /></div>}
-          {!loading && items.map((i) => (
-            <div key={i.key} style={{ padding: '2px 0' }}>
-              <Checkbox checked={isChecked(i.key)} onChange={(e) => toggleOne(i.key, e.target.checked)}>
-                <span style={{ whiteSpace: 'normal', wordBreak: 'break-word' }}>{i.label}</span>
-                <span style={{ color: '#999', fontSize: 11, marginLeft: 4 }}>({i.count})</span>
-              </Checkbox>
-            </div>
-          ))}
-          {!loading && items.length === 0 && (
-            <div style={{ color: '#999', padding: 8, textAlign: 'center' }}>Không có giá trị</div>
-          )}
-          {!loading && res && res.total_distinct > items.length && (
-            <div style={{ color: '#999', fontSize: 11, padding: '4px 0' }}>
-              Hiển thị {items.length}/{res.total_distinct} giá trị – nhập từ khóa rồi bấm OK để lọc "chứa"
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <Button size="small" onClick={reset}>Xóa lọc</Button>
-        <Button size="small" type="primary" onClick={apply}
-                disabled={base === 'none' && toggled.size === 0}>OK</Button>
-      </div>
-    </div>
-  )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// columns decorator
-// ─────────────────────────────────────────────────────────────────────────────
-export interface ServerColumnsOptions {
-  fetchDistinct: (field: string, params: Record<string, unknown>) => Promise<DistinctResult>
-  fetchIds: (params: Record<string, unknown>) => Promise<number[]>
-  selectedIds: number[]
-  setSelectedIds: (ids: number[]) => void
-  unit?: string
-}
-
-function fieldOf<T>(c: ColumnsType<T>[number]): string | null {
-  if ((c as any).children) return null
-  const d = (c as ColumnType<T>).dataIndex
-  return typeof d === 'string' ? d : null
-}
-
-const describe = (f: ColumnFilter) => {
-  const parts: string[] = []
-  if (f.contains) parts.push(`chứa "${f.contains}"`)
-  if (f.in) parts.push(`${f.in.length} giá trị`)
-  if (f.not_in?.length) parts.push(`bỏ ${f.not_in.length}`)
-  return parts.join(', ')
-}
-
-export function useServerColumns<T extends object>(
-  columns: ColumnsType<T>,
-  data: T[],
-  sq: ServerQuery,
-  opts: ServerColumnsOptions,
-) {
-  const [busy, setBusy] = useState(false)
-  const unit = opts.unit ?? 'dòng'
-
-  const getParams = () => ({
-    ...sq.baseRef.current,
-    ...(sq.filtersJson ? { filters: sq.filtersJson } : {}),
-  })
-
-  const titleByField: Record<string, string> = {}
-
-  const mapped = columns.map((c) => {
-    const field = fieldOf(c)
-    if (!field) return c
-    const col  = c as ColumnType<T>
-    const spec = sq.filters[field]
-    const sortOrder: SortOrder = sq.sort && sq.sort.field === field ? sq.sort.order : null
-    const title = typeof col.title === 'string' ? col.title : field
-    titleByField[field] = title.length > 30 ? title.slice(0, 30) + '…' : title
-    const minW = typeof col.title === 'string' ? Math.min(col.title.length * 8 + 64, 180) : 0
-    return {
-      ...col,
-      key: field,
-      width: typeof col.width === 'number' ? Math.max(col.width, minW) : col.width,
-      sorter: true,
-      sortOrder,
-      sortDirections: ['ascend', 'descend'] as SortOrder[],
-      filteredValue: spec ? ['1'] : null,
-      onFilter: undefined,
-      defaultSortOrder: undefined,
-      defaultFilteredValue: undefined,
-      filterDropdown: (dd: FilterDropdownProps) => (
-        <ServerFilterPanel
-          field={field} filter={spec} sortOrder={sortOrder} dd={dd}
-          onSort={(o) => sq.setSort(o ? { field, order: o } : null)}
-          onApply={(f) => sq.setFilter(field, f)}
-          fetchDistinct={opts.fetchDistinct}
-          getParams={getParams}
-        />
-      ),
-    } as ColumnType<T>
-  })
-
-  // <Table onChange>: only header-click sorting needs handling
-  const onChange = (
-    _p: TablePaginationConfig,
-    _f: Record<string, FilterValue | null>,
-    s: SorterResult<T> | SorterResult<T>[],
-    extra: TableCurrentDataSource<T>,
-  ) => {
-    if (extra.action !== 'sort') return
-    const one = Array.isArray(s) ? s[0] : s
-    const f = one && one.order ? String(one.columnKey ?? one.field ?? '') : ''
-    sq.setSort(f ? { field: f, order: one.order as 'ascend' | 'descend' } : null)
-  }
-
-  const selectAllMatching = async () => {
-    setBusy(true)
-    try {
-      const ids = await opts.fetchIds(getParams())
-      opts.setSelectedIds(Array.from(new Set([...opts.selectedIds, ...ids])))
-    } finally { setBusy(false) }
-  }
-
-  const active = Object.entries(sq.filters)
-
-  const filterBar = (
-    <div style={{
-      background: active.length ? '#fffbe6' : '#fafafa',
-      border: `1px solid ${active.length ? '#ffe58f' : '#f0f0f0'}`,
-      borderRadius: 6, padding: '6px 12px', marginBottom: 12,
-      display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
-    }}>
-      <Typography.Text strong>{sq.total.toLocaleString('vi-VN')} {unit} khớp</Typography.Text>
-      <Button size="small" loading={busy} disabled={sq.total === 0} onClick={selectAllMatching}>
-        Chọn tất cả {sq.total.toLocaleString('vi-VN')} kết quả
-      </Button>
-      {opts.selectedIds.length > 0 && (
-        <>
-          <Typography.Text type="secondary">· Đã chọn {opts.selectedIds.length.toLocaleString('vi-VN')}</Typography.Text>
-          <Button size="small" type="link" onClick={() => opts.setSelectedIds([])}>Bỏ chọn tất cả</Button>
-        </>
-      )}
-      {active.length > 0 && (
-        <>
-          <FilterFilled style={{ color: '#faad14' }} />
-          {active.map(([k, f]) => (
-            <Tag key={k} closable style={{ margin: 0 }}
-                 onClose={(e) => { e.preventDefault(); sq.setFilter(k, null) }}>
-              {titleByField[k] ?? k}: {describe(f)}
-            </Tag>
-          ))}
-          <Button size="small" type="link" onClick={sq.clearFilters}>Xóa bộ lọc cột</Button>
-        </>
-      )}
-      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        (Xuất file chưa áp dụng bộ lọc cột)
-      </Typography.Text>
-    </div>
-  )
-
-  return {
-    columns: mapped as ColumnsType<T>,
-    dataSource: data,
-    onChange,
-    filterBar,
-    clearAll: sq.clearFilters,
-    activeCount: active.length,
-  }
-}
-TSEOF
-echo "    wrote frontend/src/hooks/useServerTable.tsx"
-
-# ═════════════════════════════════════════════════════════════════════════════
-# 3) PATCH existing files (each file all-or-nothing)
-# ═════════════════════════════════════════════════════════════════════════════
-python3 - "$ROOT" "$BACKUP_DIR" <<'PYEOF'
-import re, sys, shutil
-from pathlib import Path
-
-root = Path(sys.argv[1])
-bak  = Path(sys.argv[2])
-total_fail = 0
-
-
-class Patch:
-    def __init__(self, rel):
-        self.rel, self.fail = rel, 0
-        p = root / rel
-        print(f"--- {rel}")
-        if not p.is_file():
-            print("  FAIL file not found")
-            self.text = self.orig = None
-            return
-        self.text = self.orig = p.read_text(encoding="utf-8")
-
-    @property
-    def ok(self):
-        return self.text is not None
-
-    def sub(self, label, pattern, make, flags=0, skip=None, optional=False):
-        if skip and skip in self.text:
-            print(f"  skip {label} (already applied)")
-            return
-        ms = list(re.finditer(pattern, self.text, flags))
-        if not ms and optional:
-            print(f"  skip {label} (not present)")
-            return
-        if len(ms) != 1:
-            self.fail += 1
-            print(f"  FAIL {label}: expected 1 match, found {len(ms)}")
-            return
-        m = ms[0]
-        self.text = self.text[:m.start()] + make(m) + self.text[m.end():]
-        print(f"  ok   {label}")
-
-    def save(self):
-        global total_fail
-        total_fail += self.fail
-        if self.fail:
-            print("  => NOT saved (a patch failed; file left untouched)")
-            return
-        if self.text != self.orig:
-            dst = bak / self.rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(root / self.rel, dst)
-            (root / self.rel).write_text(self.text, encoding="utf-8")
-            print("  => SAVED (backup made)")
-        else:
-            print("  => no change")
-
-
-# ═════════ BACKEND routers ═════════
-BACKEND = [
-    ("backend/app/api/routes/cells_3g.py", "Cell3G", "cell"),
-    ("backend/app/api/routes/cells_4g.py", "Cell4G", "cell"),
-    ("backend/app/api/routes/cells_5g.py", "Cell5G", "cell"),
-    ("backend/app/api/routes/sites.py",    "Site",   "site"),
-]
-for rel, model, kind in BACKEND:
-    p = Patch(rel)
-    if not p.ok:
-        total_fail += 1
-        continue
-
-    p.sub("import Response",
-          r"^from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File[ \t]*$",
-          lambda m: m.group(0) + ", Response", re.M,
-          skip="UploadFile, File, Response")
-
-    p.sub("import list_query helpers",
-          r"^from app\.models\.site import Site[ \t]*$",
-          lambda m: m.group(0) + "\nfrom app.services.list_query import "
-                    "apply_column_filters, apply_sort, register_listing_routes",
-          re.M, skip="from app.services.list_query")
-
-    p.sub("register /ids and /distinct routes",
-          r"^router = APIRouter\(\)[ \t]*$",
-          lambda m, model=model, kind=kind: m.group(0) +
-              '\nregister_listing_routes(router, %s, "%s")  # GET /ids, GET /distinct/{column}' % (model, kind),
-          re.M, skip="register_listing_routes(router")
-
-    p.sub("list: sort_by / sort_dir / filters params",
-          r"(def list_(?:cells|sites)\(.*?)(\n[ \t]*db: Session = Depends\(get_db\))",
-          lambda m: m.group(1) +
-              '\n    sort_by:  Optional[str] = Query(None),'
-              '\n    sort_dir: str           = Query("asc"),'
-              '\n    filters:  Optional[str] = Query(None),' + m.group(2),
-          re.S, skip="filters:  Optional[str] = Query(None)")
-
-    p.sub("list: response param",
-          r"(def list_(?:cells|sites)\()(\s*)",
-          lambda m: m.group(1) + m.group(2) + "response: Response," + m.group(2),
-          skip="response: Response,")
-
-    p.sub("list: column filters + total header + sort",
-          r"^([ \t]*)return q\.offset\(skip\)\.limit\(limit\)\.all\(\)[ \t]*$",
-          lambda m, model=model: (
-              f"{m.group(1)}q = apply_column_filters(q, {model}, filters)\n"
-              f"{m.group(1)}response.headers[\"X-Total-Count\"] = str(q.count())\n"
-              f"{m.group(1)}q = apply_sort(q, {model}, sort_by, sort_dir)\n"
-              f"{m.group(1)}return q.offset(skip).limit(limit).all()"),
-          re.M, skip="X-Total-Count")
-    p.save()
-
-# ═════════ FRONTEND api layer ═════════
-p = Patch("frontend/src/api/cells.ts")
-if p.ok:
-    p.sub("import listing helpers",
-          r"^import api from './client'[ \t]*$",
-          lambda m: m.group(0) + "\nimport { pagedGet, idsGet, distinctGet } from './listing'",
-          re.M, skip="from './listing'")
-    p.sub("listPaged / ids / distinct",
-          r"^([ \t]*)get: \(id: number\) =>",
-          lambda m: (
-              f"{m.group(1)}listPaged: (params?: Record<string, unknown>) =>\n"
-              f"{m.group(1)}  pagedGet<T>(`/api/v1/cells-${{tech}}/`, params),\n\n"
-              f"{m.group(1)}ids: (params?: Record<string, unknown>) =>\n"
-              f"{m.group(1)}  idsGet(`/api/v1/cells-${{tech}}`, params),\n\n"
-              f"{m.group(1)}distinct: (column: string, params?: Record<string, unknown>) =>\n"
-              f"{m.group(1)}  distinctGet(`/api/v1/cells-${{tech}}`, column, params),\n\n"
-              f"{m.group(0)}"),
-          re.M, skip="listPaged:")
-    p.save()
-else:
-    total_fail += 1
-
-p = Patch("frontend/src/api/sites.ts")
-if p.ok:
-    p.sub("import listing helpers",
-          r"^import api from './client'[ \t]*$",
-          lambda m: m.group(0) + "\nimport { pagedGet, idsGet, distinctGet } from './listing'",
-          re.M, skip="from './listing'")
-    if "getSitesPaged" not in p.text:
-        p.text = p.text.rstrip("\n") + """
-
-// ── server-side listing (paging / column filters / select-all) ───────────────
-export const getSitesPaged = (params?: Record<string, unknown>) =>
-  pagedGet<Site>('/api/v1/sites/', params)
-
-export const getSiteIds = (params?: Record<string, unknown>) =>
-  idsGet('/api/v1/sites', params)
-
-export const getSiteDistinct = (column: string, params?: Record<string, unknown>) =>
-  distinctGet('/api/v1/sites', column, params)
-"""
-        print("  ok   append getSitesPaged / getSiteIds / getSiteDistinct")
+def _base_query(db: Session, model, kind: str, request: Request):
+    qp = request.query_params
+    return base_query_from_params(
+        db, model, kind, {k: qp.getlist(k) for k in qp.keys()})
+
+
+def build_export_query(db: Session, model, kind: str, params,
+                       filters: Optional[str] = None, ids: Optional[list] = None,
+                       sort_by: Optional[str] = None, sort_dir: str = "asc",
+                       default_order=()):
+    """
+    Query used by the exports.
+      * ids given  -> exactly those rows (explicit selection, nothing else applies)
+      * otherwise  -> top-bar filters + column filters (same code as the list)
+    """
+    if ids:
+        q = db.query(model).filter(model.id.in_(list(ids)))
     else:
-        print("  skip append sites helpers (already applied)")
-    p.save()
+        q = base_query_from_params(db, model, kind, params or {})
+        q = apply_column_filters(q, model, filters)
+    if sort_by:
+        return apply_sort(q, model, sort_by, sort_dir)
+    if default_order:
+        return q.order_by(*default_order)
+    return q.order_by(model.id)
+'''
+    src = sub_regex(src, r"def _base_query\(.*?\n    return q\n", new_block, "list_query._base_query")
+    write(LQ, src)
+    print("[ok] list_query.py patched")
+
+# ── useServerTable.tsx (hint text) ───────────────────────────────────────────
+HK = "frontend/src/hooks/useServerTable.tsx"
+src = read(HK)
+if "áp dụng cả bộ lọc cột" in src:
+    print("[skip] useServerTable.tsx already patched")
 else:
-    total_fail += 1
+    src = sub_text(
+        src,
+        "(Xuất file chưa áp dụng bộ lọc cột)",
+        "(Xuất file áp dụng cả bộ lọc cột; nếu đã chọn dòng thì chỉ xuất các dòng đã chọn)",
+        "useServerTable hint")
+    write(HK, src)
+    print("[ok] useServerTable.tsx patched")
 
-# ═════════ FRONTEND: shared edits ═════════
-def common_edits(p, topbar_deps, call_tmpl):
-    # hook import swap
-    p.sub("swap hook import",
-          r"^import \{ useExcelColumns \} from '@/hooks/useExcelColumns'[ \t]*$",
-          lambda m: "import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'"
-                    + p.extra_import,
-          re.M, skip="@/hooks/useServerTable")
-    p.sub("drop old pagination import",
-          r"^import \{ useTablePagination \} from '@/hooks/useTablePagination'[ \t]*\n",
-          lambda m: "", re.M, optional=True)
+# ── shared page patches ──────────────────────────────────────────────────────
+def tooltip_and_labels(src, kind_label):
+    """kind_label: 'Excel' or 'KMZ'"""
+    if kind_label == "Excel":
+        old_tip = '<Tooltip title="Xuất dữ liệu hiện tại ra Excel">'
+        new_tip = ("<Tooltip title={selectedIds.length > 0 "
+                   "? `Xuất ${selectedIds.length} dòng đã chọn ra Excel` "
+                   ": 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra Excel'}>")
+    else:
+        old_tip = '<Tooltip title="Xuất dữ liệu hiện tại ra KMZ (Google Earth)">'
+        new_tip = ("<Tooltip title={selectedIds.length > 0 "
+                   "? `Xuất ${selectedIds.length} site đã chọn ra KMZ (Google Earth)` "
+                   ": 'Xuất các site đang lọc (gồm cả bộ lọc cột) ra KMZ (Google Earth)'}>")
+    src = sub_text(src, old_tip, new_tip, f"tooltip {kind_label}")
+    label = f"Xuất {kind_label}"
+    src = sub_fn(
+        src, re.escape(label) + r"(\s*)</Button>",
+        lambda m: label + "{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}"
+                  + m.group(1) + "</Button>",
+        f"button label {kind_label}")
+    return src
 
-    # query state (before load)
-    p.sub("useServerQuery",
-          r"^([ \t]*)const load = useCallback\(",
-          lambda m: f"{m.group(1)}const sq = useServerQuery({topbar_deps})\n\n{m.group(0)}",
-          re.M, skip="useServerQuery(")
+def cells_page(path, fn, topbar_extra=""):
+    src = read(path)
+    if "buildExportScope" in src:
+        print(f"[skip] {path} already patched"); return
+    src = sub_text(src, "import { %s } from '@/api/export'" % fn,
+                   "import { %s, buildExportScope } from '@/api/export'" % fn, f"{path} import")
+    new_handler = '''  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const res = await __FN__(
+        {
+          search:        search || undefined,
+          cell_name_old: cellNameOld || undefined,
+          mien:          mien.length ? mien : undefined,
+          tinh:          tinh.length ? tinh : undefined,
+          phuong_xa:     phuongXa.length ? phuongXa : undefined,
+          vendor:        vendor.length ? vendor : undefined,
+        },
+        // selected rows -> exactly those; otherwise filtered rows incl. column filters
+        buildExportScope(sq, selectedIds),
+      )
+      message.success(`Xuất Excel thành công${res.rows != null ? ` (${res.rows.toLocaleString('vi-VN')} dòng)` : ''}`)
+    } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
+    } finally { setExporting(false) }
+  }
+'''.replace("__FN__", fn)
+    src = sub_regex(src, r"  const handleExport = async \(\) => \{.*?\n  \}\n", new_handler, f"{path} handleExport")
+    src = tooltip_and_labels(src, "Excel")
+    write(path, src)
+    print(f"[ok] {path} patched")
 
-    # load(): params
-    p.sub("load: use server params",
-          r"const params: Record<string, unknown> = \{ limit: (?:1000|500) \}",
-          lambda m: "const params: Record<string, unknown> = { ...sq.params }",
-          skip="{ ...sq.params }")
+cells_page("frontend/src/pages/cells/Cells3GPage.tsx", "exportCells3G")
+cells_page("frontend/src/pages/cells/Cells4GPage.tsx", "exportCells4G")
+cells_page("frontend/src/pages/cells/Cells5GPage.tsx", "exportCells5G")
 
-    # pagination object
-    p.sub("pagination from server query",
-          r"^([ \t]*)const \{ pagination \} = useTablePagination\([^\n]*\)[ \t]*$",
-          lambda m: f"{m.group(1)}const pagination = sq.pagination('{p.unit_plural}')",
-          re.M, skip="sq.pagination(")
-
-    # excel columns -> server columns
-    p.sub("useServerColumns",
-          r"useExcelColumns\(columns, (\w+), \{ onFilterChange: \(\) => setSelectedIds\(\[\]\) \}\)",
-          lambda m: call_tmpl.replace("__VAR__", m.group(1)),
-          skip="useServerColumns(columns")
-
-    # selection across pages
-    p.sub("rowSelection keeps keys across pages",
-          r"selectedRowKeys: selectedIds,",
-          lambda m: "selectedRowKeys: selectedIds,\n    preserveSelectedRowKeys: true,",
-          skip="preserveSelectedRowKeys")
-
-
-# ═════════ Cell pages ═════════
-CELL_CALL = """useServerColumns(columns, __VAR__, sq, {
-      fetchDistinct: (field, p) => __API__.distinct(field, p),
-      fetchIds:      (p) => __API__.ids(p),
-      selectedIds, setSelectedIds, unit: 'cell',
-    })"""
-
-VENDOR_TMPL = """__I__const [vendorOptions, setVendorOptions] = useState<string[]>([])
-__I__useEffect(() => {
-__I__  __API__.distinct('vendor', { limit: 200 })
-__I__    .then((r) => setVendorOptions(
-__I__      r.values.map((v) => v.value)
-__I__       .filter((v): v is string => typeof v === 'string' && v !== '')))
-__I__    .catch(() => {})
-__I__}, [])"""
-
-SITE_ITEM = """<Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
-                <SiteSelect
-                  disabled={Boolean(editing)}
-                  onSiteChange={(s) => { if (s) form.setFieldValue('site_name', s.site_name) }}
-                />
-              </Form.Item>"""
-
-for t in ("3", "4", "5"):
-    api = f"cells{t}gApi"
-    p = Patch(f"frontend/src/pages/cells/Cells{t}GPage.tsx")
-    if not p.ok:
-        total_fail += 1
-        continue
-    p.extra_import = "\nimport SiteSelect from '@/components/shared/SiteSelect'"
-    p.unit_plural = "cells"
-
-    common_edits(p, "[search, cellNameOld, mien, tinh, phuongXa, vendor]",
-                 CELL_CALL.replace("__API__", api))
-
-    p.sub("load: fetch page + total",
-          r"setData\(await %s\.list\(params\)\)" % api,
-          lambda m, api=api: (
-              "const ticket = sq.nextTicket()\n"
-              f"      const res = await {api}.listPaged(params)\n"
-              "      if (!sq.isCurrent(ticket)) return\n"
-              "      setData(res.items)\n"
-              "      sq.onLoaded(res.total, params)"),
-          skip=".listPaged(params)")
-
-    p.sub("load: depends on server params",
-          r"\}, \[search, cellNameOld, mien, tinh, phuongXa, vendor\]\)",
-          lambda m: "}, [search, cellNameOld, mien, tinh, phuongXa, vendor, sq.params])",
-          skip="vendor, sq.params])")
-
-    p.sub("vendor options from server",
-          r"^([ \t]*)const vendorOptions =[^\n]*$",
-          lambda m, api=api: VENDOR_TMPL.replace("__I__", m.group(1)).replace("__API__", api),
-          re.M, skip="setVendorOptions")
-
-    p.sub("stop loading every site (limit 100000)",
-          r"^[ \t]*getSites\(\{ limit: 100000 \}\)\.then\(setSites\)[ \t]*\n",
-          lambda m: "", re.M, optional=True)
-
-    # lookups must not reload on every page/sort/filter change
-    p.sub("split data-load effect from one-time lookups",
-          r"(useEffect\(\(\) => \{)(\s*)load\(\)(.*?)\}, \[load\]\)",
-          lambda m: ("useEffect(() => { load() }, [load])\n\n  useEffect(() => {"
-                     + m.group(3) + "}, [])"),
-          re.S, skip="useEffect(() => { load() }, [load])")
-
-    p.sub("site picker (server-side search)",
-          r'<Form\.Item\s+name="site_id".*?</Form\.Item>',
-          lambda m: SITE_ITEM, re.S, skip="<SiteSelect")
-
-    p.sub("export button label", r"Xuất Excel \(\{data\.length\}\)",
-          lambda m: "Xuất Excel", optional=True)
-    p.sub("export toast", r"Xuất Excel thành công \(\$\{data\.length\} cells\)",
-          lambda m: "Xuất Excel thành công", optional=True)
-    p.save()
-
-# ═════════ Sites page ═════════
-SITE_CALL = """useServerColumns(columns, __VAR__, sq, {
-      fetchDistinct: (field, p) => getSiteDistinct(field, p),
-      fetchIds:      (p) => getSiteIds(p),
-      selectedIds, setSelectedIds, unit: 'site',
-    })"""
-
-p = Patch("frontend/src/pages/sites/SitesPage.tsx")
-if p.ok:
-    p.extra_import = ""
-    p.unit_plural = "sites"
-    common_edits(p, "[search, siteNameCu, mien, tinh, phuongXa]", SITE_CALL)
-
-    p.sub("import paged helpers",
-          r"getSites, deleteSite,",
-          lambda m: "getSites, getSitesPaged, getSiteIds, getSiteDistinct, deleteSite,",
-          skip="getSitesPaged")
-
-    p.sub("load: fetch page + total",
-          r"^([ \t]*)getSites\(params\)\s*\n[ \t]*\.then\(setSites\)",
-          lambda m: (
-              f"{m.group(1)}const ticket = sq.nextTicket()\n"
-              f"{m.group(1)}getSitesPaged(params)\n"
-              f"{m.group(1)}  .then((res) => {{\n"
-              f"{m.group(1)}    if (!sq.isCurrent(ticket)) return\n"
-              f"{m.group(1)}    setSites(res.items)\n"
-              f"{m.group(1)}    sq.onLoaded(res.total, params)\n"
-              f"{m.group(1)}  }})"),
-          re.M, skip="getSitesPaged(params)")
-
-    p.sub("load: depends on server params",
-          r"\}, \[search, siteNameCu, mien, tinh, phuongXa\]\)",
-          lambda m: "}, [search, siteNameCu, mien, tinh, phuongXa, sq.params])",
-          skip="phuongXa, sq.params])")
-
-    p.sub("KMZ label",   r"Xuất KMZ \(\{sites\.length\}\)",   lambda m: "Xuất KMZ",   optional=True)
-    p.sub("Excel label", r"Xuất Excel \(\{sites\.length\}\)", lambda m: "Xuất Excel", optional=True)
-    p.sub("Excel toast", r"Xuất Excel thành công \(\$\{sites\.length\} sites\)",
-          lambda m: "Xuất Excel thành công", optional=True)
-    p.sub("KMZ toast",   r"Xuất KMZ thành công \(\$\{sites\.length\} sites\)",
-          lambda m: "Xuất KMZ thành công", optional=True)
-    p.save()
+# ── SitesPage.tsx ────────────────────────────────────────────────────────────
+SP = "frontend/src/pages/sites/SitesPage.tsx"
+src = read(SP)
+if "buildExportScope" in src:
+    print(f"[skip] {SP} already patched")
 else:
-    total_fail += 1
-
-print()
-print(f"Summary: {total_fail} failed edit(s)." if total_fail else "Summary: all edits OK.")
-sys.exit(1 if total_fail else 0)
+    src = sub_text(src, "import { exportSites, exportSitesKmz } from '@/api/export'",
+                   "import { exportSites, exportSitesKmz, buildExportScope } from '@/api/export'",
+                   "SitesPage import")
+    excel_handler = '''  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const res = await exportSites(
+        {
+          search:       search || undefined,
+          site_name_cu: siteNameCu || undefined,
+          mien:         mien.length ? mien : undefined,
+          tinh:         tinh.length ? tinh : undefined,
+          phuong_xa:    phuongXa.length ? phuongXa : undefined,
+        },
+        // selected rows -> exactly those; otherwise filtered rows incl. column filters
+        buildExportScope(sq, selectedIds),
+      )
+      message.success(`Xuất Excel thành công${res.rows != null ? ` (${res.rows.toLocaleString('vi-VN')} dòng)` : ''}`)
+    } catch (e: any) {
+      message.error(e?.message || 'Xuất thất bại')
+    } finally {
+      setExporting(false)
+    }
+  }
+'''
+    kmz_handler = '''  const handleKmzExport = async () => {
+    setExportingKmz(true)
+    try {
+      const res = await exportSitesKmz(
+        {
+          search:       search || undefined,
+          site_name_cu: siteNameCu || undefined,
+          mien:         mien.length ? mien : undefined,
+          tinh:         tinh.length ? tinh : undefined,
+          phuong_xa:    phuongXa.length ? phuongXa : undefined,
+        },
+        buildExportScope(sq, selectedIds),
+      )
+      const detail = res.rows != null && res.valid != null
+        ? ` (${res.valid.toLocaleString('vi-VN')}/${res.rows.toLocaleString('vi-VN')} site có tọa độ)`
+        : ''
+      message.success(`Xuất KMZ thành công${detail}`)
+    } catch (e: any) {
+      message.error(e?.message || 'Xuất KMZ thất bại')
+    } finally {
+      setExportingKmz(false)
+    }
+  }
+'''
+    src = sub_regex(src, r"  const handleExport = async \(\) => \{.*?\n  \}\n", excel_handler, "SitesPage handleExport")
+    src = sub_regex(src, r"  const handleKmzExport = async \(\) => \{.*?\n  \}\n", kmz_handler, "SitesPage handleKmzExport")
+    src = tooltip_and_labels(src, "Excel")
+    src = tooltip_and_labels(src, "KMZ")
+    write(SP, src)
+    print(f"[ok] {SP} patched")
 PYEOF
-PY_RC=$?
 
-# ═════════════════════════════════════════════════════════════════════════════
-# 4) Verification
-# ═════════════════════════════════════════════════════════════════════════════
-echo "==> Python syntax check"
-python3 -m py_compile \
-  "$ROOT/backend/app/services/list_query.py" \
-  "$ROOT/backend/app/api/routes/cells_3g.py" \
-  "$ROOT/backend/app/api/routes/cells_4g.py" \
-  "$ROOT/backend/app/api/routes/cells_5g.py" \
-  "$ROOT/backend/app/api/routes/sites.py" && echo "    OK"
+# ─────────────────────────────────────────────────────────────────────────────
+# 4) sanity checks
+# ─────────────────────────────────────────────────────────────────────────────
+python3 -m py_compile backend/app/api/routes/export.py backend/app/services/list_query.py \
+  && echo "[ok] python files compile"
 
-echo "==> Verification (each count should be 1, 'old limit' should be 0)"
-printf "    %-44s %s\n" "file" "query / columns / pagination / paged-fetch / old-limit"
-for f in frontend/src/pages/cells/Cells3GPage.tsx frontend/src/pages/cells/Cells4GPage.tsx \
-         frontend/src/pages/cells/Cells5GPage.tsx frontend/src/pages/sites/SitesPage.tsx; do
-  a=$(grep -c "useServerQuery(" "$ROOT/$f")
-  b=$(grep -c "useServerColumns(columns" "$ROOT/$f")
-  c=$(grep -c "sq.pagination(" "$ROOT/$f")
-  d=$(grep -cE "listPaged\(params\)|getSitesPaged\(params\)" "$ROOT/$f")
-  e=$(grep -cE "limit: (1000|500|100000)" "$ROOT/$f")
-  printf "    %-44s %s / %s / %s / %s / %s\n" "$f" "$a" "$b" "$c" "$d" "$e"
-done
-echo "==> Backend routes patched (expect 1 each):"
-grep -c "X-Total-Count" "$ROOT"/backend/app/api/routes/{cells_3g,cells_4g,cells_5g,sites}.py
+cat <<'MSG'
 
-echo "==> Hard-coded caps still in the frontend (not touched by this script):"
-grep -rnE --include=*.ts --include=*.tsx "limit:\s*[0-9]{3,}" "$ROOT/frontend/src" 2>/dev/null \
-  | sed "s#$ROOT/##" | sed 's/^/    /'
-echo "    (send me the export backend + these pages if you want them handled too)"
+Done. Restart the backend, then type-check the frontend:
+    (cd frontend && npx tsc --noEmit)
 
-if [ "${CHECK_TS:-0}" = "1" ] && [ -d "$ROOT/frontend/node_modules" ]; then
-  echo "==> TypeScript check"
-  (cd "$ROOT/frontend" && npx --no-install tsc --noEmit) || echo "    tsc reported issues (see above)"
-fi
-
-echo "==> git status of $ROOT"
-if [ $IS_GIT -eq 1 ]; then
-  git -C "$ROOT" status --short
-  git -C "$ROOT" diff --stat
-fi
-echo "    backups (if any): $BACKUP_DIR"
-
-if [ "$PY_RC" -ne 0 ]; then
-  echo; echo "!! Some edits FAILED (see FAIL lines). Send me those lines."
-  exit 1
-fi
-
-cat <<EOF
-
-==> Done. Rebuild BOTH backend and frontend, then hard-refresh (Ctrl+F5):
-      docker compose up -d --build
-    No database migration is needed.
-    Optional type check first:
-      CHECK_TS=1 bash update_server_side.sh
-EOF
+Behaviour now:
+  * rows selected   -> Excel/KMZ contains exactly those rows
+  * nothing selected-> top-bar filters + column filters, in the on-screen sort order
+  * old GET export URLs still work (and now also honour ?filters=)
+Backups: *.bak_export next to every changed file.
+MSG

@@ -155,85 +155,36 @@ def apply_sort(q, model, sort_by: Optional[str], sort_dir: str = "asc"):
 
 
 # ── top-bar filters (same semantics as the list endpoints) ───────────────────
-def _first(params, name):
-    v = params.get(name)
-    if isinstance(v, (list, tuple)):
-        v = v[0] if v else None
-    if v is None or v == "":
-        return None
-    return v
+def _base_query(db: Session, model, kind: str, request: Request):
+    qp = request.query_params
 
+    def many(name):
+        return [v for v in qp.getlist(name) if v != ""]
 
-def _many(params, name):
-    v = params.get(name)
-    if v is None:
-        return []
-    if not isinstance(v, (list, tuple)):
-        v = [v]
-    return [str(x) for x in v if x is not None and x != ""]
-
-
-def _as_bool(v) -> bool:
-    if isinstance(v, bool):
-        return v
-    return str(v).lower() in ("true", "1", "yes")
-
-
-def base_query_from_params(db: Session, model, kind: str, params):
-    """Top-bar filters from a plain dict (values: str | list[str] | bool)."""
     q = db.query(model)
-    search = _first(params, "search")
+    search = qp.get("search")
     if kind == "cell":
         if search:
             q = q.filter(model.cell_name.ilike(f"%{search}%")
                          | model.site_name.ilike(f"%{search}%"))
-        old = _first(params, "cell_name_old")
-        if old:
-            q = q.filter(model.cell_name_old.ilike(f"%{old}%"))
+        if qp.get("cell_name_old"):
+            q = q.filter(model.cell_name_old.ilike(f"%{qp.get('cell_name_old')}%"))
         names = ("mien", "tinh", "phuong_xa", "vendor", "mimo", "vung_phu_song")
     else:
         if search:
             q = q.filter(model.site_name.ilike(f"%{search}%"))
-        cu = _first(params, "site_name_cu")
-        if cu:
-            q = q.filter(model.site_name_cu.ilike(f"%{cu}%"))
+        if qp.get("site_name_cu"):
+            q = q.filter(model.site_name_cu.ilike(f"%{qp.get('site_name_cu')}%"))
         for n in ("tram_3g", "tram_4g", "tram_5g"):
-            v = _first(params, n)
+            v = qp.get(n)
             if v is not None:
-                q = q.filter(getattr(model, n) == _as_bool(v))
+                q = q.filter(getattr(model, n) == (v.lower() in ("true", "1", "yes")))
         names = ("mien", "tinh", "phuong_xa")
     for n in names:
-        vals = _many(params, n)
+        vals = many(n)
         if vals:
             q = q.filter(getattr(model, n).in_(vals))
     return q
-
-
-def _base_query(db: Session, model, kind: str, request: Request):
-    qp = request.query_params
-    return base_query_from_params(
-        db, model, kind, {k: qp.getlist(k) for k in qp.keys()})
-
-
-def build_export_query(db: Session, model, kind: str, params,
-                       filters: Optional[str] = None, ids: Optional[list] = None,
-                       sort_by: Optional[str] = None, sort_dir: str = "asc",
-                       default_order=()):
-    """
-    Query used by the exports.
-      * ids given  -> exactly those rows (explicit selection, nothing else applies)
-      * otherwise  -> top-bar filters + column filters (same code as the list)
-    """
-    if ids:
-        q = db.query(model).filter(model.id.in_(list(ids)))
-    else:
-        q = base_query_from_params(db, model, kind, params or {})
-        q = apply_column_filters(q, model, filters)
-    if sort_by:
-        return apply_sort(q, model, sort_by, sort_dir)
-    if default_order:
-        return q.order_by(*default_order)
-    return q.order_by(model.id)
 
 
 # ── public: extra routes ─────────────────────────────────────────────────────

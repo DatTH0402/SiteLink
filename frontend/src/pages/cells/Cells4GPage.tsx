@@ -13,7 +13,7 @@ import {
   EditOutlined, DeleteOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import { cells4gApi } from '@/api/cells'
-import { exportCells4G } from '@/api/export'
+import { exportCells4G, buildExportScope } from '@/api/export'
 import type { Cell4G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
@@ -104,15 +104,19 @@ export default function Cells4GPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      await exportCells4G({
-        search:        search || undefined,
-        cell_name_old: cellNameOld || undefined,
-        mien:          mien.length ? mien : undefined,
-        tinh:          tinh.length ? tinh : undefined,
-        phuong_xa:     phuongXa.length ? phuongXa : undefined,
-        vendor:        vendor.length ? vendor : undefined,
-      })
-      message.success(`Xuất Excel thành công`)
+      const res = await exportCells4G(
+        {
+          search:        search || undefined,
+          cell_name_old: cellNameOld || undefined,
+          mien:          mien.length ? mien : undefined,
+          tinh:          tinh.length ? tinh : undefined,
+          phuong_xa:     phuongXa.length ? phuongXa : undefined,
+          vendor:        vendor.length ? vendor : undefined,
+        },
+        // selected rows -> exactly those; otherwise filtered rows incl. column filters
+        buildExportScope(sq, selectedIds),
+      )
+      message.success(`Xuất Excel thành công${res.rows != null ? ` (${res.rows.toLocaleString('vi-VN')} dòng)` : ''}`)
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
@@ -239,10 +243,10 @@ export default function Cells4GPage() {
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
         <Typography.Title level={3} style={{ margin: 0 }}>Cell 4G</Typography.Title>
         <Space>
-          <Tooltip title="Xuất dữ liệu hiện tại ra Excel">
+          <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} dòng đã chọn ra Excel` : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra Excel'}>
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
-              Xuất Excel
+              Xuất Excel{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
