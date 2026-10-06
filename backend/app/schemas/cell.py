@@ -34,6 +34,8 @@ class CellBase(BaseModel):
     bbu_name:       Optional[str]   = None
     cell_status:    Optional[str]   = None
     cell_max_power: Optional[str]   = None
+    dump_date:      Optional[str]   = None
+    oss:            Optional[str]   = None
 
     model_config = {"from_attributes": True}
 
@@ -121,6 +123,8 @@ class CellUpdate(BaseModel):
     bbu_name:       Optional[str]   = None
     cell_status:    Optional[str]   = None
     cell_max_power: Optional[str]   = None
+    dump_date:      Optional[str]   = None
+    oss:            Optional[str]   = None
 
     model_config = {"from_attributes": True}
 

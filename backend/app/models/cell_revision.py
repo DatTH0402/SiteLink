@@ -50,6 +50,8 @@ class Cell3GRevision(Base):
     cpich_power    = Column(String(50))
     bbu_name       = Column(String(100))
     cell_status    = Column(String(100))
+    dump_date      = Column(String(50), nullable=True)   # data dump date
+    oss            = Column(String(50), nullable=True)   # OSS source
 
     changed_fields = Column(Text)
     created_at     = Column(DateTime(timezone=True),
@@ -102,6 +104,8 @@ class Cell4GRevision(Base):
     eci              = Column(String(50))
     bbu_name         = Column(String(100))
     cell_status      = Column(String(100))
+    dump_date      = Column(String(50), nullable=True)   # data dump date
+    oss            = Column(String(50), nullable=True)   # OSS source
 
     changed_fields = Column(Text)
     created_at     = Column(DateTime(timezone=True),
@@ -156,6 +160,8 @@ class Cell5GRevision(Base):
     bbu_name         = Column(String(100))
     mu_mimo          = Column(String(20))
     cell_status      = Column(String(100))
+    dump_date      = Column(String(50), nullable=True)   # data dump date
+    oss            = Column(String(50), nullable=True)   # OSS source
 
     changed_fields = Column(Text)
     created_at     = Column(DateTime(timezone=True),

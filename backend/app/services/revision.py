@@ -262,6 +262,7 @@ def record_cell3g_revision(
         psc=cell.psc, ura_id=cell.ura_id, mimo=cell.mimo,
         cell_max_power=cell.cell_max_power, cpich_power=cell.cpich_power,
         bbu_name=cell.bbu_name, cell_status=cell.cell_status,
+        dump_date=cell.dump_date, oss=cell.oss,
         changed_fields=json.dumps(diff, ensure_ascii=False, default=str),
     )
     db.add(rev)
@@ -302,6 +303,7 @@ def record_cell4g_revision(
         mimo=cell.mimo, bandwidth=cell.bandwidth,
         cell_max_power=cell.cell_max_power, eci=cell.eci,
         bbu_name=cell.bbu_name, cell_status=cell.cell_status,
+        dump_date=cell.dump_date, oss=cell.oss,
         changed_fields=json.dumps(diff, ensure_ascii=False, default=str),
     )
     db.add(rev)
@@ -344,6 +346,7 @@ def record_cell5g_revision(
         cell_max_power=cell.cell_max_power, nci=cell.nci,
         bbu_name=cell.bbu_name, mu_mimo=cell.mu_mimo,
         cell_status=cell.cell_status,
+        dump_date=cell.dump_date, oss=cell.oss,
         changed_fields=json.dumps(diff, ensure_ascii=False, default=str),
     )
     db.add(rev)

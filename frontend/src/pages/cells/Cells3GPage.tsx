@@ -247,7 +247,6 @@ export default function Cells3GPage() {
     { title: 'Total Tilt',    dataIndex: 'total_tilt',     width: 100 },
     { title: 'Loại Anten',    dataIndex: 'loai_anten',     width: 250, ellipsis: { showTitle: true } },
     { title: 'Chung anten',   dataIndex: 'chung_anten',    width: 120 },
-    { title: 'Baseband',      dataIndex: 'baseband',       width: 120 },
     { title: 'RF',            dataIndex: 'rf',             width: 100 },
     { title: 'Cell ID',       dataIndex: 'cell_id',        width: 100 },
     { title: 'UARFCN',        dataIndex: 'uarfcn',         width: 100 },
@@ -260,7 +259,9 @@ export default function Cells3GPage() {
     { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 160 },
     { title: 'CPICH power (dBm)',    dataIndex: 'cpich_power',    width: 150 },
     { title: 'BBUname',       dataIndex: 'bbu_name',       width: 130 },
-    { title: 'Cell status',   dataIndex: 'cell_status',    width: 140 },
+    { title: 'Cell status (at dump time)', dataIndex: 'cell_status', width: 190 },
+    { title: 'Ngày dữ liệu dump', dataIndex: 'dump_date', width: 160 },
+    { title: 'OSS', dataIndex: 'oss', width: 90 },
   ]
 
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
@@ -513,7 +514,6 @@ export default function Cells3GPage() {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={12}>
               <Form.Item name="chung_anten" label="Chung anten">

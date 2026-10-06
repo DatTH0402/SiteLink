@@ -210,7 +210,6 @@ export default function Cells5GPage() {
     { title: 'E-Tilt', dataIndex: 'e_tilt', width: 80 },
     { title: 'Total Tilt', dataIndex: 'total_tilt', width: 100 },
     { title: 'Loại Anten', dataIndex: 'loai_anten', width: 250, ellipsis: { showTitle: true } },
-    { title: 'Baseband', dataIndex: 'baseband', width: 120 },
     { title: 'RF', dataIndex: 'rf', width: 100 },
     { title: 'gNodeB ID', dataIndex: 'gnodeb_id', width: 110 },
     { title: 'Cell ID', dataIndex: 'cell_id', width: 100 },
@@ -226,7 +225,9 @@ export default function Cells5GPage() {
     { title: 'NCI', dataIndex: 'nci', width: 120 },
     { title: 'BBUname', dataIndex: 'bbu_name', width: 130 },
     { title: 'MU-MIMO', dataIndex: 'mu_mimo', width: 100 },
-    { title: 'Cell status', dataIndex: 'cell_status', width: 140 },
+    { title: 'Cell status (at dump time)', dataIndex: 'cell_status', width: 190 },
+    { title: 'Ngày dữ liệu dump', dataIndex: 'dump_date', width: 160 },
+    { title: 'OSS', dataIndex: 'oss', width: 90 },
   ]
 
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
@@ -416,7 +417,6 @@ export default function Cells5GPage() {
                 {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
               </Select>
             </Form.Item></Col>
-            <Col span={8}><Form.Item name="baseband" label="Baseband"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="gnodeb_id" label="gNodeB ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>

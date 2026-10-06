@@ -180,6 +180,8 @@ def list_cell3g_revisions(
             "cpich_power":   r.cpich_power,
             "bbu_name":      r.bbu_name,
             "cell_status":   r.cell_status,
+            "dump_date":      r.dump_date,
+            "oss":            r.oss,
         })
         for r in rows
     ]
@@ -263,6 +265,8 @@ def list_cell4g_revisions(
             "eci":            r.eci,
             "bbu_name":       r.bbu_name,
             "cell_status":    r.cell_status,
+            "dump_date":      r.dump_date,
+            "oss":            r.oss,
         })
         for r in rows
     ]
@@ -355,6 +359,8 @@ def list_cell5g_revisions(
             "bbu_name":         r.bbu_name,
             "mu_mimo":          r.mu_mimo,
             "cell_status":      r.cell_status,
+            "dump_date":      r.dump_date,
+            "oss":            r.oss,
         })
         for r in rows
     ]

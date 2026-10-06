@@ -47,6 +47,8 @@ class Cell5G(Base):
     bbu_name         = Column(String(100))
     mu_mimo          = Column(String(20))
     cell_status      = Column(String(100))
+    dump_date      = Column(String(50), nullable=True)   # data dump date
+    oss            = Column(String(50), nullable=True)   # OSS source
     created_at       = Column(DateTime(timezone=True),
                               default=lambda: datetime.now(timezone.utc))
     updated_at       = Column(DateTime(timezone=True),

@@ -12,7 +12,7 @@ export interface SiteRevision {
   site_name_old_ref?: string
   revision_no: number
   changed_by_name: string
-  change_source: 'form' | 'excel'
+  change_source: 'form' | 'excel' | 'script'
   change_note?: string
   changed_fields: Record<string, [unknown, unknown]>
   created_at: string
@@ -53,14 +53,14 @@ export interface CellRevisionBase {
   cell_name_old?: string
   revision_no: number
   changed_by_name: string
-  change_source: 'form' | 'excel'
+  change_source: 'form' | 'excel' | 'script'
   change_note?: string
   changed_fields: Record<string, [unknown, unknown]>
   created_at: string
   mien?: string
   tinh?: string
   vendor?: string
-  azimuth?: number
+  azimuth?: string
   mimo?: string
   [key: string]: unknown
 }

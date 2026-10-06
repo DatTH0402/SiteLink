@@ -66,6 +66,8 @@ export interface CellBase {
   bbu_name?: string
   cell_status?: string
   cell_max_power?: string
+  dump_date?: string
+  oss?: string
 }
 
 export interface Cell3G extends CellBase {
