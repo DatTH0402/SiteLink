@@ -79,7 +79,6 @@ CHANGE_SOURCE    = "script"
 ALL_VENDORS      = {"ericsson", "huawei", "nokia"}
 
 _KEEP = "\x00KEEP\x00"      # "this vendor can not supply the column -> do not touch the DB value"
-_DUMP_COLS = ("Ngày cập nhật", "Ngay cap nhat", "Ngày dữ liệu dump")
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Low-level value helpers  (every helper returns None on any problem)
@@ -418,8 +417,8 @@ def _b3g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
         "rf":             c("hw_productName"),
         "bbu_name":       c("node_name"),
         "cell_status":    c("rnc_adminState"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "ENM",
+        "dump_date":      datetime.now().strftime("%Y-%m-%d"),
+        "oss":            c("ENM"),
     }, index=r.index)
 
 
@@ -439,8 +438,8 @@ def _b3g_huawei(r: pd.DataFrame) -> pd.DataFrame:
         "rf":             m(_first_token, c("RRU ManufacturerData")),
         "bbu_name":       c("NEname"),
         "cell_status":    c("BLKSTATUS"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "OSS",
+        "dump_date":      datetime.now().strftime("%Y-%m-%d"),
+        "oss":            c("OSS"),
     }, index=r.index)
 
 
@@ -460,8 +459,8 @@ def _b3g_nokia(r: pd.DataFrame) -> pd.DataFrame:
         "rf":             c("RRU productName"),
         "bbu_name":       c("WBTS_name"),
         "cell_status":    c("AdminCellState"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "oss",
+        "dump_date":      datetime.now().strftime("%Y-%m-%d"),
+        "oss":            c("oss"),
     }, index=r.index)
 
 
@@ -484,8 +483,8 @@ def _b4g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
         "rf":               c("hw_productName"),
         "bbu_name":         c("node"),
         "cell_status":      c("administrativeState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "ENM",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("ENM"),
     }, index=r.index)
 
 
@@ -507,8 +506,8 @@ def _b4g_huawei(r: pd.DataFrame) -> pd.DataFrame:
         "rf":               m(_first_token, c("RRU ManufacturerData")),
         "bbu_name":         c("NE"),
         "cell_status":      c("Cell admin state"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "OSS",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("OSS"),
     }, index=r.index)
 
 
@@ -531,8 +530,8 @@ def _b4g_nokia(r: pd.DataFrame) -> pd.DataFrame:
         "rf":               c("RRU productName"),
         "bbu_name":         c("MRBTS_btsname"),
         "cell_status":      c("blockingState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "oss",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("oss"),
     }, index=r.index)
 
 
@@ -561,8 +560,8 @@ def _b5g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
                               c("dlMaxMuMimoLayers", "NRCellDU_dlMaxMuMimoLayers"),
                               c("ulMaxMuMimoLayers", "NRCellDU_ulMaxMuMimoLayers")),
         "cell_status":      c("AdministrativeState_SC"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "ENM",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("ENM"),
     }, index=r.index)
 
 
@@ -591,8 +590,8 @@ def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
                               c("MAXMIMOLAYERNUM", "DL MIMO layers (PDSCH)"),
                               c("MAXMIMOLAYERCNT", "UL MIMO layers (PUSCH)")),
         "cell_status":      c("Cell admin state"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "OSS",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("OSS"),
     }, index=r.index)
 
 
@@ -620,8 +619,8 @@ def _b5g_nokia(r: pd.DataFrame) -> pd.DataFrame:
         "bbu_name":         c("MRBTS_btsname"),
         "mu_mimo":          c("nrCellType"),
         "cell_status":      c("administrativeState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "oss",
+        "dump_date":        datetime.now().strftime("%Y-%m-%d"),
+        "oss":              c("oss"),
     }, index=r.index)
 
 
