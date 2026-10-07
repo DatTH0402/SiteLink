@@ -23,6 +23,8 @@ import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator }
 import { useCellSync } from '@/hooks/useCellSync'
 
 
+const CHUNG_ANTEN_5G = ['5G only', '3G5G', '4G5G', '3G4G5G']
+
 export default function Cells5GPage() {
   const [data,         setData]         = useState<Cell5G[]>([])
   const [loading,      setLoading]      = useState(false)
@@ -210,6 +212,7 @@ export default function Cells5GPage() {
     { title: 'E-Tilt', dataIndex: 'e_tilt', width: 80 },
     { title: 'Total Tilt', dataIndex: 'total_tilt', width: 100 },
     { title: 'Loại Anten', dataIndex: 'loai_anten', width: 250, ellipsis: { showTitle: true } },
+    { title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },
     { title: 'RF', dataIndex: 'rf', width: 100 },
     { title: 'gNodeB ID', dataIndex: 'gnodeb_id', width: 110 },
     { title: 'Cell ID', dataIndex: 'cell_id', width: 100 },
@@ -416,6 +419,9 @@ export default function Cells5GPage() {
               <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
                 {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
               </Select>
+            </Form.Item></Col>
+            <Col span={8}><Form.Item name="chung_anten" label="Chung anten">
+              <Select allowClear>{CHUNG_ANTEN_5G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
             </Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="gnodeb_id" label="gNodeB ID"><Input /></Form.Item></Col>

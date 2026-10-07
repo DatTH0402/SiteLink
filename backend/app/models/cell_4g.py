@@ -39,7 +39,7 @@ class Cell4G(Base):
     tac              = Column(String(50))
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
-    mimo             = Column(String(20))
+    mimo             = Column(String(100))
     bandwidth        = Column(String(50))
     cell_max_power   = Column(String(50))
     eci              = Column(String(50))

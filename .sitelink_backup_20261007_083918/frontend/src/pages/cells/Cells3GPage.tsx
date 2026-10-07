@@ -12,9 +12,10 @@ import {
   PlusOutlined, SearchOutlined, UploadOutlined,
   EditOutlined, DeleteOutlined, DownloadOutlined,
 } from '@ant-design/icons'
-import { cells4gApi } from '@/api/cells'
-import { exportCells4G, buildExportScope } from '@/api/export'
-import type { Cell4G, Site, AntennaItem, TinhItem } from '@/types'
+import { cells3gApi } from '@/api/cells'
+import { exportCells3G, buildExportScope } from '@/api/export'
+import { getRncNamesGrouped } from '@/api/rnc'
+import type { Cell3G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
@@ -23,27 +24,29 @@ import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator }
 import { useCellSync } from '@/hooks/useCellSync'
 
 
-const CHUNG_ANTEN_4G = ['4G only', '3G4G', '2G3G4G', '4G5G', '3G4G5G']
+const CHUNG_ANTEN_3G = ['3G', '3G/4G', '2G/3G/4G', '3G/4G/5G', '3G/5G']
 
-export default function Cells4GPage() {
-  const [data,         setData]         = useState<Cell4G[]>([])
-  const [loading,      setLoading]      = useState(false)
-  const [exporting,    setExporting]    = useState(false)
-  const [search,       setSearch]       = useState('')
-  const [cellNameOld,  setCellNameOld]  = useState('')
-  const [mien,         setMien]         = useState<string[]>([])
-  const [tinh,         setTinh]         = useState<string[]>([])
-  const [phuongXa,     setPhuongXa]     = useState<string[]>([])
-  const [phuongXaOpts, setPhuongXaOpts] = useState<string[]>([])
-  const [vendor,       setVendor]       = useState<string[]>([])
-  const [sites,        setSites]        = useState<Site[]>([])
-  const [antennaList,  setAntennaList]  = useState<AntennaItem[]>([])
-  const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
-  const [modalOpen,    setModalOpen]    = useState(false)
-  const [editing,      setEditing]      = useState<Cell4G | null>(null)
-  const [dryRunOpen,   setDryRunOpen]   = useState(false)
-  const [selectedIds,  setSelectedIds]  = useState<number[]>([])
-  const [bulkEditOpen, setBulkEditOpen] = useState(false)
+export default function Cells3GPage() {
+  const [data,          setData]          = useState<Cell3G[]>([])
+  const [loading,       setLoading]       = useState(false)
+  const [exporting,     setExporting]     = useState(false)
+  const [search,        setSearch]        = useState('')
+  const [cellNameOld,   setCellNameOld]   = useState('')
+  const [mien,          setMien]          = useState<string[]>([])
+  const [tinh,          setTinh]          = useState<string[]>([])
+  const [phuongXa,      setPhuongXa]      = useState<string[]>([])
+  const [phuongXaOpts,  setPhuongXaOpts]  = useState<string[]>([])
+  const [vendor,        setVendor]        = useState<string[]>([])
+  const [sites,         setSites]         = useState<Site[]>([])
+  const [antennaList,   setAntennaList]   = useState<AntennaItem[]>([])
+  const [tinhList,      setTinhList]      = useState<TinhItem[]>([])
+  const [rncGrouped,    setRncGrouped]    = useState<Record<string, string[]>>({})
+  const [rncOptions,    setRncOptions]    = useState<string[]>([])
+  const [modalOpen,     setModalOpen]     = useState(false)
+  const [editing,       setEditing]       = useState<Cell3G | null>(null)
+  const [dryRunOpen,    setDryRunOpen]    = useState(false)
+  const [selectedIds,   setSelectedIds]   = useState<number[]>([])
+  const [bulkEditOpen,  setBulkEditOpen]  = useState(false)
   const [form] = Form.useForm()
 
   const tinhOptions   = tinhList.length > 0
@@ -51,14 +54,13 @@ export default function Cells4GPage() {
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
   const [vendorOptions, setVendorOptions] = useState<string[]>([])
   useEffect(() => {
-    cells4gApi.distinct('vendor', { limit: 200 })
+    cells3gApi.distinct('vendor', { limit: 200 })
       .then((r) => setVendorOptions(
         r.values.map((v) => v.value)
          .filter((v): v is string => typeof v === 'string' && v !== '')))
       .catch(() => {})
   }, [])
 
-  // Reload ward options when province filter changes (single province only)
   useEffect(() => {
     setPhuongXa([])
     setPhuongXaOpts([])
@@ -73,14 +75,14 @@ export default function Cells4GPage() {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { ...sq.params }
-      if (search)           params.search        = search
-      if (cellNameOld)      params.cell_name_old = cellNameOld
-      if (mien.length)      params.mien          = mien
-      if (tinh.length)      params.tinh          = tinh
-      if (phuongXa.length)  params.phuong_xa     = phuongXa
-      if (vendor.length)    params.vendor        = vendor
+      if (search)          params.search        = search
+      if (cellNameOld)     params.cell_name_old = cellNameOld
+      if (mien.length)     params.mien          = mien
+      if (tinh.length)     params.tinh          = tinh
+      if (phuongXa.length) params.phuong_xa     = phuongXa
+      if (vendor.length)   params.vendor        = vendor
       const ticket = sq.nextTicket()
-      const res = await cells4gApi.listPaged(params)
+      const res = await cells3gApi.listPaged(params)
       if (!sq.isCurrent(ticket)) return
       setData(res.items)
       sq.onLoaded(res.total, params)
@@ -99,12 +101,44 @@ export default function Cells4GPage() {
       })
       setAntennaList(sorted)
     })
+    getRncNamesGrouped().then(setRncGrouped)
   }, [])
+
+  // When vendor field changes in the form, update RNC options
+  const handleVendorChange = (value: string | undefined) => {
+    form.setFieldValue('rnc_name', undefined)
+    if (value && rncGrouped[value]) {
+      setRncOptions(rncGrouped[value])
+    } else {
+      setRncOptions([])
+    }
+  }
+  const { syncAfterCreate, syncAfterImport } = useCellSync('3g', load)
+
+
+  // When opening edit modal, populate RNC options based on existing vendor
+  const openEdit = (r: Cell3G) => {
+    setEditing(r)
+    form.setFieldsValue(r)
+    if (r.vendor && rncGrouped[r.vendor]) {
+      setRncOptions(rncGrouped[r.vendor])
+    } else {
+      setRncOptions([])
+    }
+    setModalOpen(true)
+  }
+
+  const openCreate = () => {
+    setEditing(null)
+    form.resetFields()
+    setRncOptions([])
+    setModalOpen(true)
+  }
 
   const handleExport = async () => {
     setExporting(true)
     try {
-      const res = await exportCells4G(
+      const res = await exportCells3G(
         {
           search:        search || undefined,
           cell_name_old: cellNameOld || undefined,
@@ -120,8 +154,6 @@ export default function Cells4GPage() {
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
-  const { syncAfterCreate, syncAfterImport } = useCellSync('4g', load)
-
 
   const clearFilters = () => {
     clearColumnFilters()
@@ -133,15 +165,12 @@ export default function Cells4GPage() {
     if (site) form.setFieldValue('site_name', site.site_name)
   }
 
-  const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
-  const openEdit   = (r: Cell4G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
-
   const handleSave = async () => {
     const values = await form.validateFields()
     try {
-      if (editing) { await cells4gApi.update(editing.id, values); message.success('Cập nhật thành công') }
+      if (editing) { await cells3gApi.update(editing.id, values); message.success('Cập nhật thành công') }
       else         {
-        const created = await cells4gApi.create(values)
+        const created = await cells3gApi.create(values)
         message.success('Tạo cell thành công')
         syncAfterCreate([created])
       }
@@ -156,19 +185,19 @@ export default function Cells4GPage() {
   }
 
   const handleDelete = async (id: number) => {
-    await cells4gApi.remove(id); message.success('Đã xóa')
+    await cells3gApi.remove(id); message.success('Đã xóa')
     setSelectedIds(prev => prev.filter(x => x !== id)); load()
   }
 
   const handleBulkDelete = async () => {
-    const result = await cells4gApi.bulkDelete(selectedIds)
+    const result = await cells3gApi.bulkDelete(selectedIds)
     if (result.deleted) message.success(`Đã xóa ${result.deleted} cell`)
     if (result.errors.length > 0) message.warning(`${result.errors.length} lỗi`)
     setSelectedIds([]); load()
   }
 
   const handleBulkEdit = async (changes: Record<string, unknown>) => {
-    const result = await cells4gApi.bulkUpdate(selectedIds, changes)
+    const result = await cells3gApi.bulkUpdate(selectedIds, changes)
     if (result.updated) message.success(`Đã cập nhật ${result.updated} cell`)
     if (result.errors && result.errors.length > 0) message.warning(`${result.errors.length} lỗi`)
     setSelectedIds([]); load()
@@ -176,16 +205,16 @@ export default function Cells4GPage() {
 
   const pagination = sq.pagination('cells')
 
-  const rowSelection: TableRowSelection<Cell4G> = {
+  const rowSelection: TableRowSelection<Cell3G> = {
     selectedRowKeys: selectedIds,
     preserveSelectedRowKeys: true,
     onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
 
-  const columns: ColumnsType<Cell4G> = [
+  const columns: ColumnsType<Cell3G> = [
     { title: 'Hành động', key: 'action', fixed: 'left', width: 90,
-      render: (_: unknown, r: Cell4G) => (
+      render: (_: unknown, r: Cell3G) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           <Popconfirm title="Xóa cell này?" onConfirm={() => handleDelete(r.id)}>
@@ -193,38 +222,43 @@ export default function Cells4GPage() {
           </Popconfirm>
         </Space>
       )},
-    { title: 'Miền', dataIndex: 'mien', fixed: 'left', width: 70 },
-    { title: 'Tỉnh', dataIndex: 'tinh', fixed: 'left', width: 160 },
-    { title: 'Phường/Xã', dataIndex: 'phuong_xa', width: 160 },
+    { title: 'Miền',          dataIndex: 'mien',          fixed: 'left', width: 70 },
+    { title: 'Tỉnh',          dataIndex: 'tinh',          fixed: 'left', width: 160 },
+    { title: 'Phường/Xã',     dataIndex: 'phuong_xa',     width: 160 },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
-    { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90, render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
-    { title: 'MORAN', dataIndex: 'moran', width: 120 },
-    { title: 'Lat', dataIndex: 'lat', width: 110 },
-    { title: 'Long', dataIndex: 'long', width: 110 },
+    { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220,
+      ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Cell VIP',  dataIndex: 'cell_vip',  width: 90,
+      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+    { title: 'MORAN',    dataIndex: 'moran',         width: 120 },
+    { title: 'Lat',      dataIndex: 'lat',           width: 110 },
+    { title: 'Long',     dataIndex: 'long',          width: 110 },
     { title: 'Vùng phủ sóng', dataIndex: 'vung_phu_song', width: 120 },
-    { title: 'Vendor', dataIndex: 'vendor', width: 100 },
-    { title: 'Độ cao anten', dataIndex: 'do_cao_anten', width: 120 },
-    { title: 'Azimuth', dataIndex: 'azimuth', width: 90 },
-    { title: 'M-tilt', dataIndex: 'm_tilt', width: 80 },
-    { title: 'E-Tilt', dataIndex: 'e_tilt', width: 80 },
-    { title: 'Total Tilt', dataIndex: 'total_tilt', width: 100 },
-    { title: 'Loại Anten', dataIndex: 'loai_anten', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },
-    { title: 'RF', dataIndex: 'rf', width: 100 },
-    { title: 'EnodeB ID', dataIndex: 'enodeb_id', width: 110 },
-    { title: 'Cell ID', dataIndex: 'cell_id', width: 100 },
-    { title: 'EARFCN', dataIndex: 'earfcn', width: 90 },
-    { title: 'TAC', dataIndex: 'tac', width: 80 },
-    { title: 'PCI', dataIndex: 'pci', width: 80 },
-    { title: 'Root Sequence ID', dataIndex: 'root_sequence_id', width: 150 },
-    { title: 'MIMO', dataIndex: 'mimo', width: 80, render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
-    { title: 'Bandwidth', dataIndex: 'bandwidth', width: 110 },
-    { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 165 },
-    { title: 'ECI', dataIndex: 'eci', width: 120 },
-    { title: 'BBUname', dataIndex: 'bbu_name', width: 130 },
+    { title: 'Vendor',        dataIndex: 'vendor',         width: 100 },
+    { title: 'RNC Name',      dataIndex: 'rnc_name',       width: 130,
+      render: (v: string) => v ? <Tag color="cyan">{v}</Tag> : '-' },
+    { title: 'Độ cao anten',  dataIndex: 'do_cao_anten',   width: 120 },
+    { title: 'Azimuth',       dataIndex: 'azimuth',        width: 90 },
+    { title: 'M-tilt',        dataIndex: 'm_tilt',         width: 80 },
+    { title: 'E-Tilt',        dataIndex: 'e_tilt',         width: 80 },
+    { title: 'Total Tilt',    dataIndex: 'total_tilt',     width: 100 },
+    { title: 'Loại Anten',    dataIndex: 'loai_anten',     width: 250, ellipsis: { showTitle: true } },
+    { title: 'Chung anten',   dataIndex: 'chung_anten',    width: 120 },
+    { title: 'RF',            dataIndex: 'rf',             width: 100 },
+    { title: 'Cell ID',       dataIndex: 'cell_id',        width: 100 },
+    { title: 'UARFCN',        dataIndex: 'uarfcn',         width: 100 },
+    { title: 'LAC',           dataIndex: 'lac',            width: 80 },
+    { title: 'RAC',           dataIndex: 'rac',            width: 80 },
+    { title: 'PSC',           dataIndex: 'psc',            width: 80 },
+    { title: 'MIMO',          dataIndex: 'mimo',           width: 80,
+      render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
+    { title: 'URAId',         dataIndex: 'ura_id',         width: 80 },
+    { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 160 },
+    { title: 'CPICH power (dBm)',    dataIndex: 'cpich_power',    width: 150 },
+    { title: 'BBUname',       dataIndex: 'bbu_name',       width: 130 },
     { title: 'Cell status (at dump time)', dataIndex: 'cell_status', width: 190 },
     { title: 'Ngày dữ liệu dump', dataIndex: 'dump_date', width: 160 },
     { title: 'OSS', dataIndex: 'oss', width: 90 },
@@ -233,8 +267,8 @@ export default function Cells4GPage() {
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
     filterBar, clearAll: clearColumnFilters } =
     useServerColumns(columns, data, sq, {
-      fetchDistinct: (field, p) => cells4gApi.distinct(field, p),
-      fetchIds:      (p) => cells4gApi.ids(p),
+      fetchDistinct: (field, p) => cells3gApi.distinct(field, p),
+      fetchIds:      (p) => cells3gApi.ids(p),
       selectedIds, setSelectedIds, unit: 'cell',
     })
   const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
@@ -242,7 +276,7 @@ export default function Cells4GPage() {
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>Cell 4G</Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>Cell 3G</Typography.Title>
         <Space>
           <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} dòng đã chọn ra Excel` : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra Excel'}>
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
@@ -255,7 +289,6 @@ export default function Cells4GPage() {
         </Space>
       </Row>
 
-      {/* ── Filter row 1 ── */}
       <Row gutter={8} style={{ marginBottom: 8 }}>
         <Col flex="240px">
           <Input prefix={<SearchOutlined />} placeholder="Tìm cell / site name..."
@@ -286,7 +319,6 @@ export default function Cells4GPage() {
         </Col>
       </Row>
 
-      {/* ── Filter row 2: ward ── */}
       <Row gutter={8} style={{ marginBottom: 12 }}>
         <Col flex="320px">
           <Select
@@ -333,70 +365,130 @@ export default function Cells4GPage() {
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
              pagination={pagination} />
 
-      <Modal title={editing ? 'Chỉnh sửa Cell 4G' : 'Thêm Cell 4G mới'}
-             open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
+      {/* ── Create / Edit Modal ── */}
+      <Modal title={editing ? 'Chỉnh sửa Cell 3G' : 'Thêm Cell 3G mới'}
+             open={modalOpen} onOk={handleSave} onCancel={() => { setModalOpen(false); setRncOptions([]) }}
              width={900} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
           <Row gutter={12}>
-            <Col span={12}><Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
+            <Col span={12}>
+              <Form.Item name="site_id" label="Site" rules={[{ required: !editing }]}>
                 <SiteSelect
                   disabled={Boolean(editing)}
                   onSiteChange={(s) => { if (s) form.setFieldValue('site_name', s.site_name) }}
                 />
-              </Form.Item></Col>
-            <Col span={12}><Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="site_name" label="Site Name">
-              <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
-            </Form.Item></Col>
-            <Col span={12}><Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col span={6}><Form.Item name="cell_vip" label="Cell VIP">
-              <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
-            </Form.Item></Col>
-            <Col span={6}><Form.Item name="moran" label="MORAN">
-              <Select allowClear><Select.Option value="VNPT HOST">VNPT HOST</Select.Option><Select.Option value="MBF HOST">MBF HOST</Select.Option></Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="lat" label="Lat"
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name_old" label="Site Name Old"><Input /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="site_name" label="Site Name">
+                <Input readOnly={!editing} style={!editing ? { background: '#f5f5f5' } : {}} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="cell_vip" label="Cell VIP">
+                <Select allowClear>
+                  <Select.Option value="VIP">VIP</Select.Option>
+                  <Select.Option value="VVIP">VVIP</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item name="moran" label="MORAN">
+                <Select allowClear>
+                  <Select.Option value="VNPT HOST">VNPT HOST</Select.Option>
+                  <Select.Option value="MBF HOST">MBF HOST</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="lat" label="Lat"
                 rules={[
                   { required: true, message: 'Vui lòng nhập Latitude' },
                   { validator: latValidator },
                 ]}>
                 <InputNumber style={{ width: '100%' }} precision={5} placeholder="8.33 – 23.39" />
-              </Form.Item></Col>
-            <Col span={8}><Form.Item name="long" label="Long"
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="long" label="Long"
                 rules={[
                   { required: true, message: 'Vui lòng nhập Longitude' },
                   { validator: lonValidator },
                 ]}>
                 <InputNumber style={{ width: '100%' }} precision={5} placeholder="102.14 – 109.47" />
-              </Form.Item></Col>
-            <Col span={8}><Form.Item name="vung_phu_song" label="Vùng phủ sóng">
-              <Select allowClear><Select.Option value="Indoor">Indoor</Select.Option><Select.Option value="Outdoor">Outdoor</Select.Option></Select>
-            </Form.Item></Col>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="vung_phu_song" label="Vùng phủ sóng">
+                <Select allowClear>
+                  <Select.Option value="Indoor">Indoor</Select.Option>
+                  <Select.Option value="Outdoor">Outdoor</Select.Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            {/* Vendor + RNC Name: cascading like province/ward */}
             <Col span={8}>
               <Form.Item name="vendor" label="Vendor"
                 rules={[{ required: true, message: 'Vui lòng chọn Vendor' }]}>
-                <Select allowClear>
+                <Select allowClear onChange={handleVendorChange}>
                   {['Ericsson','Nokia','Huawei','ZTE','Samsung'].map(v => (
                     <Select.Option key={v} value={v}>{v}</Select.Option>
                   ))}
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="do_cao_anten" label="Độ cao anten (m)"
+            <Col span={8}>
+              <Form.Item name="rnc_name" label="RNC Name">
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder={
+                    !form.getFieldValue('vendor')
+                      ? 'Chọn Vendor trước'
+                      : rncOptions.length === 0
+                      ? 'Không có RNC cho vendor này'
+                      : 'Chọn RNC Name...'
+                  }
+                  disabled={rncOptions.length === 0 && !form.getFieldValue('vendor')}
+                  filterOption={(input, option) =>
+                    String(option?.children ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                >
+                  {rncOptions.map(n => (
+                    <Select.Option key={n} value={n}>{n}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="do_cao_anten" label="Độ cao anten (m)"
                 rules={[
                   { required: true, whitespace: true, message: 'Vui lòng nhập độ cao anten' },
                   { validator: positiveNumberValidator },
                 ]}>
                 <Input placeholder="vd: 28 hoặc IBC" />
-              </Form.Item></Col>
-            <Col span={8}><Form.Item name="azimuth" label="Azimuth"
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="azimuth" label="Azimuth"
                 rules={[
                   { required: true, whitespace: true, message: 'Vui lòng nhập Azimuth' },
                   { validator: azimuthValidator },
                 ]}>
                 <Input placeholder="vd: 120 hoặc IBC" />
-              </Form.Item></Col>
+              </Form.Item>
+            </Col>
             <Col span={8}>
               <Form.Item name="m_tilt" label="M-tilt"
                 rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập M-tilt' }]}>
@@ -409,30 +501,42 @@ export default function Cells4GPage() {
                 <Input placeholder="vd: 2 hoặc IBC" />
               </Form.Item>
             </Col>
-            <Col span={8}><Form.Item name="total_tilt" label="Total Tilt">
+            <Col span={8}>
+              <Form.Item name="total_tilt" label="Total Tilt">
                 <Input placeholder="vd: 6 hoặc IBC" />
-              </Form.Item></Col>
-            <Col span={24}><Form.Item name="loai_anten" label="Loại Anten">
-              <Select showSearch allowClear filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
-                {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
-              </Select>
-            </Form.Item></Col>
+              </Form.Item>
+            </Col>
+            <Col span={24}>
+              <Form.Item name="loai_anten" label="Loại Anten">
+                <Select showSearch allowClear
+                        filterOption={(i, o) => String(o?.children ?? '').toLowerCase().includes(i.toLowerCase())}>
+                  {antennaList.map(a => <Select.Option key={a.id} value={a.name}>{a.name}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="chung_anten" label="Chung anten">
-              <Select allowClear>{CHUNG_ANTEN_4G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="enodeb_id" label="EnodeB ID"><Input /></Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="chung_anten" label="Chung anten">
+                <Select allowClear>
+                  {CHUNG_ANTEN_3G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="tac" label="TAC"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="pci" label="PCI"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="mimo" label="MIMO">
-              <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="bandwidth" label="Bandwidth (MHz)"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="uarfcn" label="UARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="lac" label="LAC"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="rac" label="RAC"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="psc" label="PSC"><Input /></Form.Item></Col>
+            <Col span={8}>
+              <Form.Item name="mimo" label="MIMO">
+                <Select allowClear>
+                  {['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={8}><Form.Item name="ura_id" label="URAId"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="eci" label="ECI"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="cpich_power" label="CPICH power (dBm)"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
             <Col span={16}><Form.Item name="cell_status" label="Cell status (at dump time)"><Input /></Form.Item></Col>
           </Row>
@@ -443,20 +547,20 @@ export default function Cells4GPage() {
         open={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}
         count={selectedIds.length}
-        tech="4g"
+        tech="3g"
         antennaList={antennaList}
         onConfirm={handleBulkEdit}
       />
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
-        title="Import Cell 4G từ Excel" templateKey="cell-4g"
-        dryRunFn={cells4gApi.dryRunExcel}
+        title="Import Cell 3G từ Excel" templateKey="cell-3g"
+        dryRunFn={cells3gApi.dryRunExcel}
         importFn={async (file) => {
           // Capture timestamp BEFORE import so /recent query is precise
           const importStarted = new Date().toISOString()
-          const result = await cells4gApi.importExcel(file)
+          const result = await cells3gApi.importExcel(file)
           // Trigger sync with exact start timestamp — finds ALL created cells
-          syncAfterImport(result, 'cells_4g', importStarted).catch(() => { load() })
+          syncAfterImport(result, 'cells_3g', importStarted).catch(() => { load() })
           return result
         }}
         onSuccess={load} />

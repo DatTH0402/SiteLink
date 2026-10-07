@@ -94,7 +94,6 @@ export interface Cell4G extends CellBase {
 }
 
 export interface Cell5G extends CellBase {
-  chung_anten?: string
   gnodeb_id?: string
   tac?: string
   pci?: string

@@ -23,7 +23,7 @@ import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator }
 import { useCellSync } from '@/hooks/useCellSync'
 
 
-const CHUNG_ANTEN_4G = ['4G only', '3G4G', '2G3G4G', '4G5G', '3G4G5G']
+const CHUNG_ANTEN_4G = ['4G', '2G/4G', '3G/4G', '2G/3G/4G', '4G/5G']
 
 export default function Cells4GPage() {
   const [data,         setData]         = useState<Cell4G[]>([])

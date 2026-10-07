@@ -1,1356 +1,766 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  apply_cell_update.sh  -  SiteLink: new 3G / 4G / 5G cell transformation rules
+# update_sitelink.sh
+#   1. Excel templates + generator (3G / 4G / 5G cell templates)
+#   2. Auto-map Tinh / Phuong xa from the first 6 chars of Cell Name (Excel import only)
+#   3. Tinh / Phuong xa are optional (guide, template generation, import validation)
+#   4. "Chung anten" drop-list values unified across backend + frontend
 #
-#  Usage:   ./apply_cell_update.sh [PROJECT_ROOT] [--no-migrate] [--no-test]
-#           (PROJECT_ROOT = folder that contains backend/, frontend/ and the
-#            root-level update_cells_with_revision.py; default = current dir)
-#
-#  What it does (idempotent - safe to run twice):
-#    1. Backs up every file it touches to  <root>/.backup_cell_update_<time>/
-#    2. Rewrites   backend/cell_sync_core.py              (new rules, shared by web + script)
-#    3. Rewrites   backend/update_cells_with_revision.py  (manual/daily script, --dry-run, --tech)
-#       Rewrites   update_cells_with_revision.py          (root file -> thin wrapper of the above)
-#    4. Patches    models, revision models, schemas, revision service/route
-#                  (new columns dump_date + oss)
-#    5. Patches    frontend: hides Baseband, shows "Ngay du lieu dump" + OSS, types
-#    6. Adds the 2 DB columns to the 6 tables (ALTER TABLE ... IF NOT EXISTS)
-#    7. Compiles the python files and runs a built-in self-test of every rule
+# Usage:  bash update_sitelink.sh [PROJECT_ROOT]      (default: current dir)
 # =============================================================================
 set -euo pipefail
 
-ROOT=""; MIGRATE=1; RUN_TESTS=1
-for a in "$@"; do
-  case "$a" in
-    --no-migrate) MIGRATE=0 ;;
-    --no-test)    RUN_TESTS=0 ;;
-    -h|--help)    sed -n '2,20p' "$0"; exit 0 ;;
-    *)            ROOT="$a" ;;
-  esac
-done
-ROOT="$(cd "${ROOT:-.}" && pwd)"
+ROOT="${1:-.}"
+ROOT="$(cd "$ROOT" && pwd)"
 
-say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
-die()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
+[ -f "$ROOT/backend/app/main.py" ] || { echo "ERROR: $ROOT does not look like the SiteLink root (backend/app/main.py not found)"; exit 1; }
+command -v python3 >/dev/null || { echo "ERROR: python3 is required"; exit 1; }
 
-[ -d "$ROOT/backend/app" ] || die "'$ROOT' does not look like the SiteLink root (backend/app not found)."
-[ -d "$ROOT/frontend/src" ] || warn "frontend/src not found - frontend patches will be reported as problems."
-command -v python3 >/dev/null || die "python3 is required."
+if grep -q "lookup_by_cell_name" "$ROOT/backend/app/services/import_excel.py"; then
+  echo "Already applied (import_excel.py already contains lookup_by_cell_name). Nothing to do."
+  exit 0
+fi
 
-# ── Python with the backend dependencies (for migration + self-test) ─────────
-APP_PY=""
-for cand in "${PYTHON:-}" "$ROOT/backend/.venv/bin/python" "$ROOT/backend/venv/bin/python" \
-            "$ROOT/.venv/bin/python" "$ROOT/venv/bin/python" python3; do
-  [ -n "$cand" ] || continue
-  if command -v "$cand" >/dev/null 2>&1 && \
-     "$cand" -c "import sqlalchemy, pandas, requests" >/dev/null 2>&1; then
-    APP_PY="$cand"; break
-  fi
-done
-[ -n "$APP_PY" ] && echo "Using python with deps: $APP_PY" \
-                 || warn "No python with sqlalchemy+pandas+requests found: migration and self-test will be skipped (set PYTHON=/path/to/venv/python to enable)."
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ── 1. Backup ────────────────────────────────────────────────────────────────
-say "1/7  Backup"
-BK="$ROOT/.backup_cell_update_$(date +%Y%m%d_%H%M%S)"
+# ----------------------------------------------------------------------------
+# 0. Backup
+# ----------------------------------------------------------------------------
+BK="$ROOT/.sitelink_backup_$(date +%Y%m%d_%H%M%S)"
 FILES=(
-  backend/cell_sync_core.py
-  backend/update_cells_with_revision.py
-  update_cells_with_revision.py
+  backend/create_excel_templates.py
+  backend/app/main.py
+  backend/app/services/import_excel.py
   backend/app/models/cell_3g.py
   backend/app/models/cell_4g.py
   backend/app/models/cell_5g.py
-  backend/app/models/cell_revision.py
   backend/app/schemas/cell.py
-  backend/app/services/revision.py
-  backend/app/api/routes/revision.py
-  frontend/src/types/index.ts
-  frontend/src/api/revision.ts
   frontend/src/pages/cells/Cells3GPage.tsx
   frontend/src/pages/cells/Cells4GPage.tsx
   frontend/src/pages/cells/Cells5GPage.tsx
-  frontend/src/pages/revision/RevisionPage.tsx
+  frontend/src/types/index.ts
 )
 for f in "${FILES[@]}"; do
-  if [ -f "$ROOT/$f" ]; then
-    mkdir -p "$BK/$(dirname "$f")"; cp -p "$ROOT/$f" "$BK/$f"
-  fi
+  [ -f "$ROOT/$f" ] || { echo "ERROR: missing $f"; exit 1; }
+  mkdir -p "$BK/$(dirname "$f")"; cp "$ROOT/$f" "$BK/$f"
 done
-echo "Backup in: $BK"
+echo "Backup written to: $BK"
 
-# ── 2. backend/cell_sync_core.py ─────────────────────────────────────────────
-say "2/7  Writing backend/cell_sync_core.py"
-cat > "$ROOT/backend/cell_sync_core.py" <<'PYEOF'
+# ----------------------------------------------------------------------------
+# 1. Fragment: new cell-template section (replaces sections 7-10 of the generator)
+# ----------------------------------------------------------------------------
+cat > "$TMP/templates_cell_section.py" <<'PYEOF'
+# ══════════════════════════════════════════════════════════════════════════════
+# 7.  SHARED CELL COLUMN BUILDER
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Required cell column names (must match headers exactly).
+# "Tinh" / "Phuong xa" are intentionally NOT required: when they are empty the
+# importer fills them from the first 6 characters of "Cell Name".
+CELL_REQUIRED = {
+    "Site Name",
+    "Cell Name",
+    "Vendor",
+    "Lat",
+    "Long",
+    "Azimuth",
+    "Do cao anten",
+    "M-tilt",
+    "E-Tilt",
+}
+
+_GEO_NOTE = (
+    "KHÔNG bắt buộc – để trống thì hệ thống tự điền theo 6 ký tự đầu của "
+    "Cell Name (khớp cột ky_tu_1_6 trong danh mục Tỉnh/Xã/Phường); "
+    "đã nhập thì giữ nguyên"
+)
+
+# (header, note_for_guide, width, is_required)
+# ---- block 1: identification / location (before the RNC slot) ---------------
+_CELL_COLS_HEAD: List[Tuple[str, str, float, bool]] = [
+    ("Mien",           "Miền: MB / MT / MN",                                           8,  False),
+    ("Tinh",           "Tỉnh / Thành phố – chọn từ danh sách. " + _GEO_NOTE,          28,  False),
+    ("Phuong xa",      "Phường / Xã – chọn từ danh sách. " + _GEO_NOTE,               28,  False),
+    ("Site Name",      "Tên site – bắt buộc, phải khớp với site đã có",               28,  True),
+    ("Site Name Old",  "Tên site cũ – điền khi site vừa đổi tên",                     24,  False),
+    ("Cell Name",      "Tên cell – bắt buộc, duy nhất trong site (vd: HNIHKM44DI4DA)", 28,  True),
+    ("Cell Name Old",  "Tên cell cũ – điền khi cell vừa đổi tên",                     24,  False),
+    ("Cell VIP",       "Mức độ VIP: VIP hoặc VVIP",                                   10,  False),
+    ("MORAN",          "MORAN: VNPT HOST hoặc MBF HOST",                               18,  False),
+    ("Lat",            f"Latitude – phải trong {VN_LAT_MIN}–{VN_LAT_MAX}",            14,  True),
+    ("Long",           f"Longitude – phải trong {VN_LON_MIN}–{VN_LON_MAX}",           14,  True),
+    ("Vung phu song",  "Vùng phủ sóng: Indoor hoặc Outdoor",                          14,  False),
+    ("Vendor",         "Hãng thiết bị – bắt buộc, chọn từ danh sách",                 14,  True),
+]
+
+# ---- block 2: antenna geometry; "Chung anten" is inserted right after it -----
+_CELL_COLS_ANTENNA: List[Tuple[str, str, float, bool]] = [
+    ("Do cao anten",   "Độ cao anten – bắt buộc (số hoặc chuỗi, vd: 28 hoặc IBC)",    16,  True),
+    ("Azimuth",        "Góc phương vị – bắt buộc (số hoặc chuỗi, vd: 120 hoặc IBC)", 12,  True),
+    ("M-tilt",         "Mechanical tilt – bắt buộc (số hoặc chuỗi, vd: 2 hoặc IBC)", 10,  True),
+    ("E-Tilt",         "Electrical tilt – bắt buộc (số hoặc chuỗi, vd: 4 hoặc IBC)", 10,  True),
+    ("Total Tilt",     "Tổng tilt (số hoặc chuỗi, tự tính hoặc để trống)",            12,  False),
+    ("Loai Anten",     "Loại anten – chọn từ danh sách antenna",                       35,  False),
+]
+
+# ---- block 3: common tail ----------------------------------------------------
+_CELL_COLS_TAIL: List[Tuple[str, str, float, bool]] = [
+    ("RF",                         "Tên thiết bị RF",                                  16,  False),
+    ("Cell ID",                    "Cell ID (chuỗi hoặc số)",                          14,  False),
+    ("MIMO",                       "Cấu hình MIMO – nhập tự do (vd: 2x2, 4x4, 8x8, 32T32R)", 14, False),
+    ("Cell max power (dBm)",       "Công suất tối đa cell (dBm)",                      20,  False),
+    ("BBUname",                    "Tên BBU",                                          16,  False),
+    ("Cell status (at dump time)", "Trạng thái cell tại thời điểm dump",              26,  False),
+]
+
+_RNC_COL: Tuple[str, str, float, bool] = (
+    "RNC Name", "Tên RNC – chọn từ danh sách theo Vendor", 18, False)
+
+_OSS_COL: Tuple[str, str, float, bool] = (
+    "OSS", "Hệ thống OSS nguồn dữ liệu – nhập tự do", 14, False)
+
+
+def _chung_anten_col(options: List[str]) -> Tuple[str, str, float, bool]:
+    return (
+        "Chung anten",
+        "Chung anten – chọn từ danh sách: " + ", ".join(options),
+        20,
+        False,
+    )
+
+
+def _cell_columns(
+    chung_options: List[str],
+    *,
+    rnc_col: bool,
+    extra_cols: List[Tuple[str, str, float, bool]],
+) -> List[Tuple[str, str, float, bool]]:
+    """
+    Final column order:
+      HEAD → [RNC Name (3G only)] → ANTENNA (…Total Tilt, Loai Anten)
+           → Chung anten → TAIL (RF …) → tech extras → OSS (always last)
+    """
+    cols = list(_CELL_COLS_HEAD)
+    if rnc_col:
+        cols.append(_RNC_COL)
+    cols += _CELL_COLS_ANTENNA
+    cols.append(_chung_anten_col(chung_options))
+    cols += _CELL_COLS_TAIL
+    cols += extra_cols
+    cols.append(_OSS_COL)
+    return cols
+
+
+def _apply_common_cell_validations(
+    wb: Workbook,
+    ws: Worksheet,
+    cm: Dict[str, int],
+    lookup_col_offset: int = 1,
+) -> int:
+    """Apply all common cell validations. Returns next free lookup col index.
+    NOTE: MIMO has no drop-down any more (free text)."""
+    lc = lookup_col_offset
+
+    lk_tinh = _write_lookup_col(wb, lc, TINH_LIST,     "Tinh");      lc += 1
+    lk_xa   = _write_lookup_col(wb, lc, ALL_PHUONG_XA, "PhuongXa");  lc += 1
+
+    _apply_dv(ws, _dv_list_inline(MIEN_LIST),      cm["Mien"])
+    _apply_dv(ws, _dv_list_formula(lk_tinh),        cm["Tinh"])
+    _apply_dv(ws, _dv_list_formula(lk_xa),          cm["Phuong xa"])
+    _apply_dv(ws, _dv_list_inline(CELL_VIP_LIST),   cm["Cell VIP"])
+    _apply_dv(ws, _dv_list_inline(MORAN_LIST),       cm["MORAN"])
+
+    _apply_dv(ws, _dv_decimal(VN_LAT_MIN, VN_LAT_MAX,
+                               "Latitude không hợp lệ",
+                               f"Latitude phải trong khoảng {VN_LAT_MIN}–{VN_LAT_MAX}"),
+              cm["Lat"])
+    _apply_dv(ws, _dv_decimal(VN_LON_MIN, VN_LON_MAX,
+                               "Longitude không hợp lệ",
+                               f"Longitude phải trong khoảng {VN_LON_MIN}–{VN_LON_MAX}"),
+              cm["Long"])
+
+    _apply_dv(ws, _dv_list_inline(VUNG_LIST),   cm["Vung phu song"])
+    _apply_dv(ws, _dv_list_inline(VENDOR_LIST), cm["Vendor"])
+
+    lk_ant = _write_lookup_col(wb, lc, ANTENNA_NAMES, "LoaiAnten"); lc += 1
+    _apply_dv(ws, _dv_list_formula(lk_ant), cm["Loai Anten"])
+
+    return lc
+
+
+def _build_cell_wb(
+    sheet_title: str,
+    columns: List[Tuple[str, str, float, bool]],
+) -> Tuple[Workbook, Worksheet, Dict[str, int]]:
+    """Create workbook from a FULL column list, no note row."""
+    req_idx = {idx + 1 for idx, (_h, _n, _w, req) in enumerate(columns) if req}
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_title
+
+    n_cols = len(columns)
+    for idx, (hdr, _note, width, _req) in enumerate(columns, start=1):
+        ws.cell(row=1, column=idx, value=hdr)
+        _set_col_width(ws, idx, width)
+
+    _style_header_row(ws, n_cols, row=1)
+    _style_data_rows(ws, n_cols, FIRST_DATA, LAST_DATA, req_idx)
+    _freeze(ws, "A2")
+    _add_autofilter(ws, n_cols)
+
+    return wb, ws, _col_map(columns)
+
+
+_CELL_GEO_IMPORT_RULES: List[Tuple[str, str]] = [
+    ("Tinh / Phuong xa để trống",
+     "→ Tự động điền theo 6 ký tự đầu của Cell Name (khớp cột ky_tu_1_6 trong "
+     "danh mục Tỉnh/Xã/Phường). Ví dụ: HNIHKM44DI4DA → HNIHKM"),
+    ("Tinh / Phuong xa đã có giá trị",
+     "→ Giữ nguyên giá trị đã nhập, KHÔNG tự động điền"),
+    ("Không tìm thấy mã 6 ký tự",
+     "→ Tinh / Phuong xa để trống (không phải lỗi – các cột này KHÔNG bắt buộc)"),
+]
+
+
+def _finish_cell_template(
+    wb: Workbook,
+    ws: Worksheet,
+    cm: Dict[str, int],
+    all_cols: List[Tuple[str, str, float, bool]],
+    tech_label: str,
+    filename: str,
+    sample: Dict[str, Any],
+) -> None:
+    for k, v in sample.items():
+        if k in cm:
+            ws.cell(row=FIRST_DATA, column=cm[k], value=v)
+
+    column_notes = [(h, note, req) for h, note, _w, req in all_cols]
+    _add_legend_sheet(wb, tech_label, column_notes,
+                      extra_import_rules=_CELL_GEO_IMPORT_RULES)
+    _finalize_sheets(wb)
+
+    path = os.path.join(OUTPUT_DIR, filename)
+    wb.save(path)
+    print(f"  ✓  {path}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 8.  TEMPLATE: CELL 3G
+# ══════════════════════════════════════════════════════════════════════════════
+
+def create_cell3g_template() -> None:
+    # Removed vs. old template: Baseband, ARFCN.   Added: OSS (last column).
+    extra_cols: List[Tuple[str, str, float, bool]] = [
+        ("UARFCN",            "UMTS ARFCN",                 12, False),
+        ("LAC",               "Location Area Code",         12, False),
+        ("RAC",               "Routing Area Code",          12, False),
+        ("PSC",               "Primary Scrambling Code",    12, False),
+        ("URAId",             "URA ID",                     10, False),
+        ("CPICH power (dBm)", "CPICH power (dBm)",          18, False),
+    ]
+    all_cols = _cell_columns(CHUNG_3G, rnc_col=True, extra_cols=extra_cols)
+
+    wb, ws, cm = _build_cell_wb("Cell_3G", all_cols)
+    next_lc    = _apply_common_cell_validations(wb, ws, cm, lookup_col_offset=1)
+
+    _apply_dv(ws, _dv_list_inline(CHUNG_3G), cm["Chung anten"])
+
+    lk_rnc = _write_lookup_col(wb, next_lc, ALL_RNC, "RNCName"); next_lc += 1
+    _apply_dv(ws, _dv_list_formula(lk_rnc), cm["RNC Name"])
+
+    _apply_dv(ws, _dv_decimal(-30, 50,
+                               "CPICH power không hợp lệ",
+                               "CPICH power thường trong khoảng -30 đến 50 dBm"),
+              cm["CPICH power (dBm)"])
+    _apply_dv(ws, _dv_decimal(-30, 50,
+                               "Cell max power không hợp lệ",
+                               "Cell max power thường trong khoảng -30 đến 50 dBm"),
+              cm["Cell max power (dBm)"])
+
+    sample = {
+        "Mien": "MB", "Tinh": TINH_LIST[0] if TINH_LIST else "Hà Nội",
+        "Site Name": "HNI_XXXX_001", "Cell Name": "HNI_XXXX_001_C1",
+        "Vendor": "Huawei", "Lat": 21.0285, "Long": 105.8542,
+        "Azimuth": 120, "Do cao anten": 28, "M-tilt": 2, "E-Tilt": 4,
+        "MIMO": "2x2", "Chung anten": CHUNG_3G[0],
+    }
+    _finish_cell_template(wb, ws, cm, all_cols, "Cell 3G",
+                          "template_cell_3g.xlsx", sample)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9.  TEMPLATE: CELL 4G
+# ══════════════════════════════════════════════════════════════════════════════
+
+def create_cell4g_template() -> None:
+    # Removed vs. old template: Baseband.   Added: OSS (last column).
+    extra_cols: List[Tuple[str, str, float, bool]] = [
+        ("EnodeB ID",        "eNodeB ID",                                       16, False),
+        ("EARFCN",           "E-UTRA Absolute Radio Frequency Channel Number",  14, False),
+        ("TAC",              "Tracking Area Code",                              12, False),
+        ("PCI",              "Physical Cell Identity 0–503",                    12, False),
+        ("Root Sequence ID", "Root Sequence Index",                             18, False),
+        ("Bandwitdh",        "Bandwidth (MHz) – ví dụ: 5, 10, 15, 20",          16, False),
+        ("ECI",              "E-UTRAN Cell Identifier",                         16, False),
+    ]
+    all_cols = _cell_columns(CHUNG_4G, rnc_col=False, extra_cols=extra_cols)
+
+    wb, ws, cm = _build_cell_wb("Cell_4G", all_cols)
+    _apply_common_cell_validations(wb, ws, cm, lookup_col_offset=1)
+
+    _apply_dv(ws, _dv_list_inline(CHUNG_4G), cm["Chung anten"])
+    _apply_dv(ws, _dv_whole(0, 503, "PCI không hợp lệ",
+                             "PCI phải trong khoảng 0 – 503"),
+              cm["PCI"])
+    _apply_dv(ws, _dv_decimal(-30, 50,
+                               "Cell max power không hợp lệ",
+                               "Cell max power thường trong khoảng -30 đến 50 dBm"),
+              cm["Cell max power (dBm)"])
+
+    sample = {
+        "Mien": "MN", "Tinh": TINH_LIST[-1] if TINH_LIST else "TP. Hồ Chí Minh",
+        "Site Name": "HCM_XXXX_001", "Cell Name": "HCM_XXXX_001_C1",
+        "Vendor": "Ericsson", "Lat": 10.7769, "Long": 106.7009,
+        "Azimuth": 0, "Do cao anten": 30, "M-tilt": 3, "E-Tilt": 5,
+        "MIMO": "4x4", "Chung anten": CHUNG_4G[0], "PCI": 100,
+    }
+    _finish_cell_template(wb, ws, cm, all_cols, "Cell 4G",
+                          "template_cell_4g.xlsx", sample)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 10. TEMPLATE: CELL 5G
+# ══════════════════════════════════════════════════════════════════════════════
+
+def create_cell5g_template() -> None:
+    # Removed vs. old template: Baseband, MU-MIMO drop-list.
+    # Added: Chung anten (new for 5G), OSS (last column).
+    extra_cols: List[Tuple[str, str, float, bool]] = [
+        ("gNodeB ID",        "gNodeB ID",                                       16, False),
+        ("TAC",              "Tracking Area Code",                              12, False),
+        ("PCI",              "Physical Cell Identity 0–1007 (NR)",              12, False),
+        ("Root Sequence ID", "Root Sequence Index",                             18, False),
+        ("SSB-ARFCN",        "SSB Absolute Radio Frequency Channel Number",     14, False),
+        ("Center-ARFCN",     "Center Frequency ARFCN",                          16, False),
+        ("GSCN",             "Global Synchronization Channel Number",           14, False),
+        ("Bandwidth (MHz)",  "Bandwidth (MHz) – ví dụ: 50, 100, 200",           16, False),
+        ("NCI",              "NR Cell Identity",                                16, False),
+        ("MU-MIMO",          "Multi-User MIMO – nhập tự do (vd: Yes, No, 16 layers)", 14, False),
+    ]
+    all_cols = _cell_columns(CHUNG_5G, rnc_col=False, extra_cols=extra_cols)
+
+    wb, ws, cm = _build_cell_wb("Cell_5G", all_cols)
+    _apply_common_cell_validations(wb, ws, cm, lookup_col_offset=1)
+
+    _apply_dv(ws, _dv_list_inline(CHUNG_5G), cm["Chung anten"])
+    _apply_dv(ws, _dv_whole(0, 1007, "PCI không hợp lệ",
+                             "NR PCI phải trong khoảng 0 – 1007"),
+              cm["PCI"])
+    _apply_dv(ws, _dv_decimal(-30, 60,
+                               "Cell max power không hợp lệ",
+                               "Cell max power thường trong khoảng -30 đến 60 dBm"),
+              cm["Cell max power (dBm)"])
+
+    sample = {
+        "Mien": "MT", "Tinh": TINH_LIST[10] if len(TINH_LIST) > 10 else "Đà Nẵng",
+        "Site Name": "DNG_XXXX_001", "Cell Name": "DNG_XXXX_001_C1_5G",
+        "Vendor": "Nokia", "Lat": 16.0544, "Long": 108.2022,
+        "Azimuth": 240, "Do cao anten": 32, "M-tilt": 1, "E-Tilt": 3,
+        "MIMO": "8x8", "MU-MIMO": "Yes", "Chung anten": CHUNG_5G[0], "PCI": 200,
+    }
+    _finish_cell_template(wb, ws, cm, all_cols, "Cell 5G",
+                          "template_cell_5g.xlsx", sample)
+
+
+PYEOF
+
+# ----------------------------------------------------------------------------
+# 2. Fragment: new GeoCache (adds ky_tu_1_6 lookup)
+# ----------------------------------------------------------------------------
+cat > "$TMP/geocache.py" <<'PYEOF'
+class GeoCache:
+    def __init__(self, db) -> None:
+        from app.models.dropdown import DropdownTinhXaPhuong
+        rows = (
+            db.query(DropdownTinhXaPhuong)
+            .order_by(DropdownTinhXaPhuong.id)
+            .all()
+        )
+        self.tinh_map:  Dict[str, str] = {}
+        self.xa_map:    Dict[Tuple[str, str], str] = {}
+        self.tinh_mien: Dict[str, str] = {}
+        # ky_tu_1_6 (e.g. "HNIHKM") -> (ten_tinh, ten_phuong_xa)
+        self.code_map:  Dict[str, Tuple[str, str]] = {}
+        for r in rows:
+            if r.ten_tinh:
+                k = _normalize(r.ten_tinh)
+                self.tinh_map[k]           = r.ten_tinh
+                self.tinh_mien[r.ten_tinh] = r.mien or ""
+            if r.ten_tinh and r.ten_phuong_xa:
+                self.xa_map[
+                    (_normalize(r.ten_tinh), _normalize(r.ten_phuong_xa))
+                ] = r.ten_phuong_xa
+            # 6-character code used to auto-map Tinh / Phuong xa from Cell Name
+            code = (r.ky_tu_1_6 or "").strip().upper()
+            if not code:
+                code = f"{r.ma_tinh or ''}{r.ma_phuong_xa or ''}".strip().upper()
+            if code and r.ten_tinh and code not in self.code_map:
+                self.code_map[code] = (r.ten_tinh, r.ten_phuong_xa or "")
+
+    def resolve_tinh(self, raw: Optional[str]) -> Optional[str]:
+        if not raw:
+            return None
+        return self.tinh_map.get(_normalize(raw))
+
+    def resolve_xa(self, tinh_official: str, raw_xa: Optional[str]) -> Optional[str]:
+        if not raw_xa or not tinh_official:
+            return None
+        return self.xa_map.get((_normalize(tinh_official), _normalize(raw_xa)))
+
+    def mien_for(self, tinh_official: str) -> str:
+        return self.tinh_mien.get(tinh_official, "")
+
+    def lookup_by_cell_name(self, cell_name: Optional[str]) -> Optional[Tuple[str, str]]:
+        """First 6 characters of the cell name (e.g. HNIHKM44DI4DA -> HNIHKM)
+        -> (ten_tinh, ten_phuong_xa) from dropdown_tinh_xa_phuong.ky_tu_1_6."""
+        if not cell_name:
+            return None
+        code = str(cell_name).strip().upper()[:6]
+        if len(code) < 6:
+            return None
+        return self.code_map.get(code)
+
+
+PYEOF
+
+# ----------------------------------------------------------------------------
+# 3. Fragment: auto-mapping block inside _cell_common_aware
+# ----------------------------------------------------------------------------
+cat > "$TMP/geo_block.py" <<'PYEOF'
+    raw_tinh   = _v(row, "Tỉnh", "Tinh", "tinh")
+    raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
+    raw_mien   = _v(row, "Miền", "Mien", "mien")
+
+    cell_name = _v(row, "Cell Name", "Cell name", "cell_name") or ""
+    label     = cell_name or f"row {row_num}"
+
+    # ── Auto-map Tỉnh / Phường xã from the first 6 chars of Cell Name ────────
+    # Only when the user left Tinh and/or Phuong xa empty. Values the user has
+    # already filled in are NEVER overridden. (Excel import only – not forms.)
+    auto_xa: Optional[str] = None
+    if geo and cell_name and (not raw_tinh or not raw_phuong):
+        mapped = geo.lookup_by_cell_name(cell_name)
+        if mapped:
+            m_tinh, m_xa = mapped
+            if not raw_tinh:
+                raw_tinh = m_tinh
+                if not raw_phuong and m_xa:
+                    auto_xa = m_xa
+            elif not raw_phuong and m_xa and geo.resolve_tinh(raw_tinh) == m_tinh:
+                # user gave Tinh (same province as the code) but no ward
+                auto_xa = m_xa
+
+    # Tinh / Phuong xa are NOT required: empty + no mapping found is not an error.
+    if geo and raw_tinh:
+        tinh_official = geo.resolve_tinh(raw_tinh)
+        if not tinh_official:
+            errors_out.append(
+                f"Row {row_num}: Tỉnh/TP '{raw_tinh}' không tìm thấy trong hệ thống."
+            )
+            tinh_official = raw_tinh
+        mien = geo.mien_for(tinh_official) or raw_mien or ""
+        phuong_xa_official: Optional[str] = None
+        if raw_phuong:
+            phuong_xa_official = geo.resolve_xa(tinh_official, raw_phuong)
+        elif auto_xa:
+            phuong_xa_official = auto_xa
+    else:
+        tinh_official      = raw_tinh
+        mien               = raw_mien
+        phuong_xa_official = raw_phuong
+PYEOF
+
+# ----------------------------------------------------------------------------
+# 4. Fragment: 5G "Chung anten" validation block for import
+# ----------------------------------------------------------------------------
+cat > "$TMP/chung5g_block.py" <<'PYEOF'
+        chung_val = _v_aware(row, excel_cols, "Chung anten", "chung_anten")
+        if chung_val and chung_val is not _CLEAR:
+            _check_dropdown(chung_val, "Chung anten", ALLOWED_CHUNG_5G,
+                            row_num, label, row_errors)
+PYEOF
+
+# ----------------------------------------------------------------------------
+# 5. New file: lightweight startup migration (no Alembic in the project)
+# ----------------------------------------------------------------------------
+cat > "$ROOT/backend/app/db/light_migrations.py" <<'PYEOF'
 """
-cell_sync_core.py
------------------
-Shared cell-sync logic (used by the web API *and* by update_cells_with_revision.py).
+light_migrations.py
+-------------------
+Idempotent, startup-time schema/data fixes (the project uses
+Base.metadata.create_all, which never alters existing tables).
 
-Rules implemented (see the transformation spec):
-  * every ID-like value is converted to an integer string (no trailing ".0")
-  * composite ids are "{node}-{local cell}", ECI = eNB*256 + cell, NCI (Huawei) = gNB*2^(36-len)+cell
-  * dBm values are formatted with DBM_DECIMALS decimals ("33.0", "55.1", ...)
-  * ANY error in a calculation  ->  the result is empty (None), never an exception
-  * dump_date ("Ngay cap nhat") and oss (ENM / OSS / oss) are META columns:
-      they are refreshed on every run but do NOT create a revision on their own
-  * a column that a vendor can not supply is marked _KEEP: the DB value is left untouched
+  1. cells_5g.chung_anten column (new)
+  2. widen mimo / mu_mimo to VARCHAR(100) (drop-list removed -> free text)
+  3. remap legacy "chung_anten" values to the new drop-list values
 """
 from __future__ import annotations
 
-import io
-import json
 import logging
-import math
-import re
-import unicodedata
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
 
-import pandas as pd
-import requests
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Connection
+from sqlalchemy import bindparam, text
 
-log = logging.getLogger(__name__)
+from app.db.session import engine
 
-# ── Tunables ──────────────────────────────────────────────────────────────────
-DBM_DECIMALS     = 1            # 33.0 / 34.7 / 55.1
-DBM_MIN, DBM_MAX = -30.0, 100.0  # sanity window for every dBm result (outside -> empty)
-BW_4G_WITH_UNIT  = True         # 4G bandwidth as "20MHz" (False -> "20")
+logger = logging.getLogger(__name__)
 
-# ── Source URLs ───────────────────────────────────────────────────────────────
-URLS: Dict[str, str] = {
-    "ericsson_3g": "http://10.50.87.168/freework/ericsson_sitecell_umts_data.php?export=csv&token=c0b0575ce350303e9192335a9fa52ebac6bd33dc10a7ea47fe04b8bd1fbde71c",
-    "huawei_3g":   "http://10.50.87.168/freework/huawei_sitecell_umts_data.php?export=csv&token=096b07429cbb8a83918ce713a3646c061ab1f13043037abaa683373c9c9b756b",
-    "nokia_3g":    "http://10.50.87.168/freework/nokia_sitecell_3g_data.php?export=csv&token=3723ede0f68a6e08f7eb96d7a8d77835b8e1cc6c9b70ccfa8f86103077967dba",
-    "ericsson_4g": "http://10.50.87.168/freework/ericsson_sitecell_lte_data.php?export=csv&token=c0b0575ce350303e9192335a9fa52ebac6bd33dc10a7ea47fe04b8bd1fbde71c",
-    "huawei_4g":   "http://10.50.87.168/freework/huawei_sitecell_lte_data.php?export=csv&token=096b07429cbb8a83918ce713a3646c061ab1f13043037abaa683373c9c9b756b",
-    "nokia_4g":    "http://10.50.87.168/freework/nokia_sitecell_4g_data.php?export=csv&token=3723ede0f68a6e08f7eb96d7a8d77835b8e1cc6c9b70ccfa8f86103077967dba",
-    "ericsson_5g": "http://10.50.87.168/freework/ericsson_sitecell_nr_data.php?export=csv&token=c0b0575ce350303e9192335a9fa52ebac6bd33dc10a7ea47fe04b8bd1fbde71c",
-    "huawei_5g":   "http://10.50.87.168/freework/huawei_sitecell_nr_data.php?export=csv&token=096b07429cbb8a83918ce713a3646c061ab1f13043037abaa683373c9c9b756b",
-    "nokia_5g":    "http://10.50.87.168/freework/nokia_sitecell_5g_data.php?export=csv&token=3723ede0f68a6e08f7eb96d7a8d77835b8e1cc6c9b70ccfa8f86103077967dba",
+CHUNG_ANTEN_VALID = {
+    "cells_3g": ["3G only", "3G4G", "2G3G", "2G3G4G", "3G5G", "3G4G5G"],
+    "cells_4g": ["4G only", "3G4G", "2G3G4G", "4G5G", "3G4G5G"],
+    "cells_5g": ["5G only", "3G5G", "4G5G", "3G4G5G"],
 }
 
-VENDOR_KEYS: Dict[str, Dict[str, str]] = {
-    "3g": {"ericsson": "ericsson_3g", "nokia": "nokia_3g", "huawei": "huawei_3g"},
-    "4g": {"ericsson": "ericsson_4g", "nokia": "nokia_4g", "huawei": "huawei_4g"},
-    "5g": {"ericsson": "ericsson_5g", "nokia": "nokia_5g", "huawei": "huawei_5g"},
+# legacy -> new. (Legacy "2G/4G" has no equivalent in the new 4G list: left as is.)
+CHUNG_ANTEN_REMAP = {
+    "cells_3g": {
+        "3G": "3G only", "3G/4G": "3G4G", "2G/3G/4G": "2G3G4G",
+        "3G/4G/5G": "3G4G5G", "3G/5G": "3G5G",
+    },
+    "cells_4g": {
+        "4G": "4G only", "3G/4G": "3G4G", "2G/3G/4G": "2G3G4G",
+        "4G/5G": "4G5G", "3G/4G/5G": "3G4G5G",
+    },
+    "cells_5g": {},
 }
 
-REVISION_TABLES = {
-    "cells_3g": "cell_3g_revisions",
-    "cells_4g": "cell_4g_revisions",
-    "cells_5g": "cell_5g_revisions",
-}
 
-# Columns owned by the sync. (baseband is obsolete -> no longer touched.)
-COLUMNS_TO_UPDATE = {
-    "cells_3g": ["cell_id", "uarfcn", "psc", "mimo", "lac", "rac", "ura_id",
-                 "cell_max_power", "cpich_power", "rf", "bbu_name", "cell_status"],
-    "cells_4g": ["enodeb_id", "cell_id", "earfcn", "tac", "pci", "root_sequence_id",
-                 "mimo", "bandwidth", "cell_max_power", "eci",
-                 "rf", "bbu_name", "cell_status"],
-    "cells_5g": ["gnodeb_id", "cell_id", "tac", "pci", "root_sequence_id", "mimo",
-                 "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power",
-                 "nci", "rf", "bbu_name", "mu_mimo", "cell_status"],
-}
-META_COLUMNS = ["dump_date", "oss"]     # refreshed always, never a revision on their own
-
-SCRIPT_USER_ID   = None
-SCRIPT_USER_NAME = "Script tự động"
-CHANGE_SOURCE    = "script"
-ALL_VENDORS      = {"ericsson", "huawei", "nokia"}
-
-_KEEP = "\x00KEEP\x00"      # "this vendor can not supply the column -> do not touch the DB value"
-_DUMP_COLS = ("Ngày cập nhật", "Ngay cap nhat", "Ngày dữ liệu dump")
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Low-level value helpers  (every helper returns None on any problem)
-# ═════════════════════════════════════════════════════════════════════════════
-_NULL_TEXT = {"", "nan", "none", "null", "<na>", "nat", "n/a"}
+def _widen(conn, table: str, column: str, length: int) -> None:
+    cur = conn.execute(
+        text(
+            "SELECT character_maximum_length FROM information_schema.columns "
+            "WHERE table_schema = current_schema() "
+            "AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    ).scalar()
+    if cur is not None and cur < length:
+        conn.execute(text(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE VARCHAR({length})"))
+        logger.info("[migrate] %s.%s widened %s -> %s", table, column, cur, length)
 
 
-def _clean(v: Any) -> Optional[str]:
-    """Raw cell -> stripped string, or None for empty / NaN / 'nan' / '<NA>' ..."""
-    if v is None:
-        return None
-    if isinstance(v, float) and math.isnan(v):
-        return None
-    s = str(v).strip()
-    return None if s.lower() in _NULL_TEXT else s
-
-
-def _canon(v: Any) -> Optional[str]:
-    """Canonical form used to compare DB values with new values (garbage like '<NA>' stays garbage)."""
-    if v is None:
-        return None
-    s = str(v).strip()
-    return s or None
-
-
-def _num(v: Any) -> Optional[float]:
-    s = _clean(v)
-    if s is None:
-        return None
+def run_light_migrations() -> None:
     try:
-        f = float(s)
-    except ValueError:
-        return None
-    return f if math.isfinite(f) else None
-
-
-def _int(v: Any) -> Optional[int]:
-    s = _clean(v)
-    if s is None:
-        return None
-    if re.fullmatch(r"[+-]?\d+", s):
-        return int(s)
-    f = _num(s)
-    if f is None:
-        return None
-    r = round(f)
-    return int(r) if abs(f - r) < 1e-9 else None
-
-
-def _int_str(v: Any) -> Optional[str]:
-    i = _int(v)
-    return None if i is None else str(i)
-
-
-def _scaled(v: Any, div: float) -> Optional[float]:
-    f = _num(v)
-    return None if f is None else f / div
-
-
-def _dbm_str(f: Optional[float]) -> Optional[str]:
-    if f is None or not math.isfinite(f) or not (DBM_MIN <= f <= DBM_MAX):
-        return None
-    return f"{f:.{DBM_DECIMALS}f}"
-
-
-def _div10_dbm(v: Any) -> Optional[str]:
-    return _dbm_str(_scaled(v, 10))
-
-
-def _mhz_str(f: Optional[float]) -> Optional[str]:
-    if f is None or not math.isfinite(f) or f <= 0:
-        return None
-    return f"{f:.2f}".rstrip("0").rstrip(".")
-
-
-def _bw_out(mhz: Optional[float]) -> Optional[str]:      # 4G bandwidth
-    s = _mhz_str(mhz)
-    if s is None:
-        return None
-    return s + "MHz" if BW_4G_WITH_UNIT else s
-
-
-def _digits_mhz(v: Any) -> Optional[str]:                  # "CELL_BW_100M" / "100MHz" -> "100"
-    s = _clean(v)
-    m = re.search(r"(\d+(?:\.\d+)?)", s) if s else None
-    return _mhz_str(float(m.group(1))) if m else None
-
-
-def _first_token(v: Any) -> Optional[str]:                 # "RRU3971a,WD5...,KUNLUN" -> "RRU3971a"
-    s = _clean(v)
-    if not s:
-        return None
-    return s.split(",")[0].strip() or None
-
-
-def _compose(a: Any, b: Any) -> Optional[str]:
-    ia, ib = _int(a), _int(b)
-    return None if ia is None or ib is None else f"{ia}-{ib}"
-
-
-def _from_dist(pattern: str):
-    rx = re.compile(pattern)
-
-    def f(v: Any) -> Optional[str]:
-        s = _clean(v)
-        m = rx.search(s) if s else None
-        return m.group(1) if m else None
-    return f
-
-
-_LNBTS = _from_dist(r"(?:^|/)LNBTS-(\d+)")
-_LNCEL = _from_dist(r"(?:^|/)LNCEL-(\d+)")
-_NRBTS = _from_dist(r"(?:^|/)NRBTS-(\d+)")
-_NRCEL = _from_dist(r"(?:^|/)NRCELL-(\d+)")
-
-
-def _eci(enb: Any, cid: Any) -> Optional[str]:
-    ie, ic = _int(enb), _int(cid)
-    if ie is None or ic is None or not (0 <= ic <= 255):
-        return None
-    return str(ie * 256 + ic)
-
-
-def _nci_huawei(gnb: Any, gnb_len: Any, cid: Any) -> Optional[str]:
-    ig, il, ic = _int(gnb), _int(gnb_len), _int(cid)
-    if None in (ig, il, ic) or not (0 < il <= 36):
-        return None
-    shift = 36 - il
-    if not (0 <= ic < (1 << shift)):
-        return None
-    return str(ig * (1 << shift) + ic)
-
-
-# ── MIMO ─────────────────────────────────────────────────────────────────────
-_TRX_RX = re.compile(r"\s*(\d+)\s*T\s*(\d+)\s*R\s*", re.I)
-
-
-def _norm_mimo(v: Any) -> Optional[str]:                   # "2t2r " -> "2T2R"
-    s = _clean(v)
-    m = _TRX_RX.fullmatch(s) if s else None
-    return f"{int(m.group(1))}T{int(m.group(2))}R" if m else None
-
-
-def _trx_mimo(tx: Any, rx: Any) -> Optional[str]:
-    a, b = _int(tx), _int(rx)
-    return f"{a}T{b}R" if a and b and a > 0 and b > 0 else None
-
-
-def _sym_mimo(tx: Any) -> Optional[str]:                   # Ericsson 4G: {x}T{x}R
-    return _trx_mimo(tx, tx)
-
-
-def _mimo_from_array(v: Any) -> Optional[str]:             # "Full 64TRX Array (4x8x2)" -> "64T64R"
-    s = _clean(v)
-    m = re.search(r"(\d+)\s*TRX", s, re.I) if s else None
-    return f"{int(m.group(1))}T{int(m.group(1))}R" if m else None
-
-
-def _parse_t(mimo: Any) -> Optional[int]:
-    s = _clean(mimo)
-    m = _TRX_RX.fullmatch(s) if s else None
-    t = int(m.group(1)) if m else None
-    return t if t and t > 0 else None
-
-
-def _power_plus_antennas(base_dbm: Optional[float], mimo: Any) -> Optional[str]:
-    """Power(dBm) = base + 10*log10(T)   with T taken from the {T}T{R}R MIMO value."""
-    t = _parse_t(mimo)
-    if base_dbm is None or t is None:
-        return None
-    return _dbm_str(base_dbm + 10 * math.log10(t))
-
-
-def _per_antenna_dbm(v: Any) -> Optional[float]:           # Huawei / Nokia: raw is 0.1 dBm per antenna
-    return _scaled(v, 10)
-
-
-def _ericsson_nr_power(mw: Any, mimo: Any) -> Optional[str]:
-    """
-    Ericsson NR ConfiguredMaxTxPower is the TOTAL power in mW (320000 mW = 320 W).
-    base (per Tx branch) = 10*log10(mW / T)  -> 320000/32 = 10 W = 40 dBm
-    result               = base + 10*log10(T) -> 40 + 15.05 = 55.05 dBm
-    """
-    p, t = _num(mw), _parse_t(mimo)
-    if p is None or p <= 0 or t is None:
-        return None
-    base = 10 * math.log10(p / t)
-    return _dbm_str(base + 10 * math.log10(t))
-
-
-def _mumimo_pair(dl: Any, ul: Any) -> Optional[str]:       # "{DL}DL{UL}UL"
-    a, b = _int(dl), _int(ul)
-    return f"{a}DL{b}UL" if a is not None and b is not None and a >= 0 and b >= 0 else None
-
-
-# ── GSCN (3GPP TS 38.104 sync raster) ────────────────────────────────────────
-def _nrarfcn_to_khz(n: int) -> Optional[int]:
-    if n < 0:
-        return None
-    if n < 600000:
-        return 5 * n
-    if n < 2016667:
-        return 3_000_000 + 15 * (n - 600000)
-    return None
-
-
-def _gscn_from_arfcn(v: Any) -> Optional[str]:
-    n = _int(v)
-    f = _nrarfcn_to_khz(n) if n is not None else None
-    if f is None:
-        return None
-    if f < 3_000_000:
-        N, rem = divmod(f, 1200)
-        if N < 1 or rem not in (50, 150, 250):
-            return None
-        return str(3 * N + (rem // 50 - 3) // 2)
-    if f < 24_250_000:
-        N, rem = divmod(f - 3_000_000, 1440)
-        return str(7499 + N) if rem == 0 else None
-    return None
-
-
-def _ericsson_gscn(ssb_freq: Any, arfcn_cell: Any) -> Optional[str]:
-    n = _int(ssb_freq)
-    if n is not None and 2 <= n <= 26639:          # already a GSCN
-        return str(n)
-    return _gscn_from_arfcn(n if n is not None else arfcn_cell)   # ARFCN -> GSCN
-
-
-# ── 4G Huawei bandwidth ──────────────────────────────────────────────────────
-_BW4G_HUAWEI = {"CELL_BW_N100": 20.0, "CELL_BW_N75": 15.0, "CELL_BW_N50": 10.0,
-                "CELL_BW_N25": 5.0, "CELL_BW_N15": 3.0, "CELL_BW_N6": 1.4}
-
-
-def _bw4g_huawei(v: Any) -> Optional[str]:
-    s = _clean(v)
-    return _bw_out(_BW4G_HUAWEI.get(s.upper())) if s else None
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  DataFrame helpers
-# ═════════════════════════════════════════════════════════════════════════════
-def _norm_key(s: Any) -> str:
-    s = unicodedata.normalize("NFKD", str(s)).replace("đ", "d").replace("Đ", "D")
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return re.sub(r"[^0-9a-z]", "", s.lower())
-
-
-def _col(df: pd.DataFrame, *names: str, warn: bool = True) -> pd.Series:
-    """
-    Cleaned string Series (None where empty).  Several candidate names are
-    coalesced in order; names match exactly or ignoring case/space/accents.
-    Missing column -> all None (and a warning).
-    """
-    lookup: Dict[str, str] = {}
-    for col in df.columns:
-        lookup.setdefault(_norm_key(col), col)
-    used: List[str] = []
-    for n in names:
-        col = n if n in df.columns else lookup.get(_norm_key(n))
-        if col is not None and col not in used:
-            used.append(col)
-    if not used:
-        if warn:
-            log.warning("source column not found: %s", " | ".join(names))
-        return pd.Series([None] * len(df), index=df.index, dtype=object)
-    vals: List[Optional[str]] = [None] * len(df)
-    for col in used:
-        s = df[col]
-        if isinstance(s, pd.DataFrame):
-            s = s.iloc[:, 0]
-        for i, x in enumerate(s.tolist()):
-            if vals[i] is None:
-                vals[i] = _clean(x)
-    return pd.Series(vals, index=df.index, dtype=object)
-
-
-def _rows(fn, *series: pd.Series, index) -> pd.Series:
-    """Apply fn row-wise; ANY exception -> None (empty result)."""
-    out = []
-    for args in zip(*series):
-        try:
-            out.append(fn(*args))
-        except Exception:
-            out.append(None)
-    return pd.Series(out, index=index, dtype=object)
-
-
-def _ctx(r: pd.DataFrame):
-    def c(*names, warn=True):
-        return _col(r, *names, warn=warn)
-
-    def m(fn, *series):
-        return _rows(fn, *series, index=r.index)
-    return c, m
-
-
-def _coalesce(*series: pd.Series, index) -> pd.Series:
-    out = []
-    for vals in zip(*series):
-        out.append(next((v for v in vals if v is not None), None))
-    return pd.Series(out, index=index, dtype=object)
-
-
-def _mimo_5g(r: pd.DataFrame) -> pd.Series:
-    """
-    5G MIMO as {T}T{R}R.  The spec lists the sources under different vendors than the
-    real files use, so every vendor tries all three sources in turn:
-      TXRXMODE ("32T32R")  ->  NoOfUsedTx/RxAntennas  ->  mMimoAntArrayMode ("Full 64TRX Array")
-    """
-    c, m = _ctx(r)
-    return _coalesce(
-        m(_norm_mimo,       c("TXRXMODE", warn=False)),
-        m(_trx_mimo,        c("NoOfUsedTxAntennas", warn=False), c("NoOfUsedRxAntennas", warn=False)),
-        m(_mimo_from_array, c("mMimoAntArrayMode", warn=False)),
-        index=r.index)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Builders  (one per tech x vendor)  ->  DataFrame with the DB column names
-# ═════════════════════════════════════════════════════════════════════════════
-# ── 3G ───────────────────────────────────────────────────────────────────────
-def _b3g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    return pd.DataFrame({
-        "cell_name":      c("rnc_UtranCellId"),
-        "cell_id":        m(_int_str, c("rnc_cId")),
-        "uarfcn":         m(_int_str, c("rnc_uarfcnDl")),
-        "psc":            m(_int_str, c("rnc_primaryScrCode")),
-        "mimo":           _KEEP,                                    # NULL in source -> keep DB value
-        "lac":            m(_int_str, c("rnc_lac")),
-        "rac":            m(_int_str, c("rnc_rac")),
-        "ura_id":         m(_int_str, c("rnc_ura_id")),
-        "cell_max_power": m(_div10_dbm, c("maximumTransmissionPower")),
-        "cpich_power":    m(_div10_dbm, c("primaryCpichPower")),
-        "rf":             c("hw_productName"),
-        "bbu_name":       c("node_name"),
-        "cell_status":    c("rnc_adminState"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "ENM",
-    }, index=r.index)
-
-
-def _b3g_huawei(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    return pd.DataFrame({
-        "cell_name":      c("CELLNAME"),
-        "cell_id":        m(_int_str, c("CELLID")),
-        "uarfcn":         m(_int_str, c("UARFCN DOWNLINK")),
-        "psc":            m(_int_str, c("PSCRAMBCODE")),
-        "mimo":           m(lambda v: v if v else _KEEP, c("TXRXMODE")),
-        "lac":            m(_int_str, c("LAC")),
-        "rac":            m(_int_str, c("RAC")),
-        "ura_id":         m(_int_str, c("URAID", "URAId")),
-        "cell_max_power": m(_div10_dbm, c("RNC UCELL MAXTXPOWER")),
-        "cpich_power":    m(_div10_dbm, c("PCPICHPOWER (0.1dBm)")),
-        "rf":             m(_first_token, c("RRU ManufacturerData")),
-        "bbu_name":       c("NEname"),
-        "cell_status":    c("BLKSTATUS"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "OSS",
-    }, index=r.index)
-
-
-def _b3g_nokia(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    return pd.DataFrame({
-        "cell_name":      c("name"),
-        "cell_id":        m(_int_str, c("CId")),
-        "uarfcn":         m(_int_str, c("UARFCN")),
-        "psc":            m(_int_str, c("PriScrCode")),
-        "mimo":           _KEEP,
-        "lac":            m(_int_str, c("LAC")),
-        "rac":            m(_int_str, c("RAC")),
-        "ura_id":         m(_int_str, c("URAID", "URAId")),
-        "cell_max_power": m(_div10_dbm, c("PtxCellMax")),
-        "cpich_power":    m(_div10_dbm, c("PtxPrimaryCPICH")),
-        "rf":             c("RRU productName"),
-        "bbu_name":       c("WBTS_name"),
-        "cell_status":    c("AdminCellState"),
-        "dump_date":      c(*_DUMP_COLS, warn=False),
-        "oss":            "oss",
-    }, index=r.index)
-
-
-# ── 4G ───────────────────────────────────────────────────────────────────────
-def _b4g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    enb, cid = c("eNBId"), c("cellId")
-    return pd.DataFrame({
-        "cell_name":        c("eUtranCellFDDId"),
-        "enodeb_id":        m(_int_str, enb),
-        "cell_id":          m(_compose, enb, cid),
-        "earfcn":           m(_int_str, c("earfcndl")),
-        "tac":              m(_int_str, c("tac")),
-        "pci":              m(_int_str, c("physicalLayerCellId")),
-        "root_sequence_id": m(_int_str, c("rachRootSequence")),
-        "mimo":             m(_sym_mimo, c("noOfUsedTxAntennas")),
-        "bandwidth":        m(lambda v: _bw_out(_scaled(v, 1000)), c("dlChannelBandwidth")),
-        "cell_max_power":   m(_div10_dbm, c("maximumTransmissionPower")),
-        "eci":              m(_eci, enb, cid),
-        "rf":               c("hw_productName"),
-        "bbu_name":         c("node"),
-        "cell_status":      c("administrativeState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "ENM",
-    }, index=r.index)
-
-
-def _b4g_huawei(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    enb, cid = c("ENODEBID"), c("CELLID")
-    return pd.DataFrame({
-        "cell_name":        c("CELLNAME"),
-        "enodeb_id":        m(_int_str, enb),
-        "cell_id":          m(_compose, enb, cid),
-        "earfcn":           m(_int_str, c("DLEARFCN")),
-        "tac":              m(_int_str, c("TAC")),
-        "pci":              m(_int_str, c("Physical cell ID")),
-        "root_sequence_id": m(_int_str, c("Root sequence index")),
-        "mimo":             m(_norm_mimo, c("TXRXMODE")),
-        "bandwidth":        m(_bw4g_huawei, c("DLBANDWIDTH")),
-        "cell_max_power":   m(_div10_dbm, c("Maximum transmit power (0.1dBm)")),
-        "eci":              m(_eci, enb, cid),
-        "rf":               m(_first_token, c("RRU ManufacturerData")),
-        "bbu_name":         c("NE"),
-        "cell_status":      c("Cell admin state"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "OSS",
-    }, index=r.index)
-
-
-def _b4g_nokia(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    dist = c("distName")
-    enb, cid = m(_LNBTS, dist), m(_LNCEL, dist)
-    return pd.DataFrame({
-        "cell_name":        c("name", "cellName"),
-        "enodeb_id":        m(_int_str, enb),
-        "cell_id":          m(_compose, enb, cid),
-        "earfcn":           m(_int_str, c("earfcnDL")),
-        "tac":              m(_int_str, c("tac")),
-        "pci":              m(_int_str, c("phyCellId")),
-        "root_sequence_id": m(_int_str, c("rootSeqIndex")),
-        "mimo":             m(_trx_mimo, c("Cell nTX"), c("Cell nRX")),
-        "bandwidth":        m(lambda v: _bw_out(_scaled(v, 10)), c("dlChBw")),
-        "cell_max_power":   m(_div10_dbm, c("pMax_0_1dBm")),
-        "eci":              m(_eci, enb, cid),
-        "rf":               c("RRU productName"),
-        "bbu_name":         c("MRBTS_btsname"),
-        "cell_status":      c("blockingState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "oss",
-    }, index=r.index)
-
-
-# ── 5G ───────────────────────────────────────────────────────────────────────
-def _b5g_ericsson(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    gnb, cid = c("gNodeBId"), c("NRCellCU_LocalCellId")
-    mimo = _mimo_5g(r)
-    return pd.DataFrame({
-        "cell_name":        c("NRCellCUId"),
-        "gnodeb_id":        m(_int_str, gnb),
-        "cell_id":          m(_compose, gnb, cid),
-        "tac":              m(_int_str, c("TAC")),
-        "pci":              m(_int_str, c("PCI")),
-        "root_sequence_id": m(_int_str, c("rachRootSequence")),
-        "mimo":             mimo,
-        "ssb_arfcn":        m(_int_str, c("ARFCN_DL_Cell")),
-        "center_arfcn":     m(_int_str, c("ARFCN_DL_SC")),
-        "gscn":             m(_ericsson_gscn, c("ssbFrequency"), c("ARFCN_DL_Cell", warn=False)),
-        "bandwidth":        m(lambda v: _mhz_str(_num(v)), c("BSChannelBwDL")),
-        "cell_max_power":   m(_ericsson_nr_power, c("ConfiguredMaxTxPower"), mimo),
-        "nci":              m(_int_str, c("NRCellCU_nCI")),
-        "rf":               c("RF_ProductNames"),
-        "bbu_name":         c("Node"),
-        "mu_mimo":          m(_mumimo_pair,
-                              c("dlMaxMuMimoLayers", "NRCellDU_dlMaxMuMimoLayers"),
-                              c("ulMaxMuMimoLayers", "NRCellDU_ulMaxMuMimoLayers")),
-        "cell_status":      c("AdministrativeState_SC"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "ENM",
-    }, index=r.index)
-
-
-def _b5g_huawei(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    gnb, cid = c("GNBID"), c("CELLID")
-    mimo = _mimo_5g(r)
-    return pd.DataFrame({
-        "cell_name":        c("CELLNAME"),
-        "gnodeb_id":        m(_int_str, gnb),
-        "cell_id":          m(_compose, gnb, cid),
-        "tac":              m(_int_str, c("TAC")),
-        "pci":              m(_int_str, c("Physical cell ID")),
-        "root_sequence_id": m(_int_str, c("Logical Root sequence index")),
-        "mimo":             mimo,
-        "ssb_arfcn":        m(_int_str, c("SSB-ARFCN")),
-        "center_arfcn":     m(_int_str, c("DLNARFCN")),
-        "gscn":             m(_int_str, c("SSB GSCN")),
-        "bandwidth":        m(_digits_mhz, c("DLBANDWIDTH")),
-        "cell_max_power":   m(lambda v, mi: _power_plus_antennas(_per_antenna_dbm(v), mi),
-                              c("MAXTRANSMITPOWER"), mimo),
-        "nci":              m(_nci_huawei, gnb, c("GNBIDLENGTH"), cid),
-        "rf":               m(_first_token, c("RRU ManufacturerData")),
-        "bbu_name":         c("NE"),
-        "mu_mimo":          m(_mumimo_pair,
-                              c("MAXMIMOLAYERNUM", "DL MIMO layers (PDSCH)"),
-                              c("MAXMIMOLAYERCNT", "UL MIMO layers (PUSCH)")),
-        "cell_status":      c("Cell admin state"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "OSS",
-    }, index=r.index)
-
-
-def _b5g_nokia(r: pd.DataFrame) -> pd.DataFrame:
-    c, m = _ctx(r)
-    dist = c("distName")
-    gnb, cid = m(_NRBTS, dist), m(_NRCEL, dist)
-    mimo = _mimo_5g(r)
-    return pd.DataFrame({
-        "cell_name":        c("NRCELL_cellName"),
-        "gnodeb_id":        m(_int_str, gnb),
-        "cell_id":          m(_compose, gnb, cid),
-        "tac":              m(_int_str, c("configuredEpsTac")),
-        "pci":              m(_int_str, c("physCellId")),
-        "root_sequence_id": m(_int_str, c("prachRootSequenceIndex")),
-        "mimo":             mimo,
-        "ssb_arfcn":        m(_int_str, c("arfcnSsbPbch")),
-        "center_arfcn":     m(_int_str, c("nrarfcn")),
-        "gscn":             m(_int_str, c("gscnOrSsPbchArfcn")),
-        "bandwidth":        m(_digits_mhz, c("chBw")),
-        "cell_max_power":   m(lambda v, mi: _power_plus_antennas(_per_antenna_dbm(v), mi),
-                              c("pMax_0_1dBm"), mimo),
-        "nci":              m(_int_str, c("nrCellIdentity")),
-        "rf":               c("RRU productName"),
-        "bbu_name":         c("MRBTS_btsname"),
-        "mu_mimo":          c("nrCellType"),
-        "cell_status":      c("administrativeState"),
-        "dump_date":        c(*_DUMP_COLS, warn=False),
-        "oss":              "oss",
-    }, index=r.index)
-
-
-_BUILDERS = {
-    ("3g", "ericsson"): _b3g_ericsson, ("3g", "huawei"): _b3g_huawei, ("3g", "nokia"): _b3g_nokia,
-    ("4g", "ericsson"): _b4g_ericsson, ("4g", "huawei"): _b4g_huawei, ("4g", "nokia"): _b4g_nokia,
-    ("5g", "ericsson"): _b5g_ericsson, ("5g", "huawei"): _b5g_huawei, ("5g", "nokia"): _b5g_nokia,
-}
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Download + merge
-# ═════════════════════════════════════════════════════════════════════════════
-def fetch_csv(url: str, label: str) -> Optional[pd.DataFrame]:
-    try:
-        r = requests.get(url, timeout=120)
-        r.raise_for_status()
-        try:
-            df = pd.read_csv(io.BytesIO(r.content), dtype=str, encoding="utf-8-sig", low_memory=False)
-        except UnicodeDecodeError:
-            df = pd.read_csv(io.BytesIO(r.content), dtype=str, encoding="cp1252", low_memory=False)
-        df.columns = [str(c).strip() for c in df.columns]
-        log.info("✓ %s (%d rows)", label, len(df))
-        return df
-    except Exception as e:
-        log.warning("✗ %s: %s", label, e)
-        return None
-
-
-def load_vendor_data(tech: str, vendors: Optional[Set[str]] = None) -> pd.DataFrame:
-    """Download each vendor CSV once, transform it, return all cells (deduplicated by cell_name)."""
-    tech_l = tech.lower()
-    eff = ({v.lower() for v in vendors if v} if vendors else set()) or ALL_VENDORS
-
-    frames: List[pd.DataFrame] = []
-    for vendor in sorted(eff):
-        key = VENDOR_KEYS.get(tech_l, {}).get(vendor)
-        builder = _BUILDERS.get((tech_l, vendor))
-        if not key or not builder:
-            continue
-        raw = fetch_csv(URLS[key], f"{vendor.title()} {tech.upper()}")
-        if raw is None or raw.empty:
-            log.warning("Empty/failed CSV for %s/%s", vendor, tech)
-            continue
-        try:
-            built = builder(raw)
-        except Exception as exc:
-            log.error("Builder %s/%s failed: %s", vendor, tech, exc, exc_info=True)
-            continue
-        built = built[built["cell_name"].notna()]
-        frames.append(built)
-        log.info("Loaded %d valid rows from %s/%s", len(built), vendor, tech)
-
-    if not frames:
-        log.error("No vendor data loaded for tech=%s", tech)
-        return pd.DataFrame()
-
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["cell_name"], keep="first")
-    log.info("load_vendor_data %s: %d unique cells", tech, len(combined))
-    return combined
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  DB helpers
-# ═════════════════════════════════════════════════════════════════════════════
-def fetch_current_cells(conn: Connection, table: str, cell_names: List[str]) -> Dict[str, Dict]:
-    result: Dict[str, Dict] = {}
-    for i in range(0, len(cell_names), 500):
-        batch = cell_names[i:i + 500]
-        ph = ", ".join(f":n{j}" for j in range(len(batch)))
-        params = {f"n{j}": n for j, n in enumerate(batch)}
-        rows = conn.execute(text(f"SELECT * FROM {table} WHERE cell_name IN ({ph})"), params).mappings().all()
-        result.update({row["cell_name"]: dict(row) for row in rows})
-    log.info("fetch_current_cells %s: requested=%d found=%d", table, len(cell_names), len(result))
-    return result
-
-
-def fetch_max_revision_nos(conn: Connection, rev_table: str, cell_ids: List[int]) -> Dict[int, int]:
-    result: Dict[int, int] = {}
-    for i in range(0, len(cell_ids), 500):
-        batch = cell_ids[i:i + 500]
-        ph = ", ".join(f":id{j}" for j in range(len(batch)))
-        params = {f"id{j}": cid for j, cid in enumerate(batch)}
-        rows = conn.execute(text(
-            f"SELECT cell_id_ref, COALESCE(MAX(revision_no), 0) FROM {rev_table} "
-            f"WHERE cell_id_ref IN ({ph}) GROUP BY cell_id_ref"), params).fetchall()
-        result.update({row[0]: row[1] for row in rows})
-    return result
-
-
-def _diff(old: Dict, new: Dict) -> Dict:
-    return {k: [old.get(k), new.get(k)] for k in new if _canon(old.get(k)) != _canon(new.get(k))}
-
-
-# ── revision writer (one generic INSERT per tech) ────────────────────────────
-_REV_BASE_COLS = [
-    "site_id", "site_name", "cell_name", "mien", "tinh", "phuong_xa",
-    "site_name_old", "cell_name_old", "cell_vip", "moran", "lat", "long",
-    "vung_phu_song", "vendor", "do_cao_anten", "azimuth", "m_tilt", "e_tilt",
-    "total_tilt", "loai_anten",
-]
-_REV_EXTRA_COLS = {
-    "cells_3g": ["rnc_name", "chung_anten", "baseband", "rf", "cell_id", "arfcn", "uarfcn",
-                 "lac", "rac", "psc", "ura_id", "mimo", "cell_max_power", "cpich_power",
-                 "bbu_name", "cell_status", "dump_date", "oss"],
-    "cells_4g": ["chung_anten", "baseband", "rf", "enodeb_id", "cell_id", "earfcn", "tac", "pci",
-                 "root_sequence_id", "mimo", "bandwidth", "cell_max_power", "eci",
-                 "bbu_name", "cell_status", "dump_date", "oss"],
-    "cells_5g": ["baseband", "rf", "gnodeb_id", "cell_id", "tac", "pci", "root_sequence_id", "mimo",
-                 "ssb_arfcn", "center_arfcn", "gscn", "bandwidth", "cell_max_power", "nci",
-                 "bbu_name", "mu_mimo", "cell_status", "dump_date", "oss"],
-}
-
-
-def _write_rev(conn: Connection, table_name: str, row: Dict, diff: Dict, rev_no: int, note: str) -> None:
-    cols = _REV_BASE_COLS + _REV_EXTRA_COLS[table_name]
-    p = {c: row.get(c) for c in cols}
-    p.update({
-        "cell_id_ref":     row["id"],
-        "revision_no":     rev_no,
-        "changed_by":      SCRIPT_USER_ID,
-        "changed_by_name": SCRIPT_USER_NAME,
-        "change_source":   CHANGE_SOURCE,
-        "change_note":     note,
-        "changed_fields":  json.dumps(diff, ensure_ascii=False, default=str),
-        "created_at":      datetime.now(timezone.utc),
-    })
-    all_cols = ["cell_id_ref", "revision_no", "changed_by", "changed_by_name", "change_source",
-                "change_note", "changed_fields", "created_at"] + cols
-    sql = (f"INSERT INTO {REVISION_TABLES[table_name]} ({', '.join(all_cols)}) "
-           f"VALUES ({', '.join(':' + c for c in all_cols)})")
-    conn.execute(text(sql), p)
-
-
-def _apply_one(conn: Connection, table_name: str, p: Dict) -> None:
-    if p["kind"] == "full":
-        sets = {**p["new_vals"], **p["meta_vals"]}
-        clause = ", ".join(f"{c}=:{c}" for c in sets) + ", updated_at=NOW()"
-    else:                                   # meta only: no revision, updated_at untouched
-        sets = dict(p["meta_vals"])
-        clause = ", ".join(f"{c}=:{c}" for c in sets)
-    conn.execute(text(f"UPDATE {table_name} SET {clause} WHERE id=:_id"), {**sets, "_id": p["cur"]["id"]})
-    if p["kind"] == "full":
-        note = f"Đồng bộ tức thì – {len(p['diff'])} trường: {', '.join(p['diff'].keys())}"
-        _write_rev(conn, table_name, {**p["cur"], **sets}, p["diff"], p["rev_no"], note)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-#  Public API
-# ═════════════════════════════════════════════════════════════════════════════
-def sync_cells(
-    engine_or_url,
-    table_name: str,
-    cell_names: List[str],
-    vendors:    Optional[Set[str]] = None,
-    source_df:  Optional[pd.DataFrame] = None,
-    dry_run:    bool = False,
-) -> Dict[str, Any]:
-    """
-    Sync cells from the vendor CSVs into the DB.
-      * diff only the COLUMNS_TO_UPDATE columns -> UPDATE + revision (change_source='script')
-      * dump_date / oss are refreshed without creating a revision
-      * batches of 100 cells per commit; a failed batch is retried cell-by-cell so one
-        bad cell never blocks the others
-      * dry_run=True -> compute everything, write nothing
-    """
-    stats: Dict[str, Any] = {"updated": 0, "skipped": 0, "not_in_db": 0, "not_in_csv": 0,
-                             "errors": 0, "meta_only": 0, "error_details": []}
-    cell_names = list(dict.fromkeys(n for n in cell_names if n))
-    if not cell_names:
-        return stats
-
-    tech    = table_name.replace("cells_", "")
-    cols    = COLUMNS_TO_UPDATE[table_name]
-    rev_tbl = REVISION_TABLES[table_name]
-
-    if source_df is None:
-        source_df = load_vendor_data(tech, vendors)
-
-    if not source_df.empty and "cell_name" in source_df.columns:
-        filtered   = source_df[source_df["cell_name"].isin(set(cell_names))]
-        source_map = filtered.set_index("cell_name").to_dict(orient="index")
-    else:
-        source_map = {}
-    log.info("sync_cells %s: requested=%d in_source=%d", table_name, len(cell_names), len(source_map))
-
-    own_engine = isinstance(engine_or_url, str)
-    eng = create_engine(engine_or_url, pool_pre_ping=True) if own_engine else engine_or_url
-    try:
-        # Phase 1: read
-        with eng.connect() as conn:
-            current_map = fetch_current_cells(conn, table_name, cell_names)
-            rev_no_map  = fetch_max_revision_nos(conn, rev_tbl, [r["id"] for r in current_map.values()])
-
-        # Phase 2: plan (in memory)
-        plans: List[Dict[str, Any]] = []
-        for name in cell_names:
-            cur = current_map.get(name)
-            if not cur:
-                stats["not_in_db"] += 1
-                continue
-            src = source_map.get(name)
-            if src is None:
-                stats["not_in_csv"] += 1
-                continue
-
-            eff_cols  = [c for c in cols if src.get(c) != _KEEP]
-            new_vals  = {c: _clean(src.get(c)) for c in eff_cols}
-            meta_vals = {c: _clean(src.get(c)) for c in META_COLUMNS}
-            diff      = _diff({c: cur.get(c) for c in eff_cols}, new_vals)
-            meta_changed = any(_canon(cur.get(k)) != _canon(v) for k, v in meta_vals.items())
-
-            if diff:
-                rev_no = rev_no_map.get(cur["id"], 0) + 1
-                rev_no_map[cur["id"]] = rev_no
-                plans.append({"kind": "full", "name": name, "cur": cur, "new_vals": new_vals,
-                              "meta_vals": meta_vals, "diff": diff, "rev_no": rev_no})
-            elif meta_changed:
-                plans.append({"kind": "meta", "name": name, "cur": cur, "meta_vals": meta_vals})
-            else:
-                stats["skipped"] += 1
-
-        n_full = sum(p["kind"] == "full" for p in plans)
-        n_meta = len(plans) - n_full
-        log.info("sync_cells %s: %d with changes, %d meta-only, %d unchanged, %d not_in_source",
-                 table_name, n_full, n_meta, stats["skipped"], stats["not_in_csv"])
-
-        if dry_run:
-            stats.update(updated=n_full, meta_only=n_meta, dry_run=True)
-            stats["skipped"] += n_meta
-            return stats
-
-        # Phase 3: apply
-        def _count(p: Dict) -> None:
-            if p["kind"] == "full":
-                stats["updated"] += 1
-            else:
-                stats["meta_only"] += 1
-                stats["skipped"] += 1
-
-        BATCH = 100
-        for i in range(0, len(plans), BATCH):
-            batch = plans[i:i + BATCH]
-            try:
-                with eng.begin() as conn:
-                    for p in batch:
-                        _apply_one(conn, table_name, p)
-                for p in batch:
-                    _count(p)
-            except Exception as exc:
-                log.warning("Batch %d-%d failed (%s) -> retrying cell by cell", i, i + len(batch) - 1, exc)
-                for p in batch:
-                    try:
-                        with eng.begin() as conn:
-                            _apply_one(conn, table_name, p)
-                        _count(p)
-                    except Exception as exc2:
-                        stats["errors"] += 1
-                        stats["error_details"].append(f"{p['name']}: {exc2}")
-            log.info("Committed batch %d/%d", i // BATCH + 1, (len(plans) + BATCH - 1) // BATCH)
-
-        log.info("sync_cells %s DONE: updated=%d meta_only=%d skipped=%d not_in_csv=%d not_in_db=%d errors=%d",
-                 table_name, stats["updated"], stats["meta_only"], stats["skipped"],
-                 stats["not_in_csv"], stats["not_in_db"], stats["errors"])
-        return stats
-    finally:
-        if own_engine:
-            eng.dispose()
+        with engine.begin() as conn:
+            # 1. new column
+            conn.execute(text(
+                "ALTER TABLE cells_5g ADD COLUMN IF NOT EXISTS chung_anten VARCHAR(100)"
+            ))
+
+            # 2. free-text MIMO / MU-MIMO
+            _widen(conn, "cells_3g", "mimo", 100)
+            _widen(conn, "cells_4g", "mimo", 100)
+            _widen(conn, "cells_5g", "mimo", 100)
+            _widen(conn, "cells_5g", "mu_mimo", 100)
+
+            # 3. legacy value remap
+            for table, mapping in CHUNG_ANTEN_REMAP.items():
+                for old, new in mapping.items():
+                    conn.execute(
+                        text(f"UPDATE {table} SET chung_anten = :new WHERE chung_anten = :old"),
+                        {"new": new, "old": old},
+                    )
+                stmt = text(
+                    f"SELECT COUNT(*) FROM {table} "
+                    "WHERE chung_anten IS NOT NULL AND chung_anten <> '' "
+                    "AND chung_anten NOT IN :vals"
+                ).bindparams(bindparam("vals", expanding=True))
+                n = conn.execute(stmt, {"vals": CHUNG_ANTEN_VALID[table]}).scalar()
+                if n:
+                    logger.warning(
+                        "[migrate] %s: %s row(s) have a 'chung_anten' value outside the new list "
+                        "(e.g. legacy '2G/4G') – please review manually.", table, n)
+    except Exception:
+        logger.exception("[migrate] light migration failed (app will continue)")
 PYEOF
 
-# ── 3. Daily/manual scripts ──────────────────────────────────────────────────
-say "3/7  Writing update_cells_with_revision.py (backend + root)"
-cat > "$ROOT/backend/update_cells_with_revision.py" <<'PYEOF'
-"""
-update_cells_with_revision.py  -  daily / manual bulk sync (NOT part of the web app).
+# ----------------------------------------------------------------------------
+# 6. Apply all patches (all-or-nothing: files are written only if every anchor matched)
+# ----------------------------------------------------------------------------
+python3 - "$ROOT" "$TMP" <<'PYEOF'
+import os, re, sys
 
-    python update_cells_with_revision.py                 # all techs, writes to DB
-    python update_cells_with_revision.py --dry-run       # show what WOULD change, write nothing
-    python update_cells_with_revision.py --tech 4g,5g    # only some technologies
+ROOT, TMP = sys.argv[1], sys.argv[2]
+files = {}
 
-All transformation rules live in cell_sync_core.py (shared with the web "sync" button),
-so this script and the web app always behave identically.
-DB url: env DATABASE_URL, else the default below.
-"""
-import argparse
-import logging
-import os
-import sys
+def fail(msg):
+    print(f"[ERROR] {msg}\nNo file was modified.", file=sys.stderr)
+    sys.exit(1)
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+def load(rel):
+    if rel not in files:
+        with open(os.path.join(ROOT, rel), encoding="utf-8") as fh:
+            files[rel] = fh.read()
+    return files[rel]
 
-from datetime import datetime
-from sqlalchemy import create_engine, text
-import cell_sync_core as core
+def frag(name):
+    with open(os.path.join(TMP, name), encoding="utf-8") as fh:
+        return fh.read()
 
-DATABASE_URL = os.environ.get("DATABASE_URL",
-                              "postgresql://sitelink:sitelink_pass@localhost:5432/sitelink_db")
-TECHS = {"3g": "cells_3g", "4g": "cells_4g", "5g": "cells_5g"}
-
-
-def run_bulk(eng, table: str, tech: str, dry_run: bool) -> int:
-    with eng.connect() as conn:
-        names = [r["cell_name"] for r in
-                 conn.execute(text(f"SELECT cell_name FROM {table}")).mappings().all() if r["cell_name"]]
-    if not names:
-        print(f"\n--- {tech.upper()}: no cells in DB ---")
-        return 0
-
-    print(f"\n--- {tech.upper()} ({len(names)} cells in DB) ---")
-    print(f"   Downloading {tech.upper()} vendor CSVs...")
-    source_df = core.load_vendor_data(tech, vendors=None)
-    if source_df.empty:
-        print("   ❌ No source data downloaded - skipped (nothing written).")
-        return 1
-    print(f"   Loaded {len(source_df)} source rows")
-
-    s = core.sync_cells(eng, table, names, vendors=None, source_df=source_df, dry_run=dry_run)
-    tag = "WOULD update" if dry_run else "updated"
-    print(f"   {tag}={s['updated']}  meta_only(dump_date/oss)={s['meta_only']}  "
-          f"unchanged_total={s['skipped']}  not_in_csv={s['not_in_csv']}  "
-          f"not_in_db={s['not_in_db']}  errors={s['errors']}")
-    for d in s.get("error_details", [])[:20]:
-        print(f"   ❌ {d}")
-    return 1 if s["errors"] else 0
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description="SiteLink daily cell sync")
-    ap.add_argument("--dry-run", action="store_true", help="compute only, write nothing")
-    ap.add_argument("--tech", default="3g,4g,5g", help="comma list, e.g. 4g,5g")
-    args = ap.parse_args()
-
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    print("=" * 60)
-    print(f"SiteLink Cell Sync{' (DRY RUN)' if args.dry_run else ''} - {datetime.now():%Y-%m-%d %H:%M:%S}")
-    print("=" * 60)
-
-    eng = create_engine(DATABASE_URL, pool_pre_ping=True)
-    rc = 0
-    try:
-        for tech in [t.strip().lower() for t in args.tech.split(",") if t.strip()]:
-            if tech not in TECHS:
-                print(f"unknown tech '{tech}' (use 3g,4g,5g)")
-                rc = 1
-                continue
-            rc |= run_bulk(eng, TECHS[tech], tech, args.dry_run)
-    finally:
-        eng.dispose()
-    print("\n✅ Done." if rc == 0 else "\n⚠️ Finished with problems (see above).")
-    return rc
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-PYEOF
-
-cat > "$ROOT/update_cells_with_revision.py" <<'PYEOF'
-"""
-update_cells_with_revision.py (project root) - thin wrapper.
-
-The real logic lives in backend/update_cells_with_revision.py + backend/cell_sync_core.py
-so the manual daily run and the web app can never drift apart.
-
-    python update_cells_with_revision.py [--dry-run] [--tech 3g,4g,5g]
-"""
-import os
-import runpy
-import sys
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-BACKEND = os.path.join(HERE, "backend")
-sys.path.insert(0, BACKEND)
-runpy.run_path(os.path.join(BACKEND, "update_cells_with_revision.py"), run_name="__main__")
-PYEOF
-
-# ── 4+5. Patch models / schemas / revision / frontend ───────────────────────
-say "4-5/7  Patching backend models, schemas, revision API and frontend"
-PATCH_RC=0
-python3 - "$ROOT" <<'PYEOF' || PATCH_RC=$?
-import re, sys
-from pathlib import Path
-
-ROOT = Path(sys.argv[1])
-problems = []
-
-
-def patch(rel, pattern, repl, expect=1, marker=None, optional=False):
-    p = ROOT / rel
-    if not p.exists():
-        problems.append(f"{rel}: file not found")
-        return
-    s = p.read_text(encoding="utf-8")
-    if marker and marker in s:
-        print(f"  =  {rel}  (already patched)")
-        return
-    new, n = re.subn(pattern, repl, s)
-    if n == 0 and optional:
-        print(f"  =  {rel}  (nothing to change)")
-        return
+def sub(rel, pattern, repl, expect=1, flags=re.M):
+    t = load(rel)
+    r = repl if callable(repl) else (lambda m, _r=repl: _r)
+    new, n = re.subn(pattern, r, t, flags=flags)
     if n != expect:
-        problems.append(f"{rel}: expected {expect} match(es), found {n}  for /{pattern[:60]}/")
-        return
-    p.write_text(new, encoding="utf-8")
-    print(f"  ✔  {rel}  ({n} change{'s' if n > 1 else ''})")
+        fail(f"{rel}: pattern {pattern!r} matched {n} time(s), expected {expect}")
+    files[rel] = new
 
+def line_start(t, idx):
+    return t.rfind("\n", 0, idx) + 1
 
-# --- backend models: 2 new columns (Baseband column stays in the DB/model) ---
-COL = r"(\n    cell_status\s*=\s*Column\(String\(100\)\)[^\n]*)"
-ADD = r"\g<1>\n    dump_date      = Column(String(50), nullable=True)   # data dump date\n    oss            = Column(String(50), nullable=True)   # OSS source"
-for g in ("3g", "4g", "5g"):
-    patch(f"backend/app/models/cell_{g}.py", COL, ADD, 1, marker="dump_date")
-patch("backend/app/models/cell_revision.py", COL, ADD, 3, marker="dump_date")
+# ═════════════════════════ A. create_excel_templates.py ═════════════════════
+T = "backend/create_excel_templates.py"
 
-# --- schemas (CellBase + CellUpdate) ---
-patch("backend/app/schemas/cell.py",
-      r"(\n    cell_max_power:\s*Optional\[str\]\s*=\s*None[^\n]*)",
-      r"\g<1>\n    dump_date:      Optional[str]   = None\n    oss:            Optional[str]   = None",
-      2, marker="dump_date")
+sub(T, r'^CHUNG_3G\s*=.*$',
+    'CHUNG_3G      = ["3G only", "3G4G", "2G3G", "2G3G4G", "3G5G", "3G4G5G"]')
+sub(T, r'^CHUNG_4G\s*=.*$',
+    'CHUNG_4G      = ["4G only", "3G4G", "2G3G4G", "4G5G", "3G4G5G"]\n'
+    'CHUNG_5G      = ["5G only", "3G5G", "4G5G", "3G4G5G"]')
 
-# --- revision service: store dump_date/oss in every cell revision row ---
-patch("backend/app/services/revision.py",
-      r"(cell_status=cell\.cell_status,\n)(\s+)(changed_fields=)",
-      r"\g<1>\g<2>dump_date=cell.dump_date, oss=cell.oss,\n\g<2>\g<3>",
-      3, marker="dump_date=cell.dump_date")
+# legend sheet: extra import rules parameter
+sub(T, r'^([ ]*column_notes: Optional\[List\[Tuple\[str, str, bool\]\]\] = None,\n)(\) -> None:)',
+    lambda m: m.group(1)
+              + "    extra_import_rules: Optional[List[Tuple[str, str]]] = None,\n"
+              + m.group(2))
+sub(T, r'for col_a, col_b in import_rules:',
+    'for col_a, col_b in list(import_rules) + list(extra_import_rules or []):')
 
-# --- revision API: expose them ---
-patch("backend/app/api/routes/revision.py",
-      r'(\n\s+)("cell_status":\s*r\.cell_status,)',
-      r'\g<1>\g<2>\g<1>"dump_date":      r.dump_date,\g<1>"oss":            r.oss,',
-      3, marker="r.dump_date")
+# replace sections 7..10 (up to the "11. TEMPLATE: ANTENNA" banner)
+t = load(T)
+m7  = re.search(r'#\s*7\.\s+SHARED CELL COLUMN BUILDER', t)
+m11 = re.search(r'#\s*11\.\s+TEMPLATE: ANTENNA', t)
+if not m7 or not m11 or m11.start() < m7.start():
+    fail(f"{T}: could not locate section 7 / section 11 banners")
+s = line_start(t, line_start(t, m7.start()) - 1)     # banner line above the title
+e = line_start(t, line_start(t, m11.start()) - 1)
+old_region = t[s:e]
+if "def create_cell3g_template" not in old_region or "def create_cell5g_template" not in old_region:
+    fail(f"{T}: sections 7-10 do not contain the expected functions")
+files[T] = t[:s] + frag("templates_cell_section.py") + t[e:]
 
-# --- frontend types ---
-patch("frontend/src/types/index.ts",
-      r"(\n  cell_max_power\?: string)",
-      r"\g<1>\n  dump_date?: string\n  oss?: string",
-      1, marker="dump_date")
-patch("frontend/src/api/revision.ts", r"change_source: 'form' \| 'excel'",
-      lambda m: "change_source: 'form' | 'excel' | 'script'", 2, marker="'script'")
-patch("frontend/src/api/revision.ts", r"azimuth\?: number", lambda m: "azimuth?: string", 1, optional=True)
+# ═════════════════════════ B. import_excel.py ════════════════════════════════
+I = "backend/app/services/import_excel.py"
 
-# --- frontend cell pages: hide Baseband, add 'Ngày dữ liệu dump' + OSS ---
-NEW_COLS = ("{ title: 'Cell status (at dump time)', dataIndex: 'cell_status', width: 190 },\n"
-            "    { title: 'Ngày dữ liệu dump', dataIndex: 'dump_date', width: 160 },\n"
-            "    { title: 'OSS', dataIndex: 'oss', width: 90 },")
-for t in ("3G", "4G", "5G"):
-    f = f"frontend/src/pages/cells/Cells{t}Page.tsx"
-    patch(f, r"[ \t]*\{ title: 'Baseband'[^\n]*\},[ \t]*\n", "", optional=True)
-    patch(f, r'[ \t]*<Col span=\{8\}><Form\.Item name="baseband" label="Baseband"><Input /></Form\.Item></Col>\n',
-          "", optional=True)
-    patch(f, r"\{ title: 'Cell status',\s*dataIndex: 'cell_status',\s*width: 140 \},",
-          lambda m: NEW_COLS, 1, marker="dump_date")
+sub(I, r'^ALLOWED_CHUNG_3G\s*=.*$',
+    'ALLOWED_CHUNG_3G  = {"3G only", "3G4G", "2G3G", "2G3G4G", "3G5G", "3G4G5G"}')
+sub(I, r'^ALLOWED_CHUNG_4G\s*=.*$',
+    'ALLOWED_CHUNG_4G  = {"4G only", "3G4G", "2G3G4G", "4G5G", "3G4G5G"}\n'
+    'ALLOWED_CHUNG_5G  = {"5G only", "3G5G", "4G5G", "3G4G5G"}')
 
-# --- frontend revision page ---
-f = "frontend/src/pages/revision/RevisionPage.tsx"
-patch(f, r"[ \t]*\{ title: 'Baseband', key: 'baseband',[^\n]*\n[ \t]*render:[^\n]*\},[ \t]*\n", "", optional=True)
-patch(f, r"(\{ title: 'Cell status', key: 'cell_status', width: 140,\n[ \t]*render:[^\n]*\},)",
-      r"\g<1>\n    { title: 'Ngày dữ liệu dump', key: 'dump_date', width: 160,\n"
-      r"      render: (_: unknown, r: CellRevisionBase) => String(r['dump_date'] ?? '-') },\n"
-      r"    { title: 'OSS', key: 'oss', width: 90,\n"
-      r"      render: (_: unknown, r: CellRevisionBase) => String(r['oss'] ?? '-') },",
-      1, marker="dump_date")
+# GeoCache -> new version
+t = load(I)
+gs = t.find("class GeoCache:")
+ge = t.find("def _read_excel(", gs)
+if gs < 0 or ge < 0:
+    fail(f"{I}: GeoCache / _read_excel anchors not found")
+files[I] = t[:gs] + frag("geocache.py") + t[ge:]
 
-if problems:
-    print("\n  PROBLEMS (these files were NOT changed - patch them by hand):")
-    for p in problems:
-        print("   -", p)
-    sys.exit(2)
+# geo block in _cell_common_aware
+t = load(I)
+ms = re.search(r'^[ ]{4}raw_tinh[ ]+=[ ]+_v\(row, "Tỉnh", "Tinh", "tinh"\)[ ]*$', t, re.M)
+if not ms:
+    fail(f"{I}: geo block start not found in _cell_common_aware")
+me = re.search(r'^[ ]{4}label[ ]+=[ ]+cell_name or f"row \{row_num\}"[ ]*\n', t[ms.start():], re.M)
+if not me:
+    fail(f"{I}: geo block end not found in _cell_common_aware")
+end_abs = ms.start() + me.end()
+files[I] = t[:ms.start()] + frag("geo_block.py") + t[end_abs:]
+
+# MIMO: drop-list validation removed (free text)
+sub(I, r'[ ]{4}if mimo_val and mimo_val is not _CLEAR:\n[ ]{8}_check_dropdown\(mimo_val,[^)]*\)\n', '')
+
+# OSS column (common to 3G/4G/5G)
+sub(I, r'("Cell max power",\s*"cell_max_power"\),)',
+    lambda m: m.group(1) + '\n        "oss":            _v_aware(row, excel_cols, "OSS", "Oss", "oss"),')
+
+# 5G: Chung anten (new) + MU-MIMO free text
+sub(I, r'[ ]{8}mu_mimo_val = _v_aware\([^\n]*\)\n[ ]{8}if mu_mimo_val and mu_mimo_val is not _CLEAR:\n[ ]{12}_check_dropdown\(mu_mimo_val,[^)]*\)\n',
+    frag("chung5g_block.py"))
+sub(I, r'("gnodeb_id":\s*_v_aware\(row, excel_cols, "gNodeB ID", "gnodeb_id"\),)',
+    lambda m: '"chung_anten":      chung_val,\n            ' + m.group(1))
+sub(I, r'"mu_mimo":\s*mu_mimo_val,',
+    '"mu_mimo":          _v_aware(row, excel_cols, "MU-MIMO", "mu_mimo"),')
+
+# ═════════════════════════ C. models / schemas ═══════════════════════════════
+M5 = "backend/app/models/cell_5g.py"
+if "chung_anten" in load(M5):
+    fail(f"{M5} already has chung_anten – unexpected state")
+sub(M5, r'(^[ ]*loai_anten[ ]*=[ ]*Column\(String\(200\)\)[^\n]*\n)',
+    lambda m: m.group(1) + "    chung_anten      = Column(String(100))\n")
+for rel in ("backend/app/models/cell_3g.py", "backend/app/models/cell_4g.py", M5):
+    sub(rel, r'(^[ ]*(?:mu_)?mimo[ ]*=[ ]*Column\(String\()20(\)\))',
+        lambda m: m.group(1) + "100" + m.group(2), expect=1)
+
+SC = "backend/app/schemas/cell.py"
+sub(SC, r'^([ ]*)gnodeb_id:[ ]*Optional\[str\] = None\n',
+    lambda m: m.group(0) + m.group(1) + "chung_anten:      Optional[str] = None\n", expect=2)
+
+# ═════════════════════════ D. main.py ════════════════════════════════════════
+MA = "backend/app/main.py"
+sub(MA, r'^from app\.db\.base import Base\n',
+    lambda m: m.group(0) + "from app.db.light_migrations import run_light_migrations\n")
+sub(MA, r'^def on_startup\(\):\n',
+    lambda m: m.group(0) + "    run_light_migrations()   # add cells_5g.chung_anten, widen mimo, remap legacy values\n")
+
+# ═════════════════════════ E. frontend ═══════════════════════════════════════
+P3 = "frontend/src/pages/cells/Cells3GPage.tsx"
+P4 = "frontend/src/pages/cells/Cells4GPage.tsx"
+P5 = "frontend/src/pages/cells/Cells5GPage.tsx"
+TY = "frontend/src/types/index.ts"
+
+sub(P3, r'^const CHUNG_ANTEN_3G = \[[^\]]*\]',
+    "const CHUNG_ANTEN_3G = ['3G only', '3G4G', '2G3G', '2G3G4G', '3G5G', '3G4G5G']")
+sub(P4, r'^const CHUNG_ANTEN_4G = \[[^\]]*\]',
+    "const CHUNG_ANTEN_4G = ['4G only', '3G4G', '2G3G4G', '4G5G', '3G4G5G']")
+
+# 5G page: constant + table column + form field
+sub(P5, r'^export default function Cells5GPage\(\) \{',
+    lambda m: "const CHUNG_ANTEN_5G = ['5G only', '3G5G', '4G5G', '3G4G5G']\n\n" + m.group(0))
+sub(P5, r"^([ ]*)\{ title: 'RF', dataIndex: 'rf', width: 100 \},",
+    lambda m: m.group(1) + "{ title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },\n" + m.group(0))
+sub(P5, r'^([ ]*)<Col span=\{8\}><Form\.Item name="rf" label="RF"><Input /></Form\.Item></Col>',
+    lambda m: (m.group(1) + '<Col span={8}><Form.Item name="chung_anten" label="Chung anten">\n'
+               + m.group(1) + '  <Select allowClear>{CHUNG_ANTEN_5G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>\n'
+               + m.group(1) + '</Form.Item></Col>\n' + m.group(0)))
+
+sub(TY, r'(export interface Cell5G extends CellBase \{\n)([ ]*gnodeb_id\?: string\n)',
+    lambda m: m.group(1) + "  chung_anten?: string\n" + m.group(2))
+
+# ═════════════════════════ write everything ══════════════════════════════════
+for rel, text in files.items():
+    with open(os.path.join(ROOT, rel), "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print(f"  patched  {rel}")
+print("All patches applied.")
 PYEOF
-[ "$PATCH_RC" -eq 0 ] || warn "Some patches did not apply (see PROBLEMS above)."
 
-# ── 6. DB migration ──────────────────────────────────────────────────────────
-say "6/7  Database migration (dump_date + oss on 6 tables)"
-if [ "$MIGRATE" -eq 0 ]; then
-  echo "skipped (--no-migrate). Run manually:"
-  for t in cells_3g cells_4g cells_5g cell_3g_revisions cell_4g_revisions cell_5g_revisions; do
-    echo "  ALTER TABLE $t ADD COLUMN IF NOT EXISTS dump_date VARCHAR(50), ADD COLUMN IF NOT EXISTS oss VARCHAR(50);"
-  done
-elif [ -z "$APP_PY" ]; then
-  warn "no python with sqlalchemy -> migration skipped. Re-run with PYTHON=/path/to/venv/python or run the SQL above by hand."
-else
-  DB_URL="${DATABASE_URL:-}"
-  if [ -z "$DB_URL" ]; then
-    DB_URL="$(cd "$ROOT/backend" && "$APP_PY" -c 'from app.core.config import settings; print(settings.DATABASE_URL)' 2>/dev/null || true)"
-  fi
-  [ -n "$DB_URL" ] || DB_URL="postgresql://sitelink:sitelink_pass@localhost:5432/sitelink_db"
-  DATABASE_URL="$DB_URL" "$APP_PY" - <<'PYEOF' || warn "Migration failed - apply the ALTER TABLE statements by hand (see docs above)."
-import os
-from sqlalchemy import create_engine, text
-eng = create_engine(os.environ["DATABASE_URL"])
-tables = ["cells_3g", "cells_4g", "cells_5g",
-          "cell_3g_revisions", "cell_4g_revisions", "cell_5g_revisions"]
-with eng.begin() as c:
-    for t in tables:
-        c.execute(text(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS dump_date VARCHAR(50)"))
-        c.execute(text(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS oss VARCHAR(50)"))
-        print(f"  ✔ {t}")
-eng.dispose()
-PYEOF
-fi
+# ----------------------------------------------------------------------------
+# 7. Post-check: places still containing OLD "chung anten" values
+# ----------------------------------------------------------------------------
+echo
+echo "---- Remaining occurrences of legacy chung-anten values (review manually) ----"
+grep -rnE "(3G/4G/5G|2G/3G/4G|3G/5G|4G/5G|2G/4G|'3G/4G'|\"3G/4G\")" \
+  "$ROOT/backend" "$ROOT/frontend/src" \
+  --include=*.py --include=*.ts --include=*.tsx \
+  --exclude=light_migrations.py --exclude-dir=node_modules --exclude-dir=__pycache__ \
+  | grep -v "$BK" || echo "(none)"
 
-# ── 7. Compile + self-test ───────────────────────────────────────────────────
-say "7/7  Compile + self-test"
-COMPILE_RC=0
-for f in backend/cell_sync_core.py backend/update_cells_with_revision.py update_cells_with_revision.py \
-         backend/app/models/cell_3g.py backend/app/models/cell_4g.py backend/app/models/cell_5g.py \
-         backend/app/models/cell_revision.py backend/app/schemas/cell.py \
-         backend/app/services/revision.py backend/app/api/routes/revision.py; do
-  [ -f "$ROOT/$f" ] || continue
-  python3 -m py_compile "$ROOT/$f" 2>/dev/null && echo "  ✔ compiles: $f" || { echo "  ✘ SYNTAX ERROR: $f"; COMPILE_RC=1; }
-done
-
-TEST_RC=0
-if [ "$RUN_TESTS" -eq 1 ] && [ -n "$APP_PY" ]; then
-  (cd "$ROOT/backend" && "$APP_PY" - <<'PYEOF') || TEST_RC=$?
-import logging, sys
-import pandas as pd
-logging.disable(logging.CRITICAL)
-import cell_sync_core as core
-
-B, fails, n = core._BUILDERS, [], 0
-D = "Ngày cập nhật"
-
-def run(tech, vendor, d):
-    df = B[(tech, vendor)](pd.DataFrame([d]))
-    return {k: (None if (v is None or (isinstance(v, float) and v != v)) else v)
-            for k, v in df.iloc[0].to_dict().items()}
-
-def chk(label, got, exp):
-    global n
-    n += 1
-    if got != exp:
-        fails.append(f"{label}: got {got!r}, expected {exp!r}")
-
-# ---- 3G ----
-r = run("3g", "ericsson", {"rnc_UtranCellId": "LDGBLO07BM3GB", "rnc_cId": "42428.0", "rnc_uarfcnDl": "10612.0",
-        "rnc_primaryScrCode": "254", "rnc_lac": "64411", "rnc_rac": "44", "rnc_ura_id": "64404.0",
-        "primaryCpichPower": "360", "maximumTransmissionPower": "460", "hw_productName": "RRUS 01 B1",
-        "node_name": "LDGBLO07", "rnc_adminState": "UNLOCKED", D: "2026-09-23"})
-chk("3G E cell_id", r["cell_id"], "42428"); chk("3G E uarfcn", r["uarfcn"], "10612")
-chk("3G E ura", r["ura_id"], "64404"); chk("3G E cpich", r["cpich_power"], "36.0")
-chk("3G E pmax", r["cell_max_power"], "46.0"); chk("3G E mimo keep", r["mimo"], core._KEEP)
-chk("3G E oss", r["oss"], "ENM"); chk("3G E dump", r["dump_date"], "2026-09-23")
-
-r = run("3g", "huawei", {"CELLNAME": "HNITPG26CM3EA", "CELLID": "29781.0", "UARFCN DOWNLINK": "10562",
-        "PSCRAMBCODE": "8.0", "LAC": "10021", "RAC": "117", "URAID": "10021", "PCPICHPOWER (0.1dBm)": "330",
-        "RNC UCELL MAXTXPOWER": "430", "TXRXMODE": None, "RRU ManufacturerData": "RRU3971a,xx,yy",
-        "NEname": "HNITPG26", "BLKSTATUS": "UNBLOCKED"})
-chk("3G H cell_id", r["cell_id"], "29781"); chk("3G H psc", r["psc"], "8"); chk("3G H ura", r["ura_id"], "10021")
-chk("3G H cpich", r["cpich_power"], "33.0"); chk("3G H rf", r["rf"], "RRU3971a")
-chk("3G H mimo keep", r["mimo"], core._KEEP); chk("3G H oss", r["oss"], "OSS"); chk("3G H dump empty", r["dump_date"], None)
-
-r = run("3g", "nokia", {"name": "DNGVAN13DM3GA", "CId": "15771", "UARFCN": "10612", "PriScrCode": "467",
-        "LAC": "34903", "RAC": "104", "URAId": "104", "PtxPrimaryCPICH": "330", "PtxCellMax": "430",
-        "WBTS_name": "DNGVAN13", "AdminCellState": "Unlocked"})
-chk("3G N ura", r["ura_id"], "104"); chk("3G N cpich", r["cpich_power"], "33.0")
-chk("3G N pmax", r["cell_max_power"], "43.0"); chk("3G N oss", r["oss"], "oss")
-
-# ---- 4G ----
-r = run("4g", "ericsson", {"eUtranCellFDDId": "TNICGC80CM4CA", "eNBId": "601230", "cellId": "11", "earfcndl": "1501",
-        "tac": "62621", "physicalLayerCellId": "266", "rachRootSequence": "264", "noOfUsedTxAntennas": "4",
-        "dlChannelBandwidth": "20000", "maximumTransmissionPower": "520", "hw_productName": "Radio 4451HP",
-        "node": "TNICGC80UL", "administrativeState": "UNLOCKED"})
-chk("4G E enb", r["enodeb_id"], "601230"); chk("4G E cell_id", r["cell_id"], "601230-11")
-chk("4G E mimo", r["mimo"], "4T4R"); chk("4G E bw", r["bandwidth"], "20MHz")
-chk("4G E pmax", r["cell_max_power"], "52.0"); chk("4G E eci", r["eci"], "153914891")
-
-r = run("4g", "huawei", {"CELLNAME": "BNHBDG01DM4CA", "ENODEBID": "310105", "CELLID": "11", "DLEARFCN": "1501",
-        "TAC": "57201", "Physical cell ID": "264", "Root sequence index": "20", "TXRXMODE": "2T2R",
-        "DLBANDWIDTH": "CELL_BW_N100", "Maximum transmit power (0.1dBm)": "460",
-        "RRU ManufacturerData": "RRU3971a,WD5MERUMG30A", "NE": "BNHBDG01_4G", "Cell admin state": "CELL_UNBLOCK"})
-chk("4G H cell_id", r["cell_id"], "310105-11"); chk("4G H mimo", r["mimo"], "2T2R")
-chk("4G H bw", r["bandwidth"], "20MHz"); chk("4G H pmax", r["cell_max_power"], "46.0")
-chk("4G H eci", r["eci"], "79386891"); chk("4G H rf", r["rf"], "RRU3971a")
-chk("4G H bad bw -> empty", run("4g", "huawei", {"CELLNAME": "x", "DLBANDWIDTH": "CELL_BW_X"})["bandwidth"], None)
-
-r = run("4g", "nokia", {"distName": "PLMN-PLMN/MRBTS-190147/LNBTS-190147/LNCEL-11", "name": "DBNXDG02BM4CA",
-        "cellName": "DBNXDG02BM4CA", "tac": "18012", "phyCellId": "376", "earfcnDL": "1501", "rootSeqIndex": "20",
-        "Cell nTX": "2", "Cell nRX": "2", "dlChBw": "200", "pMax_0_1dBm": "430", "RRU productName": "AHEB",
-        "MRBTS_btsname": "DBNXDG02", "blockingState": "Unblocked"})
-chk("4G N enb", r["enodeb_id"], "190147"); chk("4G N cell_id", r["cell_id"], "190147-11")
-chk("4G N mimo", r["mimo"], "2T2R"); chk("4G N bw", r["bandwidth"], "20MHz")
-chk("4G N pmax", r["cell_max_power"], "43.0"); chk("4G N eci", r["eci"], "48677643")
-
-# ---- 5G ----
-r = run("5g", "ericsson", {"NRCellCUId": "TNIDMC36CM5LB", "gNodeBId": "150343", "NRCellCU_LocalCellId": "412",
-        "ARFCN_DL_Cell": "523470", "ARFCN_DL_SC": "528996", "PCI": "766", "TAC": "62840", "rachRootSequence": "357",
-        "NoOfUsedTxAntennas": "32", "NoOfUsedRxAntennas": "32", "ConfiguredMaxTxPower": "320000",
-        "NRCellCU_nCI": "2463232412", "BSChannelBwDL": "90", "RF_ProductNames": "AIR 3265 B41",
-        "Node": "TNIDMC36N", "AdministrativeState_SC": "UNLOCKED"})
-chk("5G E gnb", r["gnodeb_id"], "150343"); chk("5G E cell_id", r["cell_id"], "150343-412")
-chk("5G E mimo", r["mimo"], "32T32R"); chk("5G E pmax", r["cell_max_power"], "55.1")
-chk("5G E gscn (derived)", r["gscn"], "6543"); chk("5G E bw", r["bandwidth"], "90")
-chk("5G E nci", r["nci"], "2463232412")
-chk("5G E mumimo", run("5g", "ericsson", {"NRCellCUId": "x", "dlMaxMuMimoLayers": "16", "ulMaxMuMimoLayers": "4"})["mu_mimo"], "16DL4UL")
-
-r = run("5g", "huawei", {"CELLNAME": "TNNBKN04DM5SA", "GNBID": "872188", "GNBIDLENGTH": "24", "CELLID": "71",
-        "SSB-ARFCN": "656544", "DLNARFCN": "656666", "SSB GSCN": "8088", "Physical cell ID": "331", "TAC": "57100",
-        "Logical Root sequence index": "530", "TXRXMODE": "32T32R", "MAXTRANSMITPOWER": "400",
-        "DLBANDWIDTH": "CELL_BW_100M", "RRU ManufacturerData": "AAU5336v,WD7MQ", "NE": "BCN_X",
-        "Cell admin state": "CELL_UNBLOCK"})
-chk("5G H cell_id", r["cell_id"], "872188-71"); chk("5G H nci", r["nci"], "3572482119")
-chk("5G H mimo", r["mimo"], "32T32R"); chk("5G H pmax", r["cell_max_power"], "55.1")
-chk("5G H bw", r["bandwidth"], "100"); chk("5G H gscn", r["gscn"], "8088"); chk("5G H rf", r["rf"], "AAU5336v")
-r = run("5g", "huawei", {"CELLNAME": "x", "TXRXMODE": "abc", "MAXTRANSMITPOWER": "400"})
-chk("5G H bad mimo -> mimo empty", r["mimo"], None); chk("5G H bad mimo -> power empty", r["cell_max_power"], None)
-
-r = run("5g", "nokia", {"distName": "PLMN-PLMN/MRBTS-1050254/NRBTS-1050254/NRCELL-51", "NRCELL_cellName": "HDD018M5SA",
-        "physCellId": "168", "nrCellIdentity": "4301840435", "prachRootSequenceIndex": "42", "nrCellType": "16DL4UL",
-        "mMimoAntArrayMode": "Full 64TRX Array (4x8x2)", "chBw": "100MHz", "pMax_0_1dBm": "369",
-        "nrarfcn": "656666", "gscnOrSsPbchArfcn": "8088", "RRU productName": "AVQG",
-        "MRBTS_btsname": "HDD018NR77", "administrativeState": "Unlocked"})
-chk("5G N gnb", r["gnodeb_id"], "1050254"); chk("5G N cell_id", r["cell_id"], "1050254-51")
-chk("5G N mimo", r["mimo"], "64T64R"); chk("5G N pmax", r["cell_max_power"], "55.0")
-chk("5G N bw", r["bandwidth"], "100"); chk("5G N mu", r["mu_mimo"], "16DL4UL")
-chk("5G N nci", r["nci"], "4301840435"); chk("5G N tac (col missing)", r["tac"], None)
-
-# ---- helpers ----
-chk("gscn 656544", core._gscn_from_arfcn("656544"), "8088")
-chk("diff garbage '<NA>' is detected", bool(core._diff({"pci": "<NA>"}, {"pci": None})), True)
-chk("diff '46.0' == '46.0'", core._diff({"x": "46.0"}, {"x": "46.0"}), {})
-chk("diff '42428.0' -> '42428'", bool(core._diff({"x": "42428.0"}, {"x": "42428"})), True)
-
-print(f"self-test: {n - len(fails)}/{n} checks passed")
-for f in fails:
-    print("  ✘", f)
-sys.exit(1 if fails else 0)
-PYEOF
-elif [ "$RUN_TESTS" -eq 1 ]; then
-  warn "self-test skipped (no python with pandas/sqlalchemy/requests found)."
-fi
-
-# ── Summary ──────────────────────────────────────────────────────────────────
-say "Summary"
-[ "$PATCH_RC"   -eq 0 ] && echo "  patches : OK"        || echo "  patches : SOME FAILED (see above)"
-[ "$COMPILE_RC" -eq 0 ] && echo "  compile : OK"        || echo "  compile : ERRORS"
-[ "$TEST_RC"    -eq 0 ] && echo "  self-test: OK"       || echo "  self-test: FAILED"
 cat <<EOF
 
-Next steps
-  1. Restart the backend (uvicorn/gunicorn) so the new models + sync rules load.
-  2. Dry run first - the first real run rewrites most cells (".0" removal, new formats):
-        cd "$ROOT" && python update_cells_with_revision.py --dry-run
-  3. Then the real run:   python update_cells_with_revision.py
-  4. Frontend: rebuild / let Vite hot-reload.
-  Roll back anything:  cp -a "$BK"/. "$ROOT"/
+DONE.
+  1. Restart the backend. On startup it will: add cells_5g.chung_anten, widen mimo columns,
+     remap legacy chung_anten values, and regenerate all 5 Excel templates.
+  2. Rebuild / reload the frontend.
+  3. Backup of originals: $BK
 EOF
-[ "$PATCH_RC" -eq 0 ] && [ "$COMPILE_RC" -eq 0 ] && [ "$TEST_RC" -eq 0 ]

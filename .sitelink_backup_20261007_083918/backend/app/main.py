@@ -6,7 +6,6 @@ from fastapi.staticfiles import StaticFiles
 from app.db.session import engine, SessionLocal
 from app.db import base  # noqa
 from app.db.base import Base
-from app.db.light_migrations import run_light_migrations
 from app.api.routes import (
     auth, users, sites, cells_3g, cells_4g, cells_5g,
     dropdowns, report, audit,
@@ -146,7 +145,6 @@ app.mount(
 
 @app.on_event("startup")
 def on_startup():
-    run_light_migrations()   # add cells_5g.chung_anten, widen mimo, remap legacy values
     _seed_initial_data()
     regen_now()   # regenerate all templates in background on every startup
 

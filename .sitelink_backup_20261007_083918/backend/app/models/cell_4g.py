@@ -5,8 +5,8 @@ from sqlalchemy.orm import relationship
 from app.db.base import Base
 
 
-class Cell5G(Base):
-    __tablename__ = "cells_5g"
+class Cell4G(Base):
+    __tablename__ = "cells_4g"
 
     id               = Column(Integer, primary_key=True, index=True)
     site_id          = Column(Integer, ForeignKey("sites.id", ondelete="CASCADE"),
@@ -33,20 +33,17 @@ class Cell5G(Base):
     chung_anten      = Column(String(100))
     baseband         = Column(String(100))
     rf               = Column(String(100))
-    gnodeb_id        = Column(String(50))
+    enodeb_id        = Column(String(50))
     cell_id          = Column(String(50))
+    earfcn           = Column(String(50))
     tac              = Column(String(50))
     pci              = Column(String(50))
     root_sequence_id = Column(String(50))
-    mimo             = Column(String(100))
-    ssb_arfcn        = Column(String(50))
-    center_arfcn     = Column(String(50))
-    gscn             = Column(String(50))
+    mimo             = Column(String(20))
     bandwidth        = Column(String(50))
     cell_max_power   = Column(String(50))
-    nci              = Column(String(50))
+    eci              = Column(String(50))
     bbu_name         = Column(String(100))
-    mu_mimo          = Column(String(100))
     cell_status      = Column(String(100))
     dump_date      = Column(String(50), nullable=True)   # data dump date
     oss            = Column(String(50), nullable=True)   # OSS source
@@ -57,4 +54,4 @@ class Cell5G(Base):
                               onupdate=lambda: datetime.now(timezone.utc))
     created_by       = Column(Integer, ForeignKey("users.id"), nullable=True)
 
-    site = relationship("Site", back_populates="cells_5g")
+    site = relationship("Site", back_populates="cells_4g")

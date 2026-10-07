@@ -12,9 +12,9 @@ import {
   PlusOutlined, SearchOutlined, UploadOutlined,
   EditOutlined, DeleteOutlined, DownloadOutlined,
 } from '@ant-design/icons'
-import { cells4gApi } from '@/api/cells'
-import { exportCells4G, buildExportScope } from '@/api/export'
-import type { Cell4G, Site, AntennaItem, TinhItem } from '@/types'
+import { cells5gApi } from '@/api/cells'
+import { exportCells5G, buildExportScope } from '@/api/export'
+import type { Cell5G, Site, AntennaItem, TinhItem } from '@/types'
 import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
@@ -23,10 +23,8 @@ import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator }
 import { useCellSync } from '@/hooks/useCellSync'
 
 
-const CHUNG_ANTEN_4G = ['4G only', '3G4G', '2G3G4G', '4G5G', '3G4G5G']
-
-export default function Cells4GPage() {
-  const [data,         setData]         = useState<Cell4G[]>([])
+export default function Cells5GPage() {
+  const [data,         setData]         = useState<Cell5G[]>([])
   const [loading,      setLoading]      = useState(false)
   const [exporting,    setExporting]    = useState(false)
   const [search,       setSearch]       = useState('')
@@ -40,7 +38,7 @@ export default function Cells4GPage() {
   const [antennaList,  setAntennaList]  = useState<AntennaItem[]>([])
   const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
   const [modalOpen,    setModalOpen]    = useState(false)
-  const [editing,      setEditing]      = useState<Cell4G | null>(null)
+  const [editing,      setEditing]      = useState<Cell5G | null>(null)
   const [dryRunOpen,   setDryRunOpen]   = useState(false)
   const [selectedIds,  setSelectedIds]  = useState<number[]>([])
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
@@ -51,7 +49,7 @@ export default function Cells4GPage() {
     : [...new Set(data.map(c => c.tinh).filter(Boolean))].sort() as string[]
   const [vendorOptions, setVendorOptions] = useState<string[]>([])
   useEffect(() => {
-    cells4gApi.distinct('vendor', { limit: 200 })
+    cells5gApi.distinct('vendor', { limit: 200 })
       .then((r) => setVendorOptions(
         r.values.map((v) => v.value)
          .filter((v): v is string => typeof v === 'string' && v !== '')))
@@ -80,7 +78,7 @@ export default function Cells4GPage() {
       if (phuongXa.length)  params.phuong_xa     = phuongXa
       if (vendor.length)    params.vendor        = vendor
       const ticket = sq.nextTicket()
-      const res = await cells4gApi.listPaged(params)
+      const res = await cells5gApi.listPaged(params)
       if (!sq.isCurrent(ticket)) return
       setData(res.items)
       sq.onLoaded(res.total, params)
@@ -104,7 +102,7 @@ export default function Cells4GPage() {
   const handleExport = async () => {
     setExporting(true)
     try {
-      const res = await exportCells4G(
+      const res = await exportCells5G(
         {
           search:        search || undefined,
           cell_name_old: cellNameOld || undefined,
@@ -120,7 +118,7 @@ export default function Cells4GPage() {
     } catch (e: any) { message.error(e?.message || 'Xuất thất bại')
     } finally { setExporting(false) }
   }
-  const { syncAfterCreate, syncAfterImport } = useCellSync('4g', load)
+  const { syncAfterCreate, syncAfterImport } = useCellSync('5g', load)
 
 
   const clearFilters = () => {
@@ -134,14 +132,14 @@ export default function Cells4GPage() {
   }
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true) }
-  const openEdit   = (r: Cell4G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
+  const openEdit   = (r: Cell5G) => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }
 
   const handleSave = async () => {
     const values = await form.validateFields()
     try {
-      if (editing) { await cells4gApi.update(editing.id, values); message.success('Cập nhật thành công') }
+      if (editing) { await cells5gApi.update(editing.id, values); message.success('Cập nhật thành công') }
       else         {
-        const created = await cells4gApi.create(values)
+        const created = await cells5gApi.create(values)
         message.success('Tạo cell thành công')
         syncAfterCreate([created])
       }
@@ -156,19 +154,19 @@ export default function Cells4GPage() {
   }
 
   const handleDelete = async (id: number) => {
-    await cells4gApi.remove(id); message.success('Đã xóa')
+    await cells5gApi.remove(id); message.success('Đã xóa')
     setSelectedIds(prev => prev.filter(x => x !== id)); load()
   }
 
   const handleBulkDelete = async () => {
-    const result = await cells4gApi.bulkDelete(selectedIds)
+    const result = await cells5gApi.bulkDelete(selectedIds)
     if (result.deleted) message.success(`Đã xóa ${result.deleted} cell`)
     if (result.errors.length > 0) message.warning(`${result.errors.length} lỗi`)
     setSelectedIds([]); load()
   }
 
   const handleBulkEdit = async (changes: Record<string, unknown>) => {
-    const result = await cells4gApi.bulkUpdate(selectedIds, changes)
+    const result = await cells5gApi.bulkUpdate(selectedIds, changes)
     if (result.updated) message.success(`Đã cập nhật ${result.updated} cell`)
     if (result.errors && result.errors.length > 0) message.warning(`${result.errors.length} lỗi`)
     setSelectedIds([]); load()
@@ -176,16 +174,16 @@ export default function Cells4GPage() {
 
   const pagination = sq.pagination('cells')
 
-  const rowSelection: TableRowSelection<Cell4G> = {
+  const rowSelection: TableRowSelection<Cell5G> = {
     selectedRowKeys: selectedIds,
     preserveSelectedRowKeys: true,
     onChange: keys => setSelectedIds(keys as number[]),
     selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
   }
 
-  const columns: ColumnsType<Cell4G> = [
+  const columns: ColumnsType<Cell5G> = [
     { title: 'Hành động', key: 'action', fixed: 'left', width: 90,
-      render: (_: unknown, r: Cell4G) => (
+      render: (_: unknown, r: Cell5G) => (
         <Space size={4}>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} />
           <Popconfirm title="Xóa cell này?" onConfirm={() => handleDelete(r.id)}>
@@ -195,7 +193,7 @@ export default function Cells4GPage() {
       )},
     { title: 'Miền', dataIndex: 'mien', fixed: 'left', width: 70 },
     { title: 'Tỉnh', dataIndex: 'tinh', fixed: 'left', width: 160 },
-    { title: 'Phường/Xã', dataIndex: 'phuong_xa', width: 160 },
+    { title: 'Phường xã', dataIndex: 'phuong_xa', width: 160 },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
@@ -211,20 +209,22 @@ export default function Cells4GPage() {
     { title: 'M-tilt', dataIndex: 'm_tilt', width: 80 },
     { title: 'E-Tilt', dataIndex: 'e_tilt', width: 80 },
     { title: 'Total Tilt', dataIndex: 'total_tilt', width: 100 },
-    { title: 'Loại Anten', dataIndex: 'loai_anten', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Chung anten', dataIndex: 'chung_anten', width: 120 },
+    { title: 'Loại Anten', dataIndex: 'loai_anten', width: 250, ellipsis: { showTitle: true } },
     { title: 'RF', dataIndex: 'rf', width: 100 },
-    { title: 'EnodeB ID', dataIndex: 'enodeb_id', width: 110 },
+    { title: 'gNodeB ID', dataIndex: 'gnodeb_id', width: 110 },
     { title: 'Cell ID', dataIndex: 'cell_id', width: 100 },
-    { title: 'EARFCN', dataIndex: 'earfcn', width: 90 },
     { title: 'TAC', dataIndex: 'tac', width: 80 },
     { title: 'PCI', dataIndex: 'pci', width: 80 },
     { title: 'Root Sequence ID', dataIndex: 'root_sequence_id', width: 150 },
     { title: 'MIMO', dataIndex: 'mimo', width: 80, render: (v: string) => v ? <Tag color="blue">{v}</Tag> : '-' },
-    { title: 'Bandwidth', dataIndex: 'bandwidth', width: 110 },
+    { title: 'SSB-ARFCN', dataIndex: 'ssb_arfcn', width: 110 },
+    { title: 'Center-ARFCN', dataIndex: 'center_arfcn', width: 120 },
+    { title: 'GSCN', dataIndex: 'gscn', width: 90 },
+    { title: 'Bandwidth (MHz)', dataIndex: 'bandwidth', width: 130 },
     { title: 'Cell max power (dBm)', dataIndex: 'cell_max_power', width: 165 },
-    { title: 'ECI', dataIndex: 'eci', width: 120 },
+    { title: 'NCI', dataIndex: 'nci', width: 120 },
     { title: 'BBUname', dataIndex: 'bbu_name', width: 130 },
+    { title: 'MU-MIMO', dataIndex: 'mu_mimo', width: 100 },
     { title: 'Cell status (at dump time)', dataIndex: 'cell_status', width: 190 },
     { title: 'Ngày dữ liệu dump', dataIndex: 'dump_date', width: 160 },
     { title: 'OSS', dataIndex: 'oss', width: 90 },
@@ -233,8 +233,8 @@ export default function Cells4GPage() {
   const { columns: excelColumns, dataSource: excelData, onChange: onExcelChange,
     filterBar, clearAll: clearColumnFilters } =
     useServerColumns(columns, data, sq, {
-      fetchDistinct: (field, p) => cells4gApi.distinct(field, p),
-      fetchIds:      (p) => cells4gApi.ids(p),
+      fetchDistinct: (field, p) => cells5gApi.distinct(field, p),
+      fetchIds:      (p) => cells5gApi.ids(p),
       selectedIds, setSelectedIds, unit: 'cell',
     })
   const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0)
@@ -242,7 +242,7 @@ export default function Cells4GPage() {
   return (
     <div>
       <Row align="middle" justify="space-between" style={{ marginBottom: 16 }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>Cell 4G</Typography.Title>
+        <Typography.Title level={3} style={{ margin: 0 }}>Cell 5G</Typography.Title>
         <Space>
           <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} dòng đã chọn ra Excel` : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra Excel'}>
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
@@ -333,7 +333,7 @@ export default function Cells4GPage() {
              loading={loading} size="small" scroll={{ x: scrollX, y: 600 }} bordered
              pagination={pagination} />
 
-      <Modal title={editing ? 'Chỉnh sửa Cell 4G' : 'Thêm Cell 4G mới'}
+      <Modal title={editing ? 'Chỉnh sửa Cell 5G' : 'Thêm Cell 5G mới'}
              open={modalOpen} onOk={handleSave} onCancel={() => setModalOpen(false)}
              width={900} okText="Lưu" destroyOnClose>
         <Form form={form} layout="vertical">
@@ -418,21 +418,23 @@ export default function Cells4GPage() {
               </Select>
             </Form.Item></Col>
             <Col span={8}><Form.Item name="rf" label="RF"><Input /></Form.Item></Col>
-            <Col span={12}><Form.Item name="chung_anten" label="Chung anten">
-              <Select allowClear>{CHUNG_ANTEN_4G.map(v => <Select.Option key={v} value={v}>{v}</Select.Option>)}</Select>
-            </Form.Item></Col>
-            <Col span={8}><Form.Item name="enodeb_id" label="EnodeB ID"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="gnodeb_id" label="gNodeB ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_id" label="Cell ID"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="earfcn" label="EARFCN"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="tac" label="TAC"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="pci" label="PCI"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="root_sequence_id" label="Root Sequence ID"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="mimo" label="MIMO">
               <Select allowClear>{['2x2','4x4','8x8'].map(m => <Select.Option key={m} value={m}>{m}</Select.Option>)}</Select>
             </Form.Item></Col>
+            <Col span={8}><Form.Item name="ssb_arfcn" label="SSB-ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="center_arfcn" label="Center-ARFCN"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="gscn" label="GSCN"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="bandwidth" label="Bandwidth (MHz)"><Input /></Form.Item></Col>
             <Col span={8}><Form.Item name="cell_max_power" label="Cell max power (dBm)"><Input /></Form.Item></Col>
-            <Col span={8}><Form.Item name="eci" label="ECI"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="nci" label="NCI"><Input /></Form.Item></Col>
+            <Col span={8}><Form.Item name="mu_mimo" label="MU-MIMO">
+              <Select allowClear><Select.Option value="Yes">Yes</Select.Option><Select.Option value="No">No</Select.Option></Select>
+            </Form.Item></Col>
             <Col span={8}><Form.Item name="bbu_name" label="BBUname"><Input /></Form.Item></Col>
             <Col span={16}><Form.Item name="cell_status" label="Cell status (at dump time)"><Input /></Form.Item></Col>
           </Row>
@@ -443,20 +445,20 @@ export default function Cells4GPage() {
         open={bulkEditOpen}
         onClose={() => setBulkEditOpen(false)}
         count={selectedIds.length}
-        tech="4g"
+        tech="5g"
         antennaList={antennaList}
         onConfirm={handleBulkEdit}
       />
 
       <DryRunModal open={dryRunOpen} onClose={() => setDryRunOpen(false)}
-        title="Import Cell 4G từ Excel" templateKey="cell-4g"
-        dryRunFn={cells4gApi.dryRunExcel}
+        title="Import Cell 5G từ Excel" templateKey="cell-5g"
+        dryRunFn={cells5gApi.dryRunExcel}
         importFn={async (file) => {
           // Capture timestamp BEFORE import so /recent query is precise
           const importStarted = new Date().toISOString()
-          const result = await cells4gApi.importExcel(file)
+          const result = await cells5gApi.importExcel(file)
           // Trigger sync with exact start timestamp — finds ALL created cells
-          syncAfterImport(result, 'cells_4g', importStarted).catch(() => { load() })
+          syncAfterImport(result, 'cells_5g', importStarted).catch(() => { load() })
           return result
         }}
         onSuccess={load} />

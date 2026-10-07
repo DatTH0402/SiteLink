@@ -41,7 +41,7 @@ class Cell3G(Base):
     rac            = Column(String(50))
     psc            = Column(String(50))
     ura_id         = Column(String(50))
-    mimo           = Column(String(100))
+    mimo           = Column(String(20))
     cell_max_power = Column(String(50))
     cpich_power    = Column(String(50))
     bbu_name       = Column(String(100))

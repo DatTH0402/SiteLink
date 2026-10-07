@@ -201,7 +201,6 @@ class Cell4GRead(Cell4GBase):
 
 class Cell5GBase(CellBase):
     gnodeb_id:        Optional[str] = None
-    chung_anten:      Optional[str] = None
     tac:              Optional[str] = None
     pci:              Optional[str] = None
     root_sequence_id: Optional[str] = None
@@ -219,7 +218,6 @@ class Cell5GCreate(Cell5GBase, CellCreate):
 
 class Cell5GUpdate(CellUpdate):
     gnodeb_id:        Optional[str] = None
-    chung_anten:      Optional[str] = None
     tac:              Optional[str] = None
     pci:              Optional[str] = None
     root_sequence_id: Optional[str] = None

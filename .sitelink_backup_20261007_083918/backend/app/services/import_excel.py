@@ -54,9 +54,8 @@ ALLOWED_MIMO      = {"2x2", "4x4", "8x8"}
 ALLOWED_MORAN     = {"VNPT HOST", "MBF HOST"}
 ALLOWED_SITE_VIP  = {"VIP", "VVIP"}
 ALLOWED_CELL_VIP  = {"VIP", "VVIP"}
-ALLOWED_CHUNG_3G  = {"3G only", "3G4G", "2G3G", "2G3G4G", "3G5G", "3G4G5G"}
-ALLOWED_CHUNG_4G  = {"4G only", "3G4G", "2G3G4G", "4G5G", "3G4G5G"}
-ALLOWED_CHUNG_5G  = {"5G only", "3G5G", "4G5G", "3G4G5G"}
+ALLOWED_CHUNG_3G  = {"3G", "3G/4G", "2G/3G/4G", "3G/4G/5G", "3G/5G"}
+ALLOWED_CHUNG_4G  = {"4G", "2G/4G", "3G/4G", "2G/3G/4G", "4G/5G"}
 ALLOWED_MU_MIMO   = {"Yes", "No"}
 
 
@@ -83,16 +82,10 @@ def _normalize(text: str) -> str:
 class GeoCache:
     def __init__(self, db) -> None:
         from app.models.dropdown import DropdownTinhXaPhuong
-        rows = (
-            db.query(DropdownTinhXaPhuong)
-            .order_by(DropdownTinhXaPhuong.id)
-            .all()
-        )
+        rows = db.query(DropdownTinhXaPhuong).all()
         self.tinh_map:  Dict[str, str] = {}
         self.xa_map:    Dict[Tuple[str, str], str] = {}
         self.tinh_mien: Dict[str, str] = {}
-        # ky_tu_1_6 (e.g. "HNIHKM") -> (ten_tinh, ten_phuong_xa)
-        self.code_map:  Dict[str, Tuple[str, str]] = {}
         for r in rows:
             if r.ten_tinh:
                 k = _normalize(r.ten_tinh)
@@ -102,12 +95,6 @@ class GeoCache:
                 self.xa_map[
                     (_normalize(r.ten_tinh), _normalize(r.ten_phuong_xa))
                 ] = r.ten_phuong_xa
-            # 6-character code used to auto-map Tinh / Phuong xa from Cell Name
-            code = (r.ky_tu_1_6 or "").strip().upper()
-            if not code:
-                code = f"{r.ma_tinh or ''}{r.ma_phuong_xa or ''}".strip().upper()
-            if code and r.ten_tinh and code not in self.code_map:
-                self.code_map[code] = (r.ten_tinh, r.ten_phuong_xa or "")
 
     def resolve_tinh(self, raw: Optional[str]) -> Optional[str]:
         if not raw:
@@ -121,16 +108,6 @@ class GeoCache:
 
     def mien_for(self, tinh_official: str) -> str:
         return self.tinh_mien.get(tinh_official, "")
-
-    def lookup_by_cell_name(self, cell_name: Optional[str]) -> Optional[Tuple[str, str]]:
-        """First 6 characters of the cell name (e.g. HNIHKM44DI4DA -> HNIHKM)
-        -> (ten_tinh, ten_phuong_xa) from dropdown_tinh_xa_phuong.ky_tu_1_6."""
-        if not cell_name:
-            return None
-        code = str(cell_name).strip().upper()[:6]
-        if len(code) < 6:
-            return None
-        return self.code_map.get(code)
 
 
 def _read_excel(file_bytes: bytes) -> pd.DataFrame:
@@ -601,26 +578,6 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
     raw_phuong = _v(row, "Phường xã", "Phuong xa", "phuong_xa")
     raw_mien   = _v(row, "Miền", "Mien", "mien")
 
-    cell_name = _v(row, "Cell Name", "Cell name", "cell_name") or ""
-    label     = cell_name or f"row {row_num}"
-
-    # ── Auto-map Tỉnh / Phường xã from the first 6 chars of Cell Name ────────
-    # Only when the user left Tinh and/or Phuong xa empty. Values the user has
-    # already filled in are NEVER overridden. (Excel import only – not forms.)
-    auto_xa: Optional[str] = None
-    if geo and cell_name and (not raw_tinh or not raw_phuong):
-        mapped = geo.lookup_by_cell_name(cell_name)
-        if mapped:
-            m_tinh, m_xa = mapped
-            if not raw_tinh:
-                raw_tinh = m_tinh
-                if not raw_phuong and m_xa:
-                    auto_xa = m_xa
-            elif not raw_phuong and m_xa and geo.resolve_tinh(raw_tinh) == m_tinh:
-                # user gave Tinh (same province as the code) but no ward
-                auto_xa = m_xa
-
-    # Tinh / Phuong xa are NOT required: empty + no mapping found is not an error.
     if geo and raw_tinh:
         tinh_official = geo.resolve_tinh(raw_tinh)
         if not tinh_official:
@@ -632,12 +589,13 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
         phuong_xa_official: Optional[str] = None
         if raw_phuong:
             phuong_xa_official = geo.resolve_xa(tinh_official, raw_phuong)
-        elif auto_xa:
-            phuong_xa_official = auto_xa
     else:
         tinh_official      = raw_tinh
         mien               = raw_mien
         phuong_xa_official = raw_phuong
+
+    cell_name = _v(row, "Cell Name", "Cell name", "cell_name") or ""
+    label     = cell_name or f"row {row_num}"
 
     # ── Required: Lat, Long (must be numeric) ────────────────────────────────
     raw_lat  = _float(row, "Lat", "LAT", "lat")
@@ -690,6 +648,9 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
                         row_num, label, errors_out)
 
     mimo_val = _v_aware(row, excel_cols, "MIMO", "mimo")
+    if mimo_val and mimo_val is not _CLEAR:
+        _check_dropdown(mimo_val, "MIMO", ALLOWED_MIMO,
+                        row_num, label, errors_out)
 
     moran_val = _v_aware(row, excel_cols, "MORAN", "Moran", "moran")
     if moran_val and moran_val is not _CLEAR:
@@ -737,7 +698,6 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
                                    "Cell status", "cell_status"),
         "cell_max_power": _v_aware(row, excel_cols, "Cell max power (dBm)",
                                     "Cell max power", "cell_max_power"),
-        "oss":            _v_aware(row, excel_cols, "OSS", "Oss", "oss"),
     }
 
 
@@ -976,9 +936,9 @@ def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
         row_errors: List[str] = []
         label = _v(row, "Cell Name", "Cell name", "cell_name") or f"row {row_num}"
 
-        chung_val = _v_aware(row, excel_cols, "Chung anten", "chung_anten")
-        if chung_val and chung_val is not _CLEAR:
-            _check_dropdown(chung_val, "Chung anten", ALLOWED_CHUNG_5G,
+        mu_mimo_val = _v_aware(row, excel_cols, "MU-MIMO", "mu_mimo")
+        if mu_mimo_val and mu_mimo_val is not _CLEAR:
+            _check_dropdown(mu_mimo_val, "MU-MIMO", ALLOWED_MU_MIMO,
                             row_num, label, row_errors)
 
         if row_errors:
@@ -986,7 +946,6 @@ def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
             return None
 
         return {
-            "chung_anten":      chung_val,
             "gnodeb_id":        _v_aware(row, excel_cols, "gNodeB ID", "gnodeb_id"),
             "tac":              _v_aware(row, excel_cols, "TAC", "tac"),
             "pci":              _v_aware(row, excel_cols, "PCI", "pci"),
@@ -996,6 +955,6 @@ def parse_cell5g_excel(file_bytes, db=None, dry_run=False):
             "gscn":             _v_aware(row, excel_cols, "GSCN", "gscn"),
             "bandwidth":        _v_aware(row, excel_cols, "Bandwidth (MHz)", "Bandwidth", "bandwidth"),
             "nci":              _v_aware(row, excel_cols, "NCI", "nci"),
-            "mu_mimo":          _v_aware(row, excel_cols, "MU-MIMO", "mu_mimo"),
+            "mu_mimo":          mu_mimo_val,
         }
     return _parse_cell_excel(file_bytes, Cell5G, extra, db=db, dry_run=dry_run)

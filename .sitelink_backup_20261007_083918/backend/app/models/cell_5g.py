@@ -30,7 +30,6 @@ class Cell5G(Base):
     e_tilt           = Column(String(50))   # changed: Float → String
     total_tilt       = Column(String(50))   # changed: Float → String
     loai_anten       = Column(String(200))
-    chung_anten      = Column(String(100))
     baseband         = Column(String(100))
     rf               = Column(String(100))
     gnodeb_id        = Column(String(50))
@@ -46,7 +45,7 @@ class Cell5G(Base):
     cell_max_power   = Column(String(50))
     nci              = Column(String(50))
     bbu_name         = Column(String(100))
-    mu_mimo          = Column(String(100))
+    mu_mimo          = Column(String(20))
     cell_status      = Column(String(100))
     dump_date      = Column(String(50), nullable=True)   # data dump date
     oss            = Column(String(50), nullable=True)   # OSS source
