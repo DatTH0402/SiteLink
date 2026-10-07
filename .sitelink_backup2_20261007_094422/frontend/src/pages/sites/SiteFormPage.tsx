@@ -97,7 +97,8 @@ export default function SiteFormPage() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item name="tinh" label="Tỉnh / Thành phố">
+              <Form.Item name="tinh" label="Tỉnh / Thành phố"
+                         rules={[{ required: true, message: 'Vui lòng chọn tỉnh' }]}>
                 <Select
                   showSearch allowClear
                   placeholder="Chọn tỉnh / thành phố..."

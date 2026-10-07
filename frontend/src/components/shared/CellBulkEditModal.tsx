@@ -34,9 +34,9 @@ const VUNGS     = ['Indoor', 'Outdoor']
 const CELL_VIPS = ['VIP', 'VVIP']
 
 const CHUNG_ANTEN: Record<CellTech, string[]> = {
-  '3g': ['3G', '3G/4G', '2G/3G/4G', '3G/4G/5G', '3G/5G'],
-  '4g': ['4G', '2G/4G', '3G/4G', '2G/3G/4G', '4G/5G'],
-  '5g': [],
+  '3g': ["3G only", "3G4G", "2G3G", "2G3G4G", "3G5G", "3G4G5G"],
+  '4g': ["4G only", "3G4G", "2G3G4G", "4G5G", "3G4G5G"],
+  '5g': ["5G only", "3G5G", "4G5G", "3G4G5G"],
 }
 
 export default function CellBulkEditModal({

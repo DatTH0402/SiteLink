@@ -614,22 +614,6 @@ def _add_legend_sheet(
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Required site column names (must match the column headers exactly)
-_SITE_GEO_NOTE = (
-    "KHÔNG bắt buộc – để trống thì hệ thống tự điền theo 6 ký tự đầu của "
-    "Site name (khớp cột ky_tu_1_6 trong danh mục Tỉnh/Xã/Phường); "
-    "đã nhập thì giữ nguyên"
-)
-
-_SITE_GEO_IMPORT_RULES: List[Tuple[str, str]] = [
-    ("Tinh / Phuong xa để trống",
-     "→ Tự động điền theo 6 ký tự đầu của Site name (khớp cột ky_tu_1_6 trong "
-     "danh mục Tỉnh/Xã/Phường). Ví dụ: HNIHKM0001 → HNIHKM"),
-    ("Tinh / Phuong xa đã có giá trị",
-     "→ Giữ nguyên giá trị đã nhập, KHÔNG tự động điền"),
-    ("Không tìm thấy mã 6 ký tự",
-     "→ Tinh / Phuong xa để trống (không phải lỗi – các cột này KHÔNG bắt buộc)"),
-]
-
 SITE_REQUIRED = {
     "Site name",
     "Lat",
@@ -642,8 +626,8 @@ def create_site_template() -> None:
     # (header, note_for_guide, width, is_required)
     columns: List[Tuple[str, str, float, bool]] = [
         ("Mien",                  "Miền: MB / MT / MN",                                        8,  False),
-        ("Tinh",                  "Tỉnh / Thành phố – chọn từ danh sách. " + _SITE_GEO_NOTE,                     28,  False),
-        ("Phuong xa",             "Phường / Xã – chọn từ danh sách. " + _SITE_GEO_NOTE,                          28,  False),
+        ("Tinh",                  "Tỉnh / Thành phố – chọn từ danh sách",                     28,  False),
+        ("Phuong xa",             "Phường / Xã – chọn từ danh sách",                          28,  False),
         ("Site name (cu)",        "Tên site cũ – điền khi đổi tên site",                      24,  False),
         ("Site name",             "Tên site hiện tại – bắt buộc, phải là duy nhất",           28,  True),
         ("Site VIP",              "Mức độ VIP: VIP hoặc VVIP – để trống nếu không phải",      12,  False),
@@ -742,8 +726,7 @@ def create_site_template() -> None:
 
     # ── Guide sheet (second sheet) ────────────────────────────────────────────
     column_notes = [(h, note, req) for h, note, _w, req in columns]
-    _add_legend_sheet(wb, "Site", column_notes,
-                      extra_import_rules=_SITE_GEO_IMPORT_RULES)
+    _add_legend_sheet(wb, "Site", column_notes)
 
     # ── Ensure _Lookups is last and hidden ────────────────────────────────────
     _finalize_sheets(wb)

@@ -418,25 +418,6 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         raw_phuong = _v(row, "Phường xã", "Phuong xa", "Phường Xã", "phuong_xa", "Ward")
         raw_mien   = _v(row, "Miền", "Mien", "MIEN", "mien")
 
-        tinh_col_present = bool(excel_cols & {"Tỉnh", "Tinh", "TINH", "tinh", "Province"})
-        xa_col_present   = bool(excel_cols & {"Phường xã", "Phuong xa", "Phường Xã", "phuong_xa", "Ward"})
-        mien_col_present = bool(excel_cols & {"Miền", "Mien", "MIEN", "mien"})
-
-        # ── Auto-map Tỉnh / Phường xã from the first 6 chars of Site name ────
-        # Only when the user left them empty; values already filled are kept.
-        # (GeoCache.lookup_by_cell_name just uses the first 6 chars of any name.)
-        auto_xa: Optional[str] = None
-        if geo and (not raw_tinh or not raw_phuong):
-            mapped = geo.lookup_by_cell_name(site_name)
-            if mapped:
-                m_tinh, m_xa = mapped
-                if not raw_tinh:
-                    raw_tinh = m_tinh
-                    if not raw_phuong and m_xa:
-                        auto_xa = m_xa
-                elif not raw_phuong and m_xa and geo.resolve_tinh(raw_tinh) == m_tinh:
-                    auto_xa = m_xa
-
         if geo and raw_tinh:
             tinh_official = geo.resolve_tinh(raw_tinh)
             if not tinh_official:
@@ -455,19 +436,13 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                         f"Row {row_num} ({label}): Phường/Xã '{raw_phuong}' không tìm thấy "
                         f"trong '{tinh_official}'."
                     )
-            elif auto_xa:
-                phuong_xa_official = auto_xa
         else:
             tinh_official      = raw_tinh or ""
             mien               = raw_mien or ""
             phuong_xa_official = raw_phuong
 
-        # Tinh / Phuong xa are NOT required any more. Empty + no mapping:
-        #   column present in file -> clear the field (None)
-        #   column absent from file -> leave the existing value untouched (_CLEAR)
-        tinh_out = tinh_official       or (None if tinh_col_present else _CLEAR)
-        xa_out   = phuong_xa_official  or (None if xa_col_present   else _CLEAR)
-        mien_out = mien                or (None if mien_col_present else _CLEAR)
+        if not tinh_official:
+            row_errors.append(f"Row {row_num} ({label}): Trường 'Tỉnh' bị để trống.")
 
         # ── Lat / Long (required, must be numeric) ───────────────────────────
         raw_lat  = _float(row, "Lat", "LAT", "lat", "Latitude")
@@ -536,7 +511,7 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
                                  "Site Name (cũ)", "Site Name Old", "site_name_old")
 
         rec: Dict[str, Any] = {
-            "mien": mien_out, "tinh": tinh_out, "phuong_xa": xa_out,
+            "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
             "site_name_cu": file_site_name_old, "site_name": site_name,
             "site_vip":    _v_aware(row, excel_cols, "Site VIP", "site_vip"),
             "lat": lat, "long": long,
