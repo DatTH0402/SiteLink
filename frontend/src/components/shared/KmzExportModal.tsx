@@ -31,7 +31,7 @@ export default function KmzExportModal({
   const [colorCol,  setColorCol]  = useState('')
   const [iconCol,   setIconCol]   = useState(NO_ICON)
   const [colorMode, setColorMode] = useState('auto')
-  const [opacity,   setOpacity]   = useState('50')
+  const [opacity,   setOpacity]   = useState('35')
 
   useEffect(() => {
     if (!open || meta) return

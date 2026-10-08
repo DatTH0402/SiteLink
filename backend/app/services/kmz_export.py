@@ -272,6 +272,17 @@ def _sort_key_val(x):
     return (0, f, "") if f is not None else (1, 0.0, str(x))
 
 
+_INT_LIKE = re.compile(r"^-?\d+(\.0+)?$")
+
+
+def _color_key(v) -> str:
+    """Grouping/colour key: '1650', '1650.0' and ' 1650 ' are the same value."""
+    s = _norm(v)
+    if s and _INT_LIKE.match(s):
+        return str(int(float(s)))
+    return s
+
+
 # -----------------------------------------------------------------------------
 # 6. Layer configuration + UI option lists (same wording as the Tkinter tool)
 # -----------------------------------------------------------------------------
@@ -302,6 +313,11 @@ OPACITY_MAP = {"50": ("7F", "1"), "35": ("59", "1"), "70": ("B3", "1"), "outline
 
 NAMED_ID_KEYS = ('pci', 'rsi', 'psc', 'tac', 'lac', 'rac', 'rnc', 'bsic', 'bcch',
                  'scrambling', 'root_sequence')
+
+# Frequency columns: in "Auto" mode they ALWAYS use the per-technology spectrum
+# palette (3G reds/oranges, 4G blues/greens, 5G purples/pinks), however many
+# distinct values there are (beyond 8 the palette cycles with darker shades).
+FREQ_COLS = ('uarfcn', 'earfcn', 'gscn', 'arfcn', 'ssb_arfcn', 'center_arfcn')
 
 IBS_RADIUS_TIERS = {'3g': (12.0, 24.0), '4g': (28.0, 44.0), '5g': (48.0, 66.0)}
 
@@ -405,7 +421,7 @@ def layer_meta(layer_key: str, columns) -> Dict[str, Any]:
         "default_color_mode": "auto",
         "has_opacity": cfg["has_opacity"],
         "opacities": OPACITIES if cfg["has_opacity"] else [],
-        "default_opacity": "50",
+        "default_opacity": "35",
         "note": cfg["note"],
     }
 
@@ -439,7 +455,7 @@ def normalize_options(layer_key: str, options: Optional[Dict[str, Any]], valid_a
 
     opacity = o.get("opacity")
     if opacity not in OPACITY_MAP:
-        opacity = "50"
+        opacity = "35"
 
     date = str(o.get("date") or "")
     if not re.fullmatch(r"\d{8}", date):
@@ -534,7 +550,7 @@ def build_kmz(layer_key: str, rows: list, columns, options: Optional[Dict[str, A
             if f is not None:
                 freqs.add(f)
         cv = getattr(r, color_col, None)
-        cs = _norm(cv)
+        cs = _color_key(cv)
         if cs != "":
             if is_heatmap:
                 n = _to_num(cv)
@@ -603,7 +619,7 @@ def build_kmz(layer_key: str, rows: list, columns, options: Optional[Dict[str, A
                     icon_tag = f"ic{icon_index[iv]}"
 
             val = getattr(r, color_col, None)
-            vs = _norm(val)
+            vs = _color_key(val)
             key = vs.lower()
             if key in NAMED_COLOR_MAP:
                 style_id = site_style(f"sn_{key}_{icon_tag}", NAMED_COLOR_MAP[key], cur_icon_url)
@@ -644,7 +660,8 @@ def build_kmz(layer_key: str, rows: list, columns, options: Optional[Dict[str, A
 
         col_lower = color_col.lower()
         is_named_id = any(k in col_lower for k in NAMED_ID_KEYS)
-        use_1024 = force_1024 or is_named_id or (len(raw_unique) > 8)
+        is_freq_col = col_lower in FREQ_COLS
+        use_1024 = force_1024 or is_named_id or (not is_freq_col and len(raw_unique) > 8)
 
         records = []
         for idx, (r, lat, lon) in enumerate(points, start=2):
@@ -673,10 +690,10 @@ def build_kmz(layer_key: str, rows: list, columns, options: Optional[Dict[str, A
                     style_id = cell_style(f"hm_{lkey}_{int(ratio * 100)}_{'rev' if is_rev else 'norm'}",
                                           get_heatmap_rgb(ratio, reverse=is_rev))
             elif use_1024:
-                rgb = get_color_from_1024(_norm(tv) or None)
+                rgb = get_color_from_1024(_color_key(tv) or None)
                 style_id = cell_style(f"p_{lkey}_{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}", rgb)
             else:
-                c_idx = discrete.get(_norm(tv) or "Unset", 0)
+                c_idx = discrete.get(_color_key(tv) or "Unset", 0)
                 style_id = cell_style(f"d_{lkey}_{c_idx}", get_high_contrast_rgb(lkey, c_idx))
 
             records.append({
