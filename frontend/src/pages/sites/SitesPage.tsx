@@ -15,11 +15,12 @@ import {
   getSites, getSitesPaged, getSiteIds, getSiteDistinct, deleteSite, dryRunSitesExcel, importSitesExcel,
   bulkDeleteSites, bulkUpdateSites,
 } from '@/api/sites'
-import { exportSites, exportSitesKmz, buildExportScope } from '@/api/export'
+import { exportSites, buildExportScope } from '@/api/export'
 import { getDropdown, getTinhList, getPhuongXaList } from '@/api/report'
 import type { Site, TinhItem } from '@/types'
 import DryRunModal from '@/components/shared/DryRunModal'
 import SiteBulkEditModal from '@/components/shared/SiteBulkEditModal'
+import KmzExportModal from '@/components/shared/KmzExportModal'
 
 const boolCell = (v: boolean) =>
   v ? <Tag color="green">x</Tag> : <Tag color="default">-</Tag>
@@ -29,7 +30,6 @@ export default function SitesPage() {
   const [sites,        setSites]        = useState<Site[]>([])
   const [loading,      setLoading]      = useState(false)
   const [exporting,    setExporting]    = useState(false)
-  const [exportingKmz,    setExportingKmz]    = useState(false)
   const [search,       setSearch]       = useState('')
   const [siteNameCu,   setSiteNameCu]   = useState('')
   const [mien,         setMien]         = useState<string[]>([])
@@ -40,6 +40,7 @@ export default function SitesPage() {
   const [dryRunOpen,   setDryRunOpen]   = useState(false)
   const [selectedIds,  setSelectedIds]  = useState<number[]>([])
   const [bulkEditOpen, setBulkEditOpen] = useState(false)
+  const [kmzOpen, setKmzOpen] = useState(false)
   const [phanLoaiOpts, setPhanLoaiOpts] = useState<string[]>([])
   const [tinhList,     setTinhList]     = useState<TinhItem[]>([])
 
@@ -165,30 +166,6 @@ export default function SitesPage() {
   }
 
 
-  const handleKmzExport = async () => {
-    setExportingKmz(true)
-    try {
-      const res = await exportSitesKmz(
-        {
-          search:       search || undefined,
-          site_name_cu: siteNameCu || undefined,
-          mien:         mien.length ? mien : undefined,
-          tinh:         tinh.length ? tinh : undefined,
-          phuong_xa:    phuongXa.length ? phuongXa : undefined,
-        },
-        buildExportScope(sq, selectedIds),
-      )
-      const detail = res.rows != null && res.valid != null
-        ? ` (${res.valid.toLocaleString('vi-VN')}/${res.rows.toLocaleString('vi-VN')} site có tọa độ)`
-        : ''
-      message.success(`Xuất KMZ thành công${detail}`)
-    } catch (e: any) {
-      message.error(e?.message || 'Xuất KMZ thất bại')
-    } finally {
-      setExportingKmz(false)
-    }
-  }
-
   const clearFilters = () => {
     clearColumnFilters()
     setSearch('')
@@ -276,8 +253,7 @@ export default function SitesPage() {
                     <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} site đã chọn ra KMZ (Google Earth)` : 'Xuất các site đang lọc (gồm cả bộ lọc cột) ra KMZ (Google Earth)'}>
             <Button
               icon={<DownloadOutlined />}
-              loading={exportingKmz}
-              onClick={handleKmzExport}
+              onClick={() => setKmzOpen(true)}
               style={{ borderColor: '#722ed1', color: '#722ed1' }}
             >
               Xuất KMZ{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
@@ -419,6 +395,21 @@ export default function SitesPage() {
         scroll={{ x: scrollX, y: 600 }}
         bordered
         pagination={pagination}
+      />
+
+      <KmzExportModal
+        open={kmzOpen}
+        onClose={() => setKmzOpen(false)}
+        layer="sites"
+        filters={{
+          search:       search || undefined,
+          site_name_cu: siteNameCu || undefined,
+          mien:         mien.length ? mien : undefined,
+          tinh:         tinh.length ? tinh : undefined,
+          phuong_xa:    phuongXa.length ? phuongXa : undefined,
+        }}
+        scope={buildExportScope(sq, selectedIds)}
+        selectedCount={selectedIds.length}
       />
 
       <SiteBulkEditModal

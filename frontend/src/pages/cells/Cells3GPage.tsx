@@ -20,6 +20,7 @@ import { getSites } from '@/api/sites'
 import { getAntennaList, getTinhList, getPhuongXaList } from '@/api/report'
 import DryRunModal from '@/components/shared/DryRunModal'
 import CellBulkEditModal from '@/components/shared/CellBulkEditModal'
+import KmzExportModal from '@/components/shared/KmzExportModal'
 import { latValidator, lonValidator, azimuthValidator, positiveNumberValidator } from '@/utils/validators'
 import { useCellSync } from '@/hooks/useCellSync'
 
@@ -47,6 +48,7 @@ export default function Cells3GPage() {
   const [dryRunOpen,    setDryRunOpen]    = useState(false)
   const [selectedIds,   setSelectedIds]   = useState<number[]>([])
   const [bulkEditOpen,  setBulkEditOpen]  = useState(false)
+  const [kmzOpen, setKmzOpen] = useState(false)
   const [form] = Form.useForm()
 
   const tinhOptions   = tinhList.length > 0
@@ -282,6 +284,12 @@ export default function Cells3GPage() {
             <Button icon={<DownloadOutlined />} loading={exporting} onClick={handleExport}
                     style={{ borderColor: '#52c41a', color: '#52c41a' }}>
               Xuất Excel{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
+            </Button>
+          </Tooltip>
+          <Tooltip title={selectedIds.length > 0 ? `Xuất ${selectedIds.length} dòng đã chọn ra KMZ (Google Earth)` : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra KMZ (Google Earth)'}>
+            <Button icon={<DownloadOutlined />} onClick={() => setKmzOpen(true)}
+                    style={{ borderColor: '#722ed1', color: '#722ed1' }}>
+              Xuất KMZ{selectedIds.length > 0 ? ` (${selectedIds.length} đã chọn)` : ''}
             </Button>
           </Tooltip>
           <Button icon={<UploadOutlined />} onClick={() => setDryRunOpen(true)}>Import Excel</Button>
@@ -542,6 +550,22 @@ export default function Cells3GPage() {
           </Row>
         </Form>
       </Modal>
+
+      <KmzExportModal
+        open={kmzOpen}
+        onClose={() => setKmzOpen(false)}
+        layer="cells-3g"
+        filters={{
+          search:        search || undefined,
+          cell_name_old: cellNameOld || undefined,
+          mien:          mien.length ? mien : undefined,
+          tinh:          tinh.length ? tinh : undefined,
+          phuong_xa:     phuongXa.length ? phuongXa : undefined,
+          vendor:        vendor.length ? vendor : undefined,
+        }}
+        scope={buildExportScope(sq, selectedIds)}
+        selectedCount={selectedIds.length}
+      />
 
       <CellBulkEditModal
         open={bulkEditOpen}

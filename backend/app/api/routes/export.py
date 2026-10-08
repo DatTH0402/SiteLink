@@ -13,8 +13,6 @@ Every Sites / Cells endpoint comes in two flavours:
 from __future__ import annotations
 
 import io
-import xml.sax.saxutils as _saxutils
-import zipfile as _zipfile
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional
 
@@ -36,6 +34,7 @@ from app.models.antenna import Antenna
 from app.models.user import User
 from app.core.security import decode_access_token
 from app.services.list_query import build_export_query
+from app.services import kmz_export
 
 router = APIRouter()
 
@@ -47,7 +46,7 @@ THIN        = Side(style="thin", color="D0D0D0")
 BORDER      = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 ALT_FILL    = PatternFill("solid", fgColor="EBF3FB")
 
-_EXPOSE = "X-Row-Count, X-Site-Count, X-Valid-Coords"
+_EXPOSE = "X-Row-Count, X-Site-Count, X-Valid-Coords, Content-Disposition"
 
 
 # ── auth: Bearer header OR ?token= ────────────────────────────────────────────
@@ -237,74 +236,41 @@ def _excel(key, db, params, filters, ids, sort_by, sort_dir):
     return _stream(wb, spec["filename"], len(rows))
 
 
-# ── KMZ (KML inside a ZIP — readable by Google Earth) ─────────────────────────
-def _build_kml(sites: list) -> str:
-    def esc(v) -> str:
-        if v is None:
-            return ""
-        return _saxutils.escape(str(v))
-
-    placemarks = []
-    for s in sites:
-        if s.lat is None or s.long is None:
-            continue
-        description = (
-            f"<b>Tỉnh/TP:</b> {esc(s.tinh)}<br/>"
-            f"<b>Phường/Xã:</b> {esc(s.phuong_xa)}<br/>"
-            f"<b>Site name:</b> {esc(s.site_name)}<br/>"
-            f"<b>Site name (cũ):</b> {esc(s.site_name_cu)}<br/>"
-        )
-        placemarks.append(f"""  <Placemark>
-    <name>{esc(s.site_name)}</name>
-    <description><![CDATA[{description}]]></description>
-    <Point>
-      <coordinates>{s.long},{s.lat},0</coordinates>
-    </Point>
-  </Placemark>""")
-
-    kml_body = "\n".join(placemarks)
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
-<kml xmlns="http://www.opengis.net/kml/2.2">
-  <Document>
-    <name>SiteLink – Site Locations</name>
-    <description>Exported from SiteLink</description>
-    <Style id="siteIcon">
-      <IconStyle>
-        <color>ff0000ff</color>
-        <scale>1.0</scale>
-        <Icon>
-          <href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href>
-        </Icon>
-      </IconStyle>
-    </Style>
-{kml_body}
-  </Document>
-</kml>"""
+# ── KMZ (Google Earth) – engine lives in app/services/kmz_export.py ──────────
+_KMZ_MEDIA = "application/vnd.google-earth.kmz"
 
 
-def _build_kmz(kml_content: str) -> bytes:
-    buf = io.BytesIO()
-    with _zipfile.ZipFile(buf, mode="w", compression=_zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("doc.kml", kml_content.encode("utf-8"))
-    buf.seek(0)
-    return buf.read()
+def _kmz_layer(layer: str) -> str:
+    key = (layer or "").strip().lower().replace("-", "_")
+    if key not in _SPECS:
+        raise HTTPException(status_code=404, detail=f"Unknown KMZ layer '{layer}'")
+    return key
 
 
-def _kmz(db, params, filters, ids, sort_by, sort_dir):
-    sites = _rows_for("sites", db, params, filters, ids, sort_by, sort_dir)
-    valid_count = sum(1 for s in sites if s.lat is not None and s.long is not None)
-    kmz_bytes = _build_kmz(_build_kml(sites))
+def _kmz_columns(key: str):
+    spec = _SPECS[key]
+    return kmz_export.build_columns(spec["model"], spec["cols"])
+
+
+def _kmz_response(key, db, params, filters, ids, sort_by, sort_dir, options):
+    rows = _rows_for(key, db, params, filters, ids, sort_by, sort_dir)
+    result = kmz_export.build_kmz(key, rows, _kmz_columns(key), options or {})
     return StreamingResponse(
-        iter([kmz_bytes]),
-        media_type="application/vnd.google-earth.kmz",
+        iter([result.data]),
+        media_type=_KMZ_MEDIA,
         headers={
-            "Content-Disposition": 'attachment; filename="Sites_Export.kmz"',
-            "X-Site-Count": str(len(sites)),
-            "X-Row-Count": str(len(sites)),
-            "X-Valid-Coords": str(valid_count),
+            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "X-Row-Count": str(result.total),
+            "X-Site-Count": str(result.total),
+            "X-Valid-Coords": str(result.valid),
             "Access-Control-Expose-Headers": _EXPOSE,
         },
     )
+
+
+def _kmz(db, params, filters, ids, sort_by, sort_dir):
+    """Legacy /export/sites-kmz (GET/POST) -> sites with default styling options."""
+    return _kmz_response("sites", db, params, filters, ids, sort_by, sort_dir, {})
 
 
 # ── route registration (GET + POST for every sites / cells export) ────────────
@@ -347,6 +313,30 @@ _add_routes("/cells-3g",  "cells_3g",  partial(_excel, "cells_3g"))
 _add_routes("/cells-4g",  "cells_4g",  partial(_excel, "cells_4g"))
 _add_routes("/cells-5g",  "cells_5g",  partial(_excel, "cells_5g"))
 _add_routes("/sites-kmz", "sites_kmz", _kmz)
+
+
+# ── KMZ with visualisation options (sites + cells 3G/4G/5G) ───────────────────
+class KmzRequest(ExportRequest):
+    options: Dict[str, Any] = Field(default_factory=dict)   # folder, color_col, icon_col, color_mode, opacity, date
+
+
+@router.get("/kmz/meta/{layer}")
+def kmz_meta(layer: str, _: User = Depends(get_optional_user)):
+    """Columns / defaults / option labels for the KMZ dialog of a layer."""
+    key = _kmz_layer(layer)
+    return kmz_export.layer_meta(key, _kmz_columns(key))
+
+
+@router.post("/kmz/{layer}")
+def kmz_export_post(
+    layer: str,
+    body: KmzRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_optional_user),
+):
+    key = _kmz_layer(layer)
+    return _kmz_response(key, db, body.params, body.filters, body.ids,
+                         body.sort_by, body.sort_dir, body.options)
 
 
 # ── antennas (unchanged) ──────────────────────────────────────────────────────

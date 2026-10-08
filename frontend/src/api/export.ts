@@ -175,3 +175,87 @@ function buildQS(params: Record<string, FilterValue>): string {
 export function exportAntennas(filters: { search?: string; band?: string }) {
   return getBlob(`/api/v1/export/antennas${buildQS(filters)}`, 'Antennas_Export.xlsx')
 }
+
+// ── KMZ (Google Earth) with visualisation options ────────────────────────────
+export type KmzLayer = 'sites' | 'cells-3g' | 'cells-4g' | 'cells-5g'
+export type KmzFilters = Record<string, string | string[] | undefined | null>
+
+export interface KmzChoice { value: string; label: string }
+
+export interface KmzMeta {
+  layer: string
+  title: string
+  file_label: string
+  folders: KmzChoice[]
+  default_folder: string
+  color_columns: KmzChoice[]
+  default_color: string
+  color_label: string
+  has_icon: boolean
+  icon_columns: KmzChoice[]
+  default_icon: string | null
+  icon_label: string
+  color_modes: KmzChoice[]
+  default_color_mode: string
+  has_opacity: boolean
+  opacities: KmzChoice[]
+  default_opacity: string
+  note: string
+}
+
+export async function getKmzMeta(layer: KmzLayer): Promise<KmzMeta> {
+  const res = await fetch(`/api/v1/export/kmz/meta/${layer}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) throw new Error(`Không tải được cấu hình KMZ (${res.status})`)
+  return res.json()
+}
+
+/**
+ * Scope rule is identical to the Excel export: selected ids win, otherwise
+ * top-bar filters + column filters (+ sort). `options` = styling choices.
+ */
+export async function exportKmz(
+  layer: KmzLayer,
+  filters: KmzFilters,
+  scope: ExportScope | undefined,
+  options: Record<string, unknown>,
+): Promise<ExportResult & { filename: string }> {
+  const hasIds = Boolean(scope?.ids && scope.ids.length > 0)
+  const body = {
+    params:   hasIds ? {} : cleanParams(filters),
+    ids:      hasIds ? scope!.ids : undefined,
+    filters:  hasIds ? undefined : scope?.filters,
+    sort_by:  scope?.sort_by,
+    sort_dir: scope?.sort_dir ?? 'asc',
+    options,
+  }
+  const res = await fetch(`/api/v1/export/kmz/${layer}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Export failed (${res.status}): ${text}`)
+  }
+  const cd = res.headers.get('Content-Disposition') || ''
+  const m = /filename="?([^";]+)"?/i.exec(cd)
+  const filename = m ? m[1] : `KMZ-${layer}.kmz`
+  const blob = await res.blob()
+  const link = document.createElement('a')
+  link.href     = URL.createObjectURL(blob)
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(link.href)
+  return {
+    rows:  headerNum(res, 'X-Row-Count'),
+    valid: headerNum(res, 'X-Valid-Coords'),
+    filename,
+  }
+}
