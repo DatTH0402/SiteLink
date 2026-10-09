@@ -31,7 +31,7 @@ from sqlalchemy.engine import Connection
 log = logging.getLogger(__name__)
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
-DBM_DECIMALS     = 1            # 33.0 / 34.7 / 55.1
+DBM_DECIMALS     = 2            # 33.0 / 34.7 / 55.1
 DBM_MIN, DBM_MAX = -30.0, 100.0  # sanity window for every dBm result (outside -> empty)
 BW_4G_WITH_UNIT  = True         # 4G bandwidth as "20MHz" (False -> "20")
 
