@@ -1,0 +1,475 @@
+import traceback
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Response
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.models.site import Site
+from app.services.list_query import apply_column_filters, apply_sort, register_listing_routes
+from app.models.cell_3g import Cell3G
+from app.models.cell_4g import Cell4G
+from app.models.cell_5g import Cell5G
+from app.schemas.site import SiteCreate, SiteUpdate, SiteRead
+from app.utils.deps import get_current_user
+from app.utils.audit import log_action
+from app.models.user import User
+from app.services.import_excel import parse_site_excel, _CLEAR, _SITE_BOOL_FIELDS
+from app.services.revision import record_site_revision, _site_snapshot
+
+router = APIRouter()
+register_listing_routes(router, Site, "site")  # GET /ids, GET /distinct/{column}
+
+_SITE_BOOL_FIELD_SET = frozenset({
+    'tram_2g', 'tram_3g', 'tram_4g', 'tram_5g',
+    'repeater', 'booster', 'node_truyen_dan_only', 'tram_phu_song_tsca',
+})
+
+
+def _to_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        if value.lower() in ('true', 'yes', '1', 'on'):
+            return True
+        if value.lower() in ('false', 'no', '0', 'off', ''):
+            return False
+    if value is None:
+        return False
+    return bool(value)
+
+
+def _safe_bool_db(v) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v != 0
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(v)
+
+
+def _sanitize_site(obj: Site) -> None:
+    for field in _SITE_BOOL_FIELD_SET:
+        raw = getattr(obj, field, None)
+        setattr(obj, field, _safe_bool_db(raw))
+
+
+def _sanitize_changes(changes: dict) -> dict:
+    out = {}
+    for k, v in changes.items():
+        if k in _SITE_BOOL_FIELD_SET:
+            out[k] = _to_bool(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _site_or_404(db: Session, site_id: int) -> Site:
+    s = db.query(Site).filter(Site.id == site_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return s
+
+
+def _apply_site_changes(existing: Site, changes: dict,
+                         skip_keys: set = None) -> bool:
+    if skip_keys is None:
+        skip_keys = set()
+    any_changed = False
+    for k, v in changes.items():
+        if k in skip_keys or k.startswith("_"):
+            continue
+        if v is _CLEAR:
+            continue
+        if not hasattr(existing, k):
+            continue
+        old_val = getattr(existing, k)
+        is_bool = k in _SITE_BOOL_FIELD_SET
+        if is_bool:
+            old_norm = _safe_bool_db(old_val)
+            new_norm = _safe_bool_db(v)
+        else:
+            old_norm = None if (old_val is None or old_val == "") else old_val
+            new_norm = None if (v is None or v == "") else v
+        if old_norm != new_norm:
+            setattr(existing, k, v)
+            any_changed = True
+    return any_changed
+
+
+# ── Static routes FIRST ──────────────────────────────────────────────────────
+
+@router.get("/count")
+def count_sites(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return {"count": db.query(Site).count()}
+
+
+@router.post("/import-excel/dry-run")
+async def dry_run_sites_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    content = await file.read()
+    try:
+        result = parse_site_excel(content, db=db, dry_run=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
+
+    to_create = result["to_create"]
+    to_update = result["to_update"]
+    errors    = result["errors"]
+
+    has_fatal = len(errors) > 0 and len(to_create) + len(to_update) == 0
+    return {
+        "to_create":        len(to_create),
+        "to_update":        len(to_update),
+        "errors":           len(errors),
+        "error_details":    errors[:50],
+        "preview_create":   [r["site_name"] for r in to_create[:5]],
+        "preview_update":   [u["anchor"]    for u in to_update[:5]],
+        "dry_run":          True,
+        "has_fatal_errors": has_fatal,
+    }
+
+
+@router.post("/import-excel")
+async def import_sites_excel(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    content = await file.read()
+    try:
+        result = parse_site_excel(content, db=db, dry_run=False)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
+
+    to_create = result["to_create"]
+    to_update = result["to_update"]
+    errors    = list(result["errors"])
+    created, updated, skipped = 0, 0, 0
+
+    # Block import if there are fatal validation errors and nothing valid to import
+    if errors and len(to_create) == 0 and len(to_update) == 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "File Excel có lỗi dữ liệu nghiêm trọng, không thể import. "
+                           "Vui lòng sửa các lỗi sau và thử lại.",
+                "errors": errors[:50],
+            }
+        )
+
+    for rec in to_create:
+        try:
+            clean = {k: v for k, v in rec.items()
+                     if v is not _CLEAR and not k.startswith("_")}
+            site = Site(**clean, created_by=current_user.id)
+            _sanitize_site(site)
+            db.add(site)
+            db.flush()
+            record_site_revision(
+                db, site, old_snapshot=None,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="excel",
+            )
+            db.commit()
+            log_action(db, current_user, "CREATE", "sites", site.id, new_value=clean)
+            created += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Create '{rec.get('site_name')}': {e}")
+
+    for upd in to_update:
+        try:
+            existing = db.query(Site).filter(Site.id == upd["existing_id"]).first()
+            if not existing:
+                errors.append(f"Site '{upd['anchor']}' disappeared during import")
+                continue
+
+            old_snap  = _site_snapshot(existing)
+            old_name  = existing.site_name
+            changes   = upd["changes"]
+
+            new_site_name = changes.get("site_name")
+            site_name_old_ref = None
+            if new_site_name and new_site_name is not _CLEAR and new_site_name != old_name:
+                site_name_old_ref = old_name
+
+            _apply_site_changes(existing, changes,
+                                 skip_keys={"site_id", "created_by", "created_at"})
+            _sanitize_site(existing)
+            db.flush()
+
+            rev = record_site_revision(
+                db, existing, old_snapshot=old_snap,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="excel",
+                site_name_old_ref=site_name_old_ref,
+            )
+            db.commit()
+
+            if rev is None:
+                skipped += 1
+            else:
+                log_action(db, current_user, "UPDATE", "sites",
+                           existing.id, old_value=old_snap,
+                           new_value={k: v for k, v in changes.items()
+                                      if v is not _CLEAR})
+                updated += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Update '{upd['anchor']}': {e}")
+
+    return {"created": created, "updated": updated,
+            "skipped_no_change": skipped, "errors": errors}
+
+
+@router.get("/", response_model=List[SiteRead])
+def list_sites(
+    response: Response,
+    skip: int = 0,
+    limit: int = 500,
+    search:       Optional[str]       = Query(None),
+    site_name_cu: Optional[str]       = Query(None),
+    mien:         Optional[List[str]] = Query(None),
+    tinh:         Optional[List[str]] = Query(None),
+    phuong_xa:    Optional[List[str]] = Query(None),
+    tram_3g:      Optional[bool]      = Query(None),
+    tram_4g:      Optional[bool]      = Query(None),
+    tram_5g:      Optional[bool]      = Query(None),
+    sort_by:  Optional[str] = Query(None),
+    sort_dir: str           = Query("asc"),
+    filters:  Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    q = db.query(Site)
+    if search:       q = q.filter(Site.site_name.ilike(f"%{search}%"))
+    if site_name_cu: q = q.filter(Site.site_name_cu.ilike(f"%{site_name_cu}%"))
+    if mien:         q = q.filter(Site.mien.in_(mien))
+    if tinh:         q = q.filter(Site.tinh.in_(tinh))
+    if phuong_xa:    q = q.filter(Site.phuong_xa.in_(phuong_xa))
+    if tram_3g is not None: q = q.filter(Site.tram_3g == tram_3g)
+    if tram_4g is not None: q = q.filter(Site.tram_4g == tram_4g)
+    if tram_5g is not None: q = q.filter(Site.tram_5g == tram_5g)
+    q = apply_column_filters(q, Site, filters)
+    response.headers["X-Total-Count"] = str(q.count())
+    q = apply_sort(q, Site, sort_by, sort_dir)
+    return q.offset(skip).limit(limit).all()
+
+
+@router.post("/bulk-delete")
+def bulk_delete_sites(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ids = payload.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="No IDs provided")
+
+    errors = []
+    deleted = 0
+    for site_id in ids:
+        site = db.query(Site).filter(Site.id == site_id).first()
+        if not site:
+            errors.append(f"Site id={site_id} not found")
+            continue
+        cell_count = (
+            db.query(Cell3G).filter(Cell3G.site_id == site_id).count()
+            + db.query(Cell4G).filter(Cell4G.site_id == site_id).count()
+            + db.query(Cell5G).filter(Cell5G.site_id == site_id).count()
+        )
+        if cell_count > 0:
+            errors.append(f"Site '{site.site_name}' has {cell_count} cell(s) – skipped")
+            continue
+        try:
+            db.delete(site)
+            db.commit()
+            log_action(db, current_user, "DELETE", "sites", site_id)
+            deleted += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"Site id={site_id}: {e}")
+
+    return {"deleted": deleted, "errors": errors}
+
+
+@router.post("/bulk-update")
+def bulk_update_sites(
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ids     = payload.get("ids", [])
+    changes = payload.get("changes", {})
+
+    if not ids:
+        raise HTTPException(status_code=400, detail="No IDs provided")
+    if not changes:
+        raise HTTPException(status_code=400, detail="No changes provided")
+
+    PROTECTED = {"id", "site_name", "created_by", "created_at", "updated_at"}
+    safe_changes = {k: v for k, v in changes.items() if k not in PROTECTED}
+
+    if not safe_changes:
+        raise HTTPException(
+            status_code=400,
+            detail="No updatable fields provided after removing protected fields"
+        )
+
+    valid_columns = {c.name for c in Site.__table__.columns}
+    unknown = [k for k in safe_changes if k not in valid_columns]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown field(s): {unknown}")
+
+    safe_changes = _sanitize_changes(safe_changes)
+
+    errors:  list = []
+    updated: int  = 0
+
+    for site_id in ids:
+        try:
+            db.expire_all()
+            site = db.query(Site).filter(Site.id == site_id).first()
+            if not site:
+                errors.append(f"Site id={site_id} not found")
+                continue
+
+            old_snap = _site_snapshot(site)
+
+            for k, v in safe_changes.items():
+                setattr(site, k, v)
+
+            _sanitize_site(site)
+            db.flush()
+
+            rev = record_site_revision(
+                db, site,
+                old_snapshot=old_snap,
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="form",
+                change_note="Bulk update",
+            )
+
+            db.commit()
+
+            if rev is not None:
+                try:
+                    log_action(
+                        db, current_user, "UPDATE", "sites", site_id,
+                        old_value=old_snap,
+                        new_value=safe_changes,
+                    )
+                except Exception as log_err:
+                    print(f"[WARN] log_action failed for site {site_id}: {log_err}")
+                updated += 1
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[ERROR] bulk_update_sites – site_id={site_id}: {e}\n{tb}")
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            errors.append(f"Site id={site_id}: {str(e)}")
+
+    return {"updated": updated, "errors": errors}
+
+
+@router.post("/", response_model=SiteRead, status_code=201)
+def create_site(
+    payload: SiteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = db.query(Site).filter(Site.site_name == payload.site_name).first()
+    if existing:
+        raise HTTPException(status_code=400,
+                            detail=f"Site '{payload.site_name}' already exists")
+    site = Site(**payload.model_dump(), created_by=current_user.id)
+    db.add(site)
+    db.flush()
+    record_site_revision(
+        db, site, old_snapshot=None,
+        changed_by_id=current_user.id,
+        changed_by_name=current_user.full_name or current_user.username,
+        change_source="form",
+    )
+    db.commit()
+    db.refresh(site)
+    log_action(db, current_user, "CREATE", "sites", site.id,
+               new_value=payload.model_dump())
+    return site
+
+
+@router.get("/{site_id}", response_model=SiteRead)
+def get_site(site_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return _site_or_404(db, site_id)
+
+
+@router.put("/{site_id}", response_model=SiteRead)
+def update_site(
+    site_id: int,
+    payload: SiteUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    site = _site_or_404(db, site_id)
+    old_snap  = _site_snapshot(site)
+    old_name  = site.site_name
+    data      = payload.model_dump(exclude_unset=True)
+
+    new_site_name = data.get("site_name")
+    site_name_old_ref = None
+    if new_site_name and new_site_name != old_name:
+        site_name_old_ref = old_name
+
+    for k, v in data.items():
+        setattr(site, k, v)
+    _sanitize_site(site)
+    db.flush()
+    rev = record_site_revision(
+        db, site, old_snapshot=old_snap,
+        changed_by_id=current_user.id,
+        changed_by_name=current_user.full_name or current_user.username,
+        change_source="form",
+        site_name_old_ref=site_name_old_ref,
+    )
+    db.commit()
+    db.refresh(site)
+    if rev is not None:
+        log_action(db, current_user, "UPDATE", "sites", site.id,
+                   old_value=old_snap, new_value=data)
+    return site
+
+
+@router.delete("/{site_id}")
+def delete_site(
+    site_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    site = _site_or_404(db, site_id)
+    cell_count = (
+        db.query(Cell3G).filter(Cell3G.site_id == site_id).count()
+        + db.query(Cell4G).filter(Cell4G.site_id == site_id).count()
+        + db.query(Cell5G).filter(Cell5G.site_id == site_id).count()
+    )
+    if cell_count > 0:
+        raise HTTPException(status_code=400,
+            detail=f"Cannot delete. This site contains {cell_count} cell(s). "
+                   f"Please delete the cells first.")
+    db.delete(site)
+    db.commit()
+    log_action(db, current_user, "DELETE", "sites", site_id)
+    return {"message": "Deleted"}

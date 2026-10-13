@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import threading
+import time
 import logging
 import math
 import re
@@ -650,36 +653,54 @@ def fetch_csv(url: str, label: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def load_vendor_data(tech: str, vendors: Optional[Set[str]] = None) -> pd.DataFrame:
-    """Download each vendor CSV once, transform it, return all cells (deduplicated by cell_name)."""
-    tech_l = tech.lower()
-    eff = ({v.lower() for v in vendors if v} if vendors else set()) or ALL_VENDORS
+_VENDOR_CACHE_TTL = int(os.environ.get("CELL_SYNC_CACHE_TTL", "300"))   # seconds
+_vendor_cache: Dict[tuple, tuple] = {}              # (tech, vendor) -> (timestamp, DataFrame)
+_vendor_locks: Dict[tuple, threading.Lock] = {}
+_vendor_guard = threading.Lock()
 
-    frames: List[pd.DataFrame] = []
-    for vendor in sorted(eff):
-        key = VENDOR_KEYS.get(tech_l, {}).get(vendor)
+
+def _vendor_frame(tech_l: str, vendor: str) -> Optional[pd.DataFrame]:
+    """Download + transform ONE vendor CSV. Cached for a few minutes and concurrent
+    callers share a single download (40 users must not hammer the OSS server)."""
+    key = (tech_l, vendor)
+    with _vendor_guard:
+        lock = _vendor_locks.setdefault(key, threading.Lock())
+    with lock:
+        hit = _vendor_cache.get(key)
+        if hit and _VENDOR_CACHE_TTL > 0 and time.time() - hit[0] < _VENDOR_CACHE_TTL:
+            return hit[1]
+        src_key = VENDOR_KEYS.get(tech_l, {}).get(vendor)
         builder = _BUILDERS.get((tech_l, vendor))
-        if not key or not builder:
-            continue
-        raw = fetch_csv(URLS[key], f"{vendor.title()} {tech.upper()}")
+        if not src_key or not builder:
+            return None
+        raw = fetch_csv(URLS[src_key], f"{vendor.title()} {tech_l.upper()}")
         if raw is None or raw.empty:
-            log.warning("Empty/failed CSV for %s/%s", vendor, tech)
-            continue
+            log.warning("Empty/failed CSV for %s/%s", vendor, tech_l)
+            return None
         try:
             built = builder(raw)
         except Exception as exc:
-            log.error("Builder %s/%s failed: %s", vendor, tech, exc, exc_info=True)
-            continue
+            log.error("Builder %s/%s failed: %s", vendor, tech_l, exc, exc_info=True)
+            return None
         built = built[built["cell_name"].notna()]
-        frames.append(built)
-        log.info("Loaded %d valid rows from %s/%s", len(built), vendor, tech)
+        _vendor_cache[key] = (time.time(), built)
+        log.info("Loaded %d valid rows from %s/%s", len(built), vendor, tech_l)
+        return built
 
+
+def load_vendor_data(tech: str, vendors: Optional[Set[str]] = None) -> pd.DataFrame:
+    """Transformed cells of the requested vendors (deduplicated by cell_name)."""
+    tech_l = tech.lower()
+    eff = ({v.lower() for v in vendors if v} if vendors else set()) or ALL_VENDORS
+    frames: List[pd.DataFrame] = []
+    for vendor in sorted(eff):
+        frame = _vendor_frame(tech_l, vendor)
+        if frame is not None:
+            frames.append(frame)
     if not frames:
         log.error("No vendor data loaded for tech=%s", tech)
         return pd.DataFrame()
-
-    combined = pd.concat(frames, ignore_index=True)
-    combined = combined.drop_duplicates(subset=["cell_name"], keep="first")
+    combined = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["cell_name"], keep="first")
     log.info("load_vendor_data %s: %d unique cells", tech, len(combined))
     return combined
 

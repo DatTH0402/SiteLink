@@ -148,10 +148,10 @@ def bulk_update(
 
 
 @router.post("/import-excel/dry-run")
-async def dry_run_excel(
+def dry_run_excel(
     file: UploadFile = File(...), db: Session = Depends(get_db), _=Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try: result = parse_cell5g_excel(content, db=db, dry_run=True)
     except Exception as e: raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
     return {
@@ -167,11 +167,11 @@ async def dry_run_excel(
 
 
 @router.post("/import-excel")
-async def import_excel(
+def import_excel(
     file: UploadFile = File(...), db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try: result = parse_cell5g_excel(content, db=db, dry_run=False)
     except Exception as e: raise HTTPException(status_code=400, detail=f"Cannot read Excel: {e}")
     errors  = list(result["errors"])
@@ -179,7 +179,6 @@ async def import_excel(
 
     # Block import if there are fatal validation errors and nothing valid to import
     if errors and len(result["to_create"]) == 0 and len(result["to_update"]) == 0:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=422,
             detail={
@@ -221,9 +220,12 @@ async def import_excel(
             else: updated += 1
         except Exception as e:
             db.rollback(); errors.append(f"Update cell '{upd['anchor']}': {e}")
+    touched_names = [r.get("cell_name") for r in result["to_create"]] + [
+        (u.get("changes") or {}).get("cell_name") for u in result["to_update"]]
+    touched_names = [n for n in dict.fromkeys(touched_names) if isinstance(n, str) and n.strip()]
     return {"created": created, "updated": updated,
             "skipped_no_change": skipped, "sites_auto_created": sites_auto_created,
-            "errors": errors}
+            "errors": errors, "cell_names": touched_names}
 
 
 @router.get("/{cell_id}", response_model=Cell5GRead)

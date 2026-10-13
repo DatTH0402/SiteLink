@@ -221,12 +221,12 @@ def count_antennas(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.post("/import-excel/dry-run")
-async def dry_run_antenna_excel(
+def dry_run_antenna_excel(
     file: UploadFile = File(...),
     db:   Session    = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try:
         result = _parse_antenna_excel(content, db)
     except ValueError as exc:
@@ -249,12 +249,12 @@ async def dry_run_antenna_excel(
 
 
 @router.post("/import-excel")
-async def import_antenna_excel(
+def import_antenna_excel(
     file:         UploadFile = File(...),
     db:           Session    = Depends(get_db),
     current_user: User       = Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try:
         result = _parse_antenna_excel(content, db)
     except ValueError as exc:
@@ -321,7 +321,7 @@ async def import_antenna_excel(
 
 
 @router.post("/{antenna_id}/spec-file", response_model=AntennaRead)
-async def upload_spec_file(
+def upload_spec_file(
     antenna_id:   int,
     file:         UploadFile = File(...),
     db:           Session    = Depends(get_db),
@@ -333,7 +333,7 @@ async def upload_spec_file(
             status_code=400,
             detail=f"Only PDF files are allowed (got: {file.content_type})",
         )
-    content = await file.read()
+    content = file.file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,

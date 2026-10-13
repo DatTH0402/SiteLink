@@ -29,15 +29,22 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// The app is served under /sitelink/ (Vite base + BrowserRouter basename).
+const LOGIN_PATH = '/sitelink/login'
+
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    // Only auto-logout on 401 Unauthorized, not on other errors
-    if (err.response?.status === 401) {
+    const url: string = err?.config?.url ?? ''
+    const isAuthCall = url.includes('/auth/login') || url.includes('/auth/sso')
+    // Expired / invalid token -> back to the login page (but never for the login calls themselves)
+    if (err?.response?.status === 401 && !isAuthCall) {
       localStorage.removeItem('sl_token')
-      window.location.href = '/login'
+      localStorage.removeItem('sl_id_token')
+      if (!window.location.pathname.startsWith(LOGIN_PATH)) {
+        window.location.href = LOGIN_PATH
+      }
     }
-    // Always reject so callers can handle the error themselves
     return Promise.reject(err)
   },
 )

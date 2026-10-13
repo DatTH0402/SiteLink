@@ -109,12 +109,12 @@ def count_sites(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.post("/import-excel/dry-run")
-async def dry_run_sites_excel(
+def dry_run_sites_excel(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try:
         result = parse_site_excel(content, db=db, dry_run=True)
     except Exception as e:
@@ -138,12 +138,12 @@ async def dry_run_sites_excel(
 
 
 @router.post("/import-excel")
-async def import_sites_excel(
+def import_sites_excel(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    content = await file.read()
+    content = file.file.read()
     try:
         result = parse_site_excel(content, db=db, dry_run=False)
     except Exception as e:

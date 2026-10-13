@@ -217,7 +217,18 @@ def _rows_for(key, db, params, filters, ids, sort_by, sort_dir):
     return q.all()
 
 
-def _excel(key, db, params, filters, ids, sort_by, sort_dir):
+import threading as _threading
+
+_EXPORT_SLOTS = _threading.BoundedSemaphore(int(__import__("os").environ.get("EXPORT_MAX_CONCURRENT", "3")))
+
+
+def _excel(*args, **kwargs):
+    """Cap simultaneous big exports so a few huge files cannot exhaust RAM."""
+    with _EXPORT_SLOTS:
+        return _excel_impl(*args, **kwargs)
+
+
+def _excel_impl(key, db, params, filters, ids, sort_by, sort_dir):
     spec = _SPECS[key]
     rows = _rows_for(key, db, params, filters, ids, sort_by, sort_dir)
     cols = spec["cols"]
@@ -252,7 +263,12 @@ def _kmz_columns(key: str):
     return kmz_export.build_columns(spec["model"], spec["cols"])
 
 
-def _kmz_response(key, db, params, filters, ids, sort_by, sort_dir, options):
+def _kmz_response(*args, **kwargs):
+    with _EXPORT_SLOTS:
+        return _kmz_response_impl(*args, **kwargs)
+
+
+def _kmz_response_impl(key, db, params, filters, ids, sort_by, sort_dir, options):
     rows = _rows_for(key, db, params, filters, ids, sort_by, sort_dir)
     result = kmz_export.build_kmz(key, rows, _kmz_columns(key), options or {})
     return StreamingResponse(

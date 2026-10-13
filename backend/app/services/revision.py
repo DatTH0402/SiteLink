@@ -351,3 +351,14 @@ def record_cell5g_revision(
     )
     db.add(rev)
     return rev
+
+
+# --- chung_anten is editable on 5G cells but was missing from the snapshot, so a change
+# --- to that field alone produced no revision. Wrap the snapshot to include it.
+_orig_cell5g_snapshot = _cell5g_snapshot
+
+
+def _cell5g_snapshot(cell):  # noqa: F811
+    snap = _orig_cell5g_snapshot(cell)
+    snap["chung_anten"] = getattr(cell, "chung_anten", None)
+    return snap

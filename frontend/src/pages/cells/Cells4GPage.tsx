@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import SiteSelect from '@/components/shared/SiteSelect'
 import {
   Typography, Button, Space, Table, Input, Select,
@@ -69,14 +70,16 @@ export default function Cells4GPage() {
     }
   }, [tinh])
 
-  const sq = useServerQuery([search, cellNameOld, mien, tinh, phuongXa, vendor])
+  const dSearch      = useDebouncedValue(search, 400)
+  const dCellNameOld = useDebouncedValue(cellNameOld, 400)
+  const sq = useServerQuery([dSearch, dCellNameOld, mien, tinh, phuongXa, vendor])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const params: Record<string, unknown> = { ...sq.params }
-      if (search)           params.search        = search
-      if (cellNameOld)      params.cell_name_old = cellNameOld
+      if (dSearch)           params.search        = dSearch
+      if (dCellNameOld)      params.cell_name_old = dCellNameOld
       if (mien.length)      params.mien          = mien
       if (tinh.length)      params.tinh          = tinh
       if (phuongXa.length)  params.phuong_xa     = phuongXa
@@ -87,7 +90,7 @@ export default function Cells4GPage() {
       setData(res.items)
       sq.onLoaded(res.total, params)
     } finally { setLoading(false) }
-  }, [search, cellNameOld, mien, tinh, phuongXa, vendor, sq.params])
+  }, [dSearch, dCellNameOld, mien, tinh, phuongXa, vendor, sq.params])
 
   useEffect(() => { load() }, [load])
 

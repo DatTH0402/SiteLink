@@ -3,48 +3,97 @@ sync.py
 -------
 Cell sync endpoints.
 
-POST /api/v1/sync/cells/wait  — SYNCHRONOUS, waits for completion.
-  Use this for small batches (single-cell form create, small imports).
-  Returns the sync result directly. Frontend doesn't need to poll.
-  Timeout: 120s (CSV downloads take ~5-30s total).
-
-POST /api/v1/sync/cells       — ASYNC background task + polling.
-  Use this for large batches (bulk operations).
-
-GET  /api/v1/sync/status/{job_id}  — poll async job status.
+POST /api/v1/sync/cells         ASYNC: returns a job id immediately (used by the web UI,
+                                 which polls GET /sync/status/{job_id}). Safe behind a
+                                 reverse proxy with a 120 s read timeout.
+GET  /api/v1/sync/status/{id}   job state. Jobs live in small JSON files so every
+                                 gunicorn worker sees the same state.
+POST /api/v1/sync/cells/wait    synchronous (<= 2 000 cells)  - kept for scripts / curl
+POST /api/v1/sync/cells/batch   synchronous (<= 10 000 cells) - kept for scripts / curl
+GET  /api/v1/sync/recent        cell names created/updated recently
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
+from app.db.session import engine, get_db
+from app.models.user import User, UserRole
 from app.utils.deps import get_current_user
-from app.models.user import User
-from app.core.config import settings
 
 log    = logging.getLogger(__name__)
 router = APIRouter()
 
-_jobs: Dict[str, Dict[str, Any]] = {}
-MAX_CELLS_SYNC  = 10_000   # async limit
-MAX_CELLS_WAIT  = 2_000     # sync/wait limit (keeps HTTP timeout reasonable)
-WAIT_TIMEOUT_S  = 600     # 3 min max for synchronous endpoint
+MAX_CELLS_SYNC = 10_000     # async endpoint
+MAX_CELLS_WAIT = 2_000      # synchronous /wait
+WAIT_TIMEOUT_S = 600
 
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="cell-sync")
+# a few concurrent jobs per worker: each one downloads / transforms vendor CSVs (RAM heavy)
+_executor = ThreadPoolExecutor(
+    max_workers=int(os.environ.get("SYNC_MAX_JOBS", "2")),
+    thread_name_prefix="cell-sync",
+)
+
+# ── job store (file based: shared by all gunicorn workers) ────────────────────
+_JOB_DIR   = os.environ.get("SYNC_JOB_DIR", "/tmp/sitelink_sync_jobs")
+_JOB_TTL_S = 6 * 3600
+_STALE_S   = 45 * 60
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+os.makedirs(_JOB_DIR, exist_ok=True)
 
 
-# ── Find cell_sync_core.py ────────────────────────────────────────────────────
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
+
+def _job_path(job_id: str) -> str:
+    return os.path.join(_JOB_DIR, f"{job_id}.json")
+
+
+def _job_write(job_id: str, data: Dict[str, Any]) -> None:
+    data["updated_at"] = time.time()
+    tmp = os.path.join(_JOB_DIR, f".{job_id}.{os.getpid()}.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, default=str)
+    os.replace(tmp, _job_path(job_id))
+
+
+def _job_read(job_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(_job_path(job_id), encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return None
+
+
+def _job_cleanup() -> None:
+    now = time.time()
+    try:
+        for name in os.listdir(_JOB_DIR):
+            p = os.path.join(_JOB_DIR, name)
+            try:
+                if now - os.path.getmtime(p) > _JOB_TTL_S:
+                    os.remove(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+# ── cell_sync_core loader ─────────────────────────────────────────────────────
 def _find_backend_dir() -> str:
     env = os.environ.get("CELL_SYNC_CORE_DIR", "")
     if env and os.path.isfile(os.path.join(env, "cell_sync_core.py")):
@@ -57,15 +106,10 @@ def _find_backend_dir() -> str:
         if parent == candidate:
             break
         candidate = parent
-    # fallback: two levels up from app/api/routes/ = backend/
-    return os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 _BACKEND_DIR = _find_backend_dir()
-log.info("cell_sync_core dir: %s (exists=%s)",
-         _BACKEND_DIR,
-         os.path.isfile(os.path.join(_BACKEND_DIR, "cell_sync_core.py")))
 
 
 def _import_core():
@@ -75,31 +119,12 @@ def _import_core():
     return core
 
 
-def _do_sync(
-    table:     str,
-    names:     List[str],
-    vendors:   Optional[Set[str]],
-    source_df  = None,   # pre-loaded DataFrame — avoids repeated CSV downloads
-) -> Dict:
-    core   = _import_core()
-    from sqlalchemy import create_engine  # noqa
-    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
-    return core.sync_cells(engine, table, names, vendors, source_df=source_df)
+def _do_sync(table: str, names: List[str], vendors: Optional[Set[str]]) -> Dict[str, Any]:
+    # shared SQLAlchemy engine (no new pool per call); vendor CSVs are cached in the core
+    return _import_core().sync_cells(engine, table, names, vendors)
 
 
-def _do_sync_with_preload(table: str, names: List[str], vendors: Optional[Set[str]]) -> Dict:
-    """Download CSVs once, then sync all cells. Used by /batch endpoint."""
-    core = _import_core()
-    from sqlalchemy import create_engine  # noqa
-    engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
-    # Download vendor CSVs once
-    source_df = core.load_vendor_data(table.replace("cells_", ""), vendors)
-    log.info("Pre-loaded %d rows from vendor CSVs for %s", len(source_df), table)
-    return core.sync_cells(engine, table, names, vendors, source_df=source_df)
-
-
-# ── Schemas ───────────────────────────────────────────────────────────────────
-
+# ── schemas ───────────────────────────────────────────────────────────────────
 class SyncRequest(BaseModel):
     tech:       str
     cell_names: List[str]
@@ -107,16 +132,16 @@ class SyncRequest(BaseModel):
 
 
 class SyncResult(BaseModel):
-    updated:      int = 0
-    skipped:      int = 0
-    not_in_db:    int = 0
-    not_in_csv:   int = 0
-    errors:       int = 0
+    updated:       int = 0
+    skipped:       int = 0
+    not_in_db:     int = 0
+    not_in_csv:    int = 0
+    errors:        int = 0
+    meta_only:     int = 0
     error_details: List[str] = []
 
 
 class SyncWaitResponse(BaseModel):
-    """Returned by the synchronous /wait endpoint."""
     table_name: str
     cell_count: int
     result:     SyncResult
@@ -139,7 +164,14 @@ class SyncStatusResponse(BaseModel):
     error:       Optional[str] = None
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+def _to_result(stats: Dict[str, Any]) -> SyncResult:
+    return SyncResult(
+        updated=stats.get("updated", 0), skipped=stats.get("skipped", 0),
+        not_in_db=stats.get("not_in_db", 0), not_in_csv=stats.get("not_in_csv", 0),
+        errors=stats.get("errors", 0), meta_only=stats.get("meta_only", 0),
+        error_details=list(stats.get("error_details", []))[:50],
+    )
+
 
 def _parse_request(payload: SyncRequest):
     tech = payload.tech.lower()
@@ -154,155 +186,89 @@ def _parse_request(payload: SyncRequest):
     return f"cells_{tech}", names, vendors
 
 
-# ── Synchronous endpoint ──────────────────────────────────────────────────────
+# ── synchronous endpoints (scripts / curl) ────────────────────────────────────
+def _run_blocking(payload: SyncRequest, user: User, max_cells: int, timeout_s: int, label: str):
+    table, names, vendors = _parse_request(payload)
+    if len(names) > max_cells:
+        raise HTTPException(400, f"Too many cells ({len(names)} > {max_cells}). Use POST /cells instead.")
+    t0 = time.time()
+    log.info("sync/%s: %s %d cells user=%s", label, table, len(names), user.username)
+    try:
+        stats = _executor.submit(_do_sync, table, names, vendors).result(timeout=timeout_s)
+    except FutureTimeout:
+        raise HTTPException(504, "Sync timed out - use the async endpoint (POST /cells).")
+    except Exception as exc:
+        log.exception("sync/%s failed", label)
+        raise HTTPException(500, f"Sync failed: {exc}")
+    duration = time.time() - t0
+    log.info("sync/%s done in %.1fs: %s", label, duration, stats)
+    return SyncWaitResponse(table_name=table, cell_count=len(names),
+                            result=_to_result(stats), duration_s=round(duration, 2))
+
 
 @router.post("/cells/wait", response_model=SyncWaitResponse)
-def sync_cells_wait(
-    payload:      SyncRequest,
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user),
-):
-    """
-    Synchronous sync — waits until CSV download + DB update are done,
-    then returns the result in a single response.
-
-    The frontend does NOT need to poll; it just awaits this HTTP call.
-    Use for small batches (≤ 500 cells).
-    """
-    table, names, vendors = _parse_request(payload)
-    if len(names) > MAX_CELLS_WAIT:
-        raise HTTPException(
-            400,
-            f"Too many cells for /wait ({len(names)} > {MAX_CELLS_WAIT}). "
-            "Use POST /cells for large batches."
-        )
-
-    t0 = datetime.now(timezone.utc)
-    log.info("sync/wait: %s %d cells user=%s", table, len(names), current_user.username)
-
-    try:
-        future = _executor.submit(_do_sync, table, names, vendors)
-        stats  = future.result(timeout=WAIT_TIMEOUT_S)
-    except FutureTimeout:
-        raise HTTPException(504, "Sync timed out — source CSV download too slow. Try again.")
-    except Exception as exc:
-        log.exception("sync/wait failed")
-        raise HTTPException(500, f"Sync failed: {exc}")
-
-    duration = (datetime.now(timezone.utc) - t0).total_seconds()
-    log.info("sync/wait done in %.1fs: %s", duration, stats)
-
-    return SyncWaitResponse(
-        table_name=table,
-        cell_count=len(names),
-        result=SyncResult(**{k: stats.get(k, 0) if k != "error_details"
-                             else stats.get(k, [])
-                             for k in SyncResult.model_fields}),
-        duration_s=round(duration, 2),
-    )
-
-
-# ── Async endpoint ────────────────────────────────────────────────────────────
+def sync_cells_wait(payload: SyncRequest, current_user: User = Depends(get_current_user)):
+    return _run_blocking(payload, current_user, MAX_CELLS_WAIT, WAIT_TIMEOUT_S, "wait")
 
 
 @router.post("/cells/batch", response_model=SyncWaitResponse)
-def sync_cells_batch(
-    payload:      SyncRequest,
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user),
-):
-    """
-    Batch sync — downloads vendor CSVs ONCE then processes ALL cell names.
+def sync_cells_batch(payload: SyncRequest, current_user: User = Depends(get_current_user)):
+    return _run_blocking(payload, current_user, MAX_CELLS_SYNC, WAIT_TIMEOUT_S, "batch")
 
-    Unlike /wait (which also downloads once per call), /batch is designed
-    for large imports: no chunking, no repeated CSV downloads, single
-    DB transaction pass.  Handles up to 10 000 cells.
 
-    Synchronous — waits for completion and returns result directly.
-    Timeout: 10 minutes.
-    """
-    table, names, vendors = _parse_request(payload)
-    if len(names) > 10_000:
-        raise HTTPException(400, f"Too many cells ({len(names)} > 10 000)")
-
-    t0 = datetime.now(timezone.utc)
-    log.info("sync/batch: %s %d cells user=%s", table, len(names), current_user.username)
-
+# ── asynchronous endpoint (used by the web UI) ────────────────────────────────
+def _run_async_job(job_id: str, table: str, names: List[str], vendors: Optional[Set[str]]) -> None:
+    job = _job_read(job_id) or {"job_id": job_id}
+    job.update(status="running", started_at=_now_iso())
+    _job_write(job_id, job)
     try:
-        future = _executor.submit(_do_sync_with_preload, table, names, vendors)
-        stats  = future.result(timeout=600)
-    except FutureTimeout:
-        raise HTTPException(504, "Sync timed out after 10 minutes")
+        stats = dict(_do_sync(table, names, vendors))
+        stats["error_details"] = list(stats.get("error_details", []))[:50]
+        job.update(status="done", result=stats, finished_at=_now_iso())
     except Exception as exc:
-        log.exception("sync/batch failed")
-        raise HTTPException(500, f"Sync failed: {exc}")
+        log.exception("async sync job %s failed", job_id)
+        job.update(status="error", error=str(exc)[:500], finished_at=_now_iso())
+    try:
+        _job_write(job_id, job)
+    except Exception:
+        log.exception("could not persist job %s", job_id)
 
-    duration = (datetime.now(timezone.utc) - t0).total_seconds()
-    log.info("sync/batch done in %.1fs: %s", duration, stats)
-
-    return SyncWaitResponse(
-        table_name=table,
-        cell_count=len(names),
-        result=SyncResult(**{
-            k: stats.get(k, 0) if k != "error_details" else stats.get(k, [])
-            for k in SyncResult.model_fields
-        }),
-        duration_s=round(duration, 2),
-    )
 
 @router.post("/cells", response_model=SyncJobResponse, status_code=202)
-def sync_cells_async(
-    payload:          SyncRequest,
-    background_tasks: BackgroundTasks,
-    db:               Session = Depends(get_db),
-    current_user:     User    = Depends(get_current_user),
-):
-    """Async sync — returns job_id immediately, use /status/{job_id} to poll."""
+def sync_cells_async(payload: SyncRequest, current_user: User = Depends(get_current_user)):
     table, names, vendors = _parse_request(payload)
     if len(names) > MAX_CELLS_SYNC:
         raise HTTPException(400, f"Too many cells (max {MAX_CELLS_SYNC})")
-
-    job_id = str(uuid.uuid4())
-    _jobs[job_id] = {
-        "status": "queued", "started_at": None, "finished_at": None,
+    _job_cleanup()
+    job_id = uuid.uuid4().hex
+    _job_write(job_id, {
+        "job_id": job_id, "status": "queued", "started_at": None, "finished_at": None,
         "result": None, "error": None, "tech": payload.tech.lower(),
         "cell_count": len(names), "requested_by": current_user.username,
-    }
-    background_tasks.add_task(_run_async_job, job_id, table, names, vendors)
+    })
+    _executor.submit(_run_async_job, job_id, table, names, vendors)
     return SyncJobResponse(
         job_id=job_id, status="queued", cell_count=len(names),
         message=f"Đồng bộ {len(names)} cell {payload.tech.upper()} đã được khởi động.",
     )
 
 
-def _run_async_job(job_id, table, names, vendors):
-    _jobs[job_id]["status"]     = "running"
-    _jobs[job_id]["started_at"] = datetime.now(timezone.utc).isoformat()
-    try:
-        stats = _do_sync(table, names, vendors)
-        _jobs[job_id].update(
-            status="done", result=stats,
-            finished_at=datetime.now(timezone.utc).isoformat())
-    except Exception as exc:
-        _jobs[job_id].update(
-            status="error", error=str(exc),
-            finished_at=datetime.now(timezone.utc).isoformat())
-        log.exception("async job %s failed", job_id)
-
-
 @router.get("/status/{job_id}", response_model=SyncStatusResponse)
-def get_sync_status(job_id: str, _: User = Depends(get_current_user)):
-    job = _jobs.get(job_id)
+def get_sync_status(job_id: str, current_user: User = Depends(get_current_user)):
+    job = _job_read(job_id) if _JOB_ID_RE.match(job_id) else None
     if not job:
         raise HTTPException(404, "Job not found")
+    if job.get("requested_by") != current_user.username and current_user.role != UserRole.admin:
+        raise HTTPException(403, "Not your job")
+    status, error = job.get("status", "error"), job.get("error")
+    if status in ("queued", "running") and time.time() - job.get("updated_at", time.time()) > _STALE_S:
+        status, error = "error", "Job was lost (the server restarted while it was running)."
     return SyncStatusResponse(
-        job_id=job_id, status=job["status"],
-        started_at=job.get("started_at"), finished_at=job.get("finished_at"),
-        result=job.get("result"), error=job.get("error"))
+        job_id=job_id, status=status, started_at=job.get("started_at"),
+        finished_at=job.get("finished_at"), result=job.get("result"), error=error)
 
 
-
-
+# ── recently touched cells ────────────────────────────────────────────────────
 @router.get("/recent")
 def get_recent_cells(
     table:   str,
@@ -311,57 +277,25 @@ def get_recent_cells(
     _: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Return cell_names created/updated recently.
-
-    Parameters
-    ----------
-    table   : cells_3g | cells_4g | cells_5g
-    minutes : look back N minutes from now (used if `since` not provided)
-    since   : ISO 8601 timestamp — return cells created/updated after this
-              exact moment.  More reliable than `minutes` for large imports
-              because it uses the timestamp captured BEFORE import started.
-
-    Returns up to 50000 names — enough for any realistic import.
-    """
-    from sqlalchemy import text as sa_text
-
-    valid_tables = {"cells_3g", "cells_4g", "cells_5g"}
-    if table not in valid_tables:
-        raise HTTPException(400, f"table must be one of {valid_tables}")
-
+    """cell_names created/updated after `since` (ISO 8601) or in the last `minutes`."""
+    if table not in {"cells_3g", "cells_4g", "cells_5g"}:
+        raise HTTPException(400, "table must be cells_3g, cells_4g or cells_5g")
     try:
         if since:
-            # Use exact timestamp — most reliable
-            rows = db.execute(sa_text(f"""
-                SELECT cell_name FROM {table}
-                WHERE cell_name IS NOT NULL
-                  AND (
-                    created_at >= :since
-                    OR updated_at >= :since
-                  )
-                ORDER BY COALESCE(created_at, updated_at) DESC
-                LIMIT 50000
-            """), {"since": since}).fetchall()
+            rows = db.execute(sa_text(
+                f"SELECT cell_name FROM {table} WHERE cell_name IS NOT NULL "
+                f"AND (created_at >= :since OR updated_at >= :since) "
+                f"ORDER BY COALESCE(created_at, updated_at) DESC LIMIT 50000"),
+                {"since": since}).fetchall()
         else:
-            # Fallback: time window from now
-            rows = db.execute(sa_text(f"""
-                SELECT cell_name FROM {table}
-                WHERE cell_name IS NOT NULL
-                  AND (
-                    created_at >= NOW() - INTERVAL '{minutes} minutes'
-                    OR updated_at >= NOW() - INTERVAL '{minutes} minutes'
-                  )
-                ORDER BY COALESCE(created_at, updated_at) DESC
-                LIMIT 50000
-            """)).fetchall()
-
+            rows = db.execute(sa_text(
+                f"SELECT cell_name FROM {table} WHERE cell_name IS NOT NULL "
+                f"AND (created_at >= NOW() - make_interval(mins => :m) "
+                f"OR updated_at >= NOW() - make_interval(mins => :m)) "
+                f"ORDER BY COALESCE(created_at, updated_at) DESC LIMIT 50000"),
+                {"m": max(1, int(minutes))}).fetchall()
         names = [r[0] for r in rows if r[0]]
-        log.info("/recent %s: %d names (since=%r minutes=%d)",
-                 table, len(names), since, minutes)
         return {"cell_names": names, "count": len(names)}
-
     except Exception as exc:
         log.error("get_recent_cells: %s", exc, exc_info=True)
         raise HTTPException(500, str(exc))
-

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import {
   Typography, Button, Space, Table, Input, Select,
   Popconfirm, Tag, message, Row, Col, Alert, Tooltip,
@@ -61,14 +62,16 @@ export default function SitesPage() {
     }
   }, [tinh])
 
-  const sq = useServerQuery([search, siteNameCu, mien, tinh, phuongXa])
+  const dSearch     = useDebouncedValue(search, 400)
+  const dSiteNameCu = useDebouncedValue(siteNameCu, 400)
+  const sq = useServerQuery([dSearch, dSiteNameCu, mien, tinh, phuongXa])
 
   const load = useCallback(() => {
     setLoading(true)
     setLoadError(null)
     const params: Record<string, unknown> = { ...sq.params }
-    if (search)           params.search       = search
-    if (siteNameCu)       params.site_name_cu = siteNameCu
+    if (dSearch)           params.search       = dSearch
+    if (dSiteNameCu)       params.site_name_cu = dSiteNameCu
     if (mien.length)      params.mien         = mien
     if (tinh.length)      params.tinh         = tinh
     if (phuongXa.length)  params.phuong_xa    = phuongXa
@@ -84,7 +87,7 @@ export default function SitesPage() {
         setLoadError(`Cannot load sites: ${detail}`)
       })
       .finally(() => setLoading(false))
-  }, [search, siteNameCu, mien, tinh, phuongXa, sq.params])
+  }, [dSearch, dSiteNameCu, mien, tinh, phuongXa, sq.params])
 
   useEffect(() => { load() }, [load])
 

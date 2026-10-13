@@ -19,7 +19,6 @@ from app.api.routes import rnc       as rnc_router
 from app.api.routes import sync       as sync_router
 from app.utils.template_regen import regen_now
 
-Base.metadata.create_all(bind=engine)
 
 UPLOAD_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "uploads")
@@ -72,7 +71,7 @@ def _seed_initial_data():
                 email="admin@sitelink.com",
                 username="admin",
                 full_name="Administrator",
-                hashed_password=get_password_hash("admin"),
+                hashed_password=get_password_hash(os.environ.get("ADMIN_INITIAL_PASSWORD") or "admin"),
                 role=UserRole.admin,
             ))
             db.commit()
@@ -131,7 +130,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "https://mlmt.mobifone.vn,http://10.24.15.169:8081,http://localhost:8081,http://localhost:5173").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,9 +145,10 @@ app.mount(
 
 @app.on_event("startup")
 def on_startup():
-    run_light_migrations()   # add cells_5g.chung_anten, widen mimo, remap legacy values
-    _seed_initial_data()
-    regen_now()   # regenerate all templates in background on every startup
+    # several gunicorn workers boot together: startup_tasks serialises schema/seed
+    # work with an advisory lock and runs template regeneration in one worker only
+    from app.startup_tasks import run_startup_tasks
+    run_startup_tasks(_seed_initial_data, regen_now)
 
 
 PREFIX = "/api/v1"
