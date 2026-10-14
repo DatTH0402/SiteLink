@@ -15,6 +15,7 @@ from app.utils.audit import log_action
 from app.models.user import User
 from app.services.import_excel import parse_site_excel, _CLEAR, _SITE_BOOL_FIELDS
 from app.services.revision import record_site_revision, _site_snapshot
+from app.services.site_info import changed_site_fields, sync_site_info_to_cells
 
 router = APIRouter()
 register_listing_routes(router, Site, "site")  # GET /ids, GET /distinct/{column}
@@ -214,6 +215,14 @@ def import_sites_excel(
                 change_source="excel",
                 site_name_old_ref=site_name_old_ref,
             )
+            _chg = changed_site_fields(old_snap, existing)
+            if _chg:
+                sync_site_info_to_cells(
+                    db, existing, _chg,
+                    changed_by_id=current_user.id,
+                    changed_by_name=current_user.full_name or current_user.username,
+                    change_source="excel",
+                )
             db.commit()
 
             if rev is None:
@@ -360,6 +369,14 @@ def bulk_update_sites(
                 change_source="form",
                 change_note="Bulk update",
             )
+            _chg = changed_site_fields(old_snap, site)
+            if _chg:
+                sync_site_info_to_cells(
+                    db, site, _chg,
+                    changed_by_id=current_user.id,
+                    changed_by_name=current_user.full_name or current_user.username,
+                    change_source="form",
+                )
 
             db.commit()
 
@@ -445,6 +462,14 @@ def update_site(
         change_source="form",
         site_name_old_ref=site_name_old_ref,
     )
+    _chg = changed_site_fields(old_snap, site)
+    if _chg:
+        sync_site_info_to_cells(
+            db, site, _chg,
+            changed_by_id=current_user.id,
+            changed_by_name=current_user.full_name or current_user.username,
+            change_source="form",
+        )
     db.commit()
     db.refresh(site)
     if rev is not None:

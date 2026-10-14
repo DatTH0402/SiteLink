@@ -6,7 +6,10 @@ from app.db.session import get_db
 from app.models.cell_4g import Cell4G
 from app.models.site import Site
 from app.services.list_query import apply_column_filters, apply_sort, register_listing_routes
-from app.services.site_info import apply_site_info
+from app.services.site_info import (
+    apply_site_info, apply_site_to_cell,
+    ensure_site_tech_flag, get_or_create_site_for_cell,
+)
 from app.schemas.cell import Cell4GCreate, Cell4GUpdate, Cell4GRead, CellCreate, CellUpdate
 from app.utils.deps import get_current_user
 from app.utils.audit import log_action
@@ -25,20 +28,9 @@ def _or_404(db: Session, record_id: int) -> Cell4G:
     return obj
 
 
-def _ensure_site(db: Session, rec: dict, current_user: User) -> int:
-    site_name = rec.get("site_name", "").strip()
-    site = db.query(Site).filter(Site.site_name == site_name).first()
-    if site:
-        return site.id
-    new_site = Site(
-        site_name=site_name, mien=rec.get("mien") or "",
-        tinh=rec.get("tinh") or "", phuong_xa=rec.get("phuong_xa"),
-        lat=rec.get("lat"), long=rec.get("long"), created_by=current_user.id,
-    )
-    db.add(new_site)
-    db.commit()
-    db.refresh(new_site)
-    return new_site.id
+def _ensure_site(db: Session, rec: dict, current_user: User):
+    """Return (site, created). A newly created Site gets tram_4g = True."""
+    return get_or_create_site_for_cell(db, rec, "4g", current_user)
 
 
 def _apply_cell_changes(existing: Cell4G, changes: dict,
@@ -191,12 +183,21 @@ def import_excel(
         )
     for rec in result["to_create"]:
         try:
-            site_id = _ensure_site(db, rec, current_user)
-            if site_id != rec.get("site_id"): sites_auto_created += 1
-            rec["site_id"] = site_id
+            site, site_created = _ensure_site(db, rec, current_user)
+            if site_created:
+                sites_auto_created += 1
+            # the cell inherits site_name / mien / tinh / phuong_xa from its Site
+            rec = apply_site_info(rec, site)
             clean = {k: v for k, v in rec.items()
                      if v is not _CLEAR and hasattr(Cell4G, k)}
             cell = Cell4G(**clean, created_by=current_user.id)
+            ensure_site_tech_flag(
+                db, site, "4g",
+                changed_by_id=current_user.id,
+                changed_by_name=current_user.full_name or current_user.username,
+                change_source="excel",
+                change_note="Tự động bật Trạm 4G khi import Cell 4G",
+            )
             db.add(cell); db.flush()
             record_cell4g_revision(db, cell, old_snapshot=None,
                 changed_by_id=current_user.id,
@@ -212,6 +213,17 @@ def import_excel(
             old_snap = _cell4g_snapshot(existing)
             is_rename = upd.get("is_rename", False)
             _apply_cell_changes(existing, upd["changes"], is_rename=is_rename)
+            # keep the cell consistent with its Site and make sure the Site flags this technology
+            _site = db.query(Site).filter(Site.id == existing.site_id).first()
+            if _site is not None:
+                apply_site_to_cell(existing, _site)
+                ensure_site_tech_flag(
+                    db, _site, "4g",
+                    changed_by_id=current_user.id,
+                    changed_by_name=current_user.full_name or current_user.username,
+                    change_source="excel",
+                    change_note="Tự động bật Trạm 4G khi import Cell 4G",
+                )
             db.flush()
             rev = record_cell4g_revision(db, existing, old_snapshot=old_snap,
                 changed_by_id=current_user.id,
@@ -244,6 +256,13 @@ def create_cell(
     if not site:
         raise HTTPException(status_code=400, detail=f"Site id={payload.site_id} not found.")
     cell = Cell4G(**apply_site_info(payload.model_dump(), site), created_by=current_user.id)
+    ensure_site_tech_flag(
+        db, site, "4g",
+        changed_by_id=current_user.id,
+        changed_by_name=current_user.full_name or current_user.username,
+        change_source="form",
+        change_note="Tự động bật Trạm 4G khi tạo Cell 4G",
+    )
     db.add(cell); db.flush()
     record_cell4g_revision(db, cell, old_snapshot=None,
         changed_by_id=current_user.id,
