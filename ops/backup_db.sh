@@ -5,6 +5,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p backups
 out="backups/sitelink_$(date +%F_%H%M).dump"
-docker exec sitelink_postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$out"
+sudo docker exec sitelink_postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$out"
 find backups -name 'sitelink_*.dump' -mtime +14 -delete
 echo "backup written: $out"
