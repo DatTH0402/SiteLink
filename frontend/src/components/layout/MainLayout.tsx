@@ -9,6 +9,10 @@ import {
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import { ssoLogout } from '@/api/auth'
+import { Badge } from 'antd'
+import { CustomerServiceOutlined } from '@ant-design/icons'
+import { useFeedbackBadge } from '@/hooks/useFeedbackBadge'
+import FeedbackFab from '@/components/feedback/FeedbackFab'
 
 const { Sider, Header, Content } = Layout
 
@@ -17,6 +21,7 @@ export default function MainLayout() {
   const navigate   = useNavigate()
   const location   = useLocation()
   const { user, logout, idToken } = useAuthStore()
+  const fbBadge = useFeedbackBadge()
 
   const handleLogout = async () => {
     if (idToken) {
@@ -42,6 +47,9 @@ export default function MainLayout() {
     },
     { key: '/antenna',  icon: <WifiOutlined />,    label: 'Thư viện Antenna' },
     { key: '/revision', icon: <HistoryOutlined />, label: 'Lịch sử thay đổi' },
+    { key: '/feedback', icon: <CustomerServiceOutlined />, label: (
+      <span>Hỗ trợ / Góp ý{fbBadge > 0 && <Badge count={fbBadge} size="small" style={{ marginLeft: 8 }} />}</span>
+    ) },
     ...(user?.role === 'admin'
       ? [{
           key: 'admin',
@@ -79,7 +87,7 @@ export default function MainLayout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[location.pathname.startsWith('/feedback') ? '/feedback' : location.pathname]}
           defaultOpenKeys={['cells', 'admin']}
           items={menuItems}
           onClick={({ key }) => {
@@ -127,6 +135,7 @@ export default function MainLayout() {
           overflowY: 'auto',
         }}>
           <Outlet />
+          <FeedbackFab />
         </Content>
       </Layout>
     </Layout>

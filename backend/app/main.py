@@ -17,6 +17,7 @@ from app.api.routes import export    as export_router
 from app.api.routes import revision  as revision_router
 from app.api.routes import rnc       as rnc_router
 from app.api.routes import sync       as sync_router
+from app.api.routes import feedback as feedback_router
 from app.utils.template_regen import regen_now
 
 
@@ -58,7 +59,21 @@ _RNC_DATA = [
 ]
 
 
+def _ensure_feedback_tables():
+    """Create feedback_* tables if missing (idempotent; advisory lock = safe with N workers)."""
+    from sqlalchemy import text
+    from app.models.feedback import FeedbackTicket, FeedbackEvent, FeedbackAttachment
+    with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(7294001)"))
+        Base.metadata.create_all(
+            bind=conn,
+            tables=[FeedbackTicket.__table__, FeedbackEvent.__table__, FeedbackAttachment.__table__],
+            checkfirst=True,
+        )
+
+
 def _seed_initial_data():
+    _ensure_feedback_tables()
     db = SessionLocal()
     try:
         from app.models.user import User, UserRole
@@ -136,6 +151,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def _block_private_feedback_uploads(request, call_next):
+    # feedback attachments are only served by the authenticated /api/v1/feedback endpoints
+    if request.url.path.startswith("/uploads/feedback"):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    return await call_next(request)
+
+
 app.mount(
     "/uploads",
     StaticFiles(directory=UPLOAD_DIR),
@@ -167,6 +191,7 @@ app.include_router(export_router.router,    prefix=f"{PREFIX}/export",     tags=
 app.include_router(revision_router.router,  prefix=f"{PREFIX}/revisions",  tags=["Revisions"])
 app.include_router(rnc_router.router,       prefix=f"{PREFIX}/rnc",        tags=["RNC"])
 app.include_router(sync_router.router,         prefix=f"{PREFIX}/sync",       tags=["Sync"])
+app.include_router(feedback_router.router,     prefix=f"{PREFIX}/feedback",   tags=["Feedback"])
 
 
 @app.get("/health")

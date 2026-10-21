@@ -18,6 +18,8 @@ import AntennaPage     from '@/pages/antenna/AntennaPage'
 import UsersPage       from '@/pages/admin/UsersPage'
 import AuditPage       from '@/pages/admin/AuditPage'
 import RevisionPage    from '@/pages/revision/RevisionPage'
+import FeedbackPage       from '@/pages/feedback/FeedbackPage'
+import FeedbackDetailPage from '@/pages/feedback/FeedbackDetailPage'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token)
@@ -65,6 +67,8 @@ export default function App() {
           <Route path="cells/5g"     element={<Cells5GPage />} />
           <Route path="antenna"      element={<AntennaPage />} />
           <Route path="revision"     element={<RevisionPage />} />
+          <Route path="feedback"     element={<FeedbackPage />} />
+          <Route path="feedback/:id" element={<FeedbackDetailPage />} />
           <Route path="admin/users"
                  element={<AdminRoute><UsersPage /></AdminRoute>} />
           <Route path="admin/audit"

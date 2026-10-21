@@ -11,4 +11,5 @@ from app.models import (  # noqa
     dropdown, audit_log, antenna,
     site_revision, cell_revision,
     rnc,
+    feedback,
 )
