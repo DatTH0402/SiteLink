@@ -1,398 +1,270 @@
 #!/usr/bin/env bash
-# fix_site_cell_sync.sh  –  run from the SiteLink project root (or pass the root as $1)
+# =============================================================================
+# make_dia_chi_optional.sh
+# Make Site.dia_chi (Địa chỉ) an OPTIONAL field across SiteLink.
+#
+# Usage:
+#   bash make_dia_chi_optional.sh [PROJECT_ROOT]
+#   APPLY_DOCKER=1 bash make_dia_chi_optional.sh [PROJECT_ROOT]
+#
+# Env (optional):
+#   APPLY_DOCKER=1       also: DROP NOT NULL in Postgres, regenerate Excel
+#                        templates inside the backend container, restart it
+#   PG_CONTAINER=name    postgres container (auto-detected if omitted)
+#   BACKEND_CONTAINER=n  backend container  (auto-detected if omitted)
+# =============================================================================
 set -euo pipefail
 
-cd "${1:-.}"
-for f in backend/app/api/routes/sites.py backend/app/api/routes/cells_3g.py \
-         backend/app/api/routes/cells_4g.py backend/app/api/routes/cells_5g.py \
-         backend/app/services/site_info.py; do
-  [ -f "$f" ] || { echo "ERROR: $f not found – run this from the SiteLink root."; exit 1; }
-done
+PROJECT_ROOT="${1:-/home/mlmt/work/src/SiteLink}"
+APPLY_DOCKER="${APPLY_DOCKER:-0}"
 
-# ── 1. backup ────────────────────────────────────────────────────────────────
-BK="_backup_site_cell_sync_$(date +%Y%m%d-%H%M%S)"
-for f in backend/app/api/routes/sites.py backend/app/api/routes/cells_3g.py \
-         backend/app/api/routes/cells_4g.py backend/app/api/routes/cells_5g.py \
-         backend/app/services/site_info.py; do
-  mkdir -p "$BK/$(dirname "$f")"; cp "$f" "$BK/$f"
-done
-echo "Backup written to $BK/"
+POSTGRES_USER="${POSTGRES_USER:-sitelink}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-sitelink_pass}"
+POSTGRES_DB="${POSTGRES_DB:-sitelink_db}"
 
-# ── 2. patch route files (all-or-nothing) ────────────────────────────────────
-python3 - <<'PY_EOF'
-import pathlib, re, sys
+if [ ! -d "$PROJECT_ROOT/backend" ] || [ ! -d "$PROJECT_ROOT/frontend" ]; then
+  echo "ERROR: '$PROJECT_ROOT' does not look like the SiteLink root (backend/ + frontend/ expected)." >&2
+  exit 1
+fi
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required." >&2; exit 1; }
 
-ROOT = pathlib.Path("backend/app")
-errors, writes, skipped = [], {}, []
+echo "==> Project root: $PROJECT_ROOT"
+echo "==> Patching source files ..."
 
-def rd(p): return p.read_text(encoding="utf-8")
+python3 - "$PROJECT_ROOT" <<'PYEOF'
+import os
+import re
+import shutil
+import sys
 
-def lit(text, old, new, label):
-    n = text.count(old)
-    if n != 1:
-        errors.append(f"{label}: expected exactly 1 match, found {n}")
-        return text
-    return text.replace(old, new)
-
-def rx(text, pattern, new, label, flags=0):
-    ms = list(re.finditer(pattern, text, flags))
-    if len(ms) != 1:
-        errors.append(f"{label}: expected exactly 1 regex match, found {len(ms)}")
-        return text
-    m = ms[0]
-    return text[:m.start()] + new + text[m.end():]
-
-# ---------------------------------------------------------------- cells_*.py
-def patch_cells(tech):
-    T = tech.upper()
-    M = f"Cell{T}"
-    path = ROOT / "api" / "routes" / f"cells_{tech}.py"
-    t = rd(path)
-    if "get_or_create_site_for_cell" in t:
-        skipped.append(str(path)); return
-    lab = lambda s: f"{path.name} [{s}]"
-
-    def flag_call(pad_n, var, source, note):
-        p = " " * pad_n
-        return (
-            f'{p}ensure_site_tech_flag(\n'
-            f'{p}    db, {var}, "{tech}",\n'
-            f'{p}    changed_by_id=current_user.id,\n'
-            f'{p}    changed_by_name=current_user.full_name or current_user.username,\n'
-            f'{p}    change_source="{source}",\n'
-            f'{p}    change_note="{note}",\n'
-            f'{p})\n'
-        )
-
-    # a) imports
-    t = lit(t, "from app.services.site_info import apply_site_info\n",
-            "from app.services.site_info import (\n"
-            "    apply_site_info, apply_site_to_cell,\n"
-            "    ensure_site_tech_flag, get_or_create_site_for_cell,\n"
-            ")\n", lab("import"))
-
-    # b) _ensure_site now delegates to the shared helper and returns (site, created)
-    t = rx(t, r"def _ensure_site\(.*?return new_site\.id\n",
-           "def _ensure_site(db: Session, rec: dict, current_user: User):\n"
-           f'    """Return (site, created). A newly created Site gets tram_{tech} = True."""\n'
-           f'    return get_or_create_site_for_cell(db, rec, "{tech}", current_user)\n',
-           lab("_ensure_site"), re.S)
-
-    # c) Excel create loop: use returned site, inherit its info
-    t = rx(t,
-           r'site_id = _ensure_site\(db, rec, current_user\)\s+'
-           r'if site_id != rec\.get\("site_id"\):\s+sites_auto_created \+= 1\s+'
-           r'rec\["site_id"\] = site_id',
-           'site, site_created = _ensure_site(db, rec, current_user)\n'
-           '            if site_created:\n'
-           '                sites_auto_created += 1\n'
-           '            # the cell inherits site_name / mien / tinh / phuong_xa from its Site\n'
-           '            rec = apply_site_info(rec, site)',
-           lab("import-create head"))
-
-    # d) Excel create: flag the technology on the Site
-    old = f"cell = {M}(**clean, created_by=current_user.id)\n"
-    t = lit(t, old, old + flag_call(12, "site", "excel",
-            f"Tự động bật Trạm {T} khi import Cell {T}"), lab("import-create flag"))
-
-    # e) Excel update: stay consistent with Site + make sure the flag is on
-    old = '_apply_cell_changes(existing, upd["changes"], is_rename=is_rename)\n'
-    new = (old
-           + "            # keep the cell consistent with its Site and make sure the Site flags this technology\n"
-           + "            _site = db.query(Site).filter(Site.id == existing.site_id).first()\n"
-           + "            if _site is not None:\n"
-           + "                apply_site_to_cell(existing, _site)\n"
-           + flag_call(16, "_site", "excel", f"Tự động bật Trạm {T} khi import Cell {T}"))
-    t = lit(t, old, new, lab("import-update"))
-
-    # f) Form create
-    old = f"cell = {M}(**apply_site_info(payload.model_dump(), site), created_by=current_user.id)\n"
-    t = lit(t, old, old + flag_call(4, "site", "form",
-            f"Tự động bật Trạm {T} khi tạo Cell {T}"), lab("form-create"))
-
-    writes[path] = t
-
-for tech in ("3g", "4g", "5g"):
-    patch_cells(tech)
-
-# ------------------------------------------------------------------ sites.py
-sp = ROOT / "api" / "routes" / "sites.py"
-st = rd(sp)
-if "sync_site_info_to_cells" in st:
-    skipped.append(str(sp))
-else:
-    def sync_call(pad_n, site_var, snap_var, source):
-        p = " " * pad_n
-        return (
-            f'{p}_chg = changed_site_fields({snap_var}, {site_var})\n'
-            f'{p}if _chg:\n'
-            f'{p}    sync_site_info_to_cells(\n'
-            f'{p}        db, {site_var}, _chg,\n'
-            f'{p}        changed_by_id=current_user.id,\n'
-            f'{p}        changed_by_name=current_user.full_name or current_user.username,\n'
-            f'{p}        change_source="{source}",\n'
-            f'{p}    )\n'
-        )
-    imp = "from app.services.revision import record_site_revision, _site_snapshot\n"
-    st = lit(st, imp, imp + "from app.services.site_info import changed_site_fields, sync_site_info_to_cells\n",
-             "sites.py [import]")
-    # PUT /sites/{id}
-    old = ('change_source="form",\n        site_name_old_ref=site_name_old_ref,\n'
-           '    )\n    db.commit()\n    db.refresh(site)\n')
-    new = ('change_source="form",\n        site_name_old_ref=site_name_old_ref,\n    )\n'
-           + sync_call(4, "site", "old_snap", "form")
-           + '    db.commit()\n    db.refresh(site)\n')
-    st = lit(st, old, new, "sites.py [update_site]")
-    # POST /sites/bulk-update
-    old = 'change_note="Bulk update",\n            )\n\n            db.commit()\n'
-    new = ('change_note="Bulk update",\n            )\n'
-           + sync_call(12, "site", "old_snap", "form")
-           + '\n            db.commit()\n')
-    st = lit(st, old, new, "sites.py [bulk_update]")
-    # POST /sites/import-excel (update loop)
-    old = ('change_source="excel",\n                site_name_old_ref=site_name_old_ref,\n'
-           '            )\n            db.commit()\n')
-    new = ('change_source="excel",\n                site_name_old_ref=site_name_old_ref,\n            )\n'
-           + sync_call(12, "existing", "old_snap", "excel")
-           + '            db.commit()\n')
-    st = lit(st, old, new, "sites.py [import-excel update]")
-    writes[sp] = st
-
-if errors:
-    print("\nPATCH ABORTED – no route file was modified. Problems:")
-    for e in errors: print("  -", e)
-    print("Your files probably differ from the version I was given; send me the failing file(s).")
-    sys.exit(1)
-
-for p, text in writes.items():
-    p.write_text(text, encoding="utf-8")
-    print("patched ", p)
-for s in skipped:
-    print("skipped (already patched):", s)
-PY_EOF
-
-# ── 3. new services/site_info.py ─────────────────────────────────────────────
-cat > backend/app/services/site_info.py <<'SITEINFO_EOF'
-"""
-services/site_info.py
-
-Site <-> Cell relationship helpers.
-
-* Cells denormalise a few columns from their parent Site (SITE_INHERITED_FIELDS).
-  - apply_site_info / apply_site_to_cell : copy Site -> cell data on create / import
-  - changed_site_fields / sync_site_info_to_cells : push a Site edit down to all its cells
-* Sites carry tram_3g / tram_4g / tram_5g flags that the report module counts.
-  - get_or_create_site_for_cell : Excel cell import (auto-creates the Site with the flag set)
-  - ensure_site_tech_flag       : turn the flag on when a cell of that technology exists
-
-None of the functions here commit, except get_or_create_site_for_cell
-(it commits only when it has to create a new Site, as the old _ensure_site did).
-"""
-from typing import Any, Dict, Optional, Set, Tuple
-
-from sqlalchemy.orm import Session
-
-from app.models.site import Site
-from app.models.cell_3g import Cell3G
-from app.models.cell_4g import Cell4G
-from app.models.cell_5g import Cell5G
-from app.services.revision import (
-    _safe_bool, _site_snapshot, record_site_revision,
-    _cell3g_snapshot, _cell4g_snapshot, _cell5g_snapshot,
-    record_cell3g_revision, record_cell4g_revision, record_cell5g_revision,
-)
-
-SITE_INHERITED_FIELDS = ("site_name", "mien", "tinh", "phuong_xa")
-
-TECH_FLAG = {"3g": "tram_3g", "4g": "tram_4g", "5g": "tram_5g"}
-
-_CELL_TECH = {
-    "3g": (Cell3G, _cell3g_snapshot, record_cell3g_revision),
-    "4g": (Cell4G, _cell4g_snapshot, record_cell4g_revision),
-    "5g": (Cell5G, _cell5g_snapshot, record_cell5g_revision),
-}
+root = sys.argv[1]
+pending = []   # (path, original_text, new_text)
 
 
-def _blank(v: Any) -> bool:
-    return v is None or str(v).strip() == ""
+class PatchError(Exception):
+    pass
 
 
-def _norm(v: Any) -> Optional[str]:
-    return None if _blank(v) else str(v).strip()
-
-
-# ── Site -> cell data copy (create / import) ─────────────────────────────────
-
-def apply_site_info(data: Dict[str, Any], site: Site) -> Dict[str, Any]:
-    out = dict(data)
-    out["site_id"] = site.id
-    for field in SITE_INHERITED_FIELDS:
-        value = getattr(site, field, None)
-        if value is not None and str(value).strip() != "":
-            out[field] = value
-    return out
-
-
-def apply_site_to_cell(cell: Any, site: Site) -> None:
-    """Copy the Site's non-empty inherited fields onto an existing cell object."""
-    for field in SITE_INHERITED_FIELDS:
-        value = getattr(site, field, None)
-        if not _blank(value) and getattr(cell, field, None) != value:
-            setattr(cell, field, value)
-
-
-# ── Issue 1: Site edit -> all cells of the Site ──────────────────────────────
-
-def changed_site_fields(old_snapshot: Dict[str, Any], site: Site) -> Set[str]:
-    """Which inherited fields differ between the pre-edit snapshot and the Site now."""
-    return {
-        f for f in SITE_INHERITED_FIELDS
-        if _norm(old_snapshot.get(f)) != _norm(getattr(site, f, None))
-    }
-
-
-def sync_site_info_to_cells(
-    db: Session, site: Site, changed_fields: Optional[Set[str]] = None, *,
-    changed_by_id: Optional[int] = None, changed_by_name: Optional[str] = None,
-    change_source: str = "form", change_note: str = "Đồng bộ thông tin từ Site",
-) -> int:
-    """
-    Push the Site's site_name / mien / tinh / phuong_xa to every 3G/4G/5G cell of
-    the Site and record a cell revision per modified cell. Does NOT commit.
-
-    A blank Site value only clears the cell's value when that field is in
-    `changed_fields` (i.e. the user just cleared it on the Site).
-    """
-    changed = set(changed_fields or ())
-    updates: Dict[str, Any] = {}
-    for f in SITE_INHERITED_FIELDS:
-        v = getattr(site, f, None)
-        if _blank(v) and (f == "site_name" or f not in changed):
-            continue
-        updates[f] = None if _blank(v) else v
-    if not updates:
-        return 0
-
-    touched = 0
-    for _tech, (Model, snap_fn, rec_fn) in _CELL_TECH.items():
-        for cell in db.query(Model).filter(Model.site_id == site.id).all():
-            diff = {f: v for f, v in updates.items()
-                    if _norm(getattr(cell, f, None)) != _norm(v)}
-            if not diff:
-                continue
-            old_snap = snap_fn(cell)
-            for f, v in diff.items():
-                setattr(cell, f, v)
-            db.flush()
-            rec_fn(
-                db, cell, old_snapshot=old_snap,
-                changed_by_id=changed_by_id, changed_by_name=changed_by_name,
-                change_source=change_source, change_note=change_note,
+def patch(relpath, steps):
+    """steps: list of (name, regex, replacement, is_already_applied(text)->bool)"""
+    path = os.path.join(root, relpath)
+    if not os.path.isfile(path):
+        raise PatchError(f"File not found: {path}")
+    with open(path, encoding="utf-8", newline="") as f:
+        original = f.read()
+    text = original
+    for name, pattern, repl, done in steps:
+        new_text, n = re.subn(pattern, repl, text, count=1, flags=re.M)
+        if n == 1:
+            text = new_text
+            print(f"   [patched] {relpath}: {name}")
+        elif done(text):
+            print(f"   [skip]    {relpath}: {name} (already applied)")
+        else:
+            raise PatchError(
+                f"{relpath}: cannot apply '{name}' - the code differs from what was expected."
             )
-            touched += 1
-    return touched
+    if text != original:
+        pending.append((path, original, text))
 
 
-# ── Issue 2: tram_3g / tram_4g / tram_5g mapping ─────────────────────────────
+try:
+    # ------------------------------------------------------------------ #
+    # 1. Excel template generator
+    # ------------------------------------------------------------------ #
+    patch("backend/create_excel_templates.py", [
+        (
+            "remove 'Dia chi' from SITE_REQUIRED",
+            r'(\n    "Long",\n)    "Dia chi",\n(    "Do cao dinh cot anten",\n\})',
+            r'\1\2',
+            lambda t: not re.search(r'SITE_REQUIRED\s*=\s*\{[^}]*"Dia chi"', t),
+        ),
+        (
+            "Site column 'Dia chi' -> optional",
+            r'(\("Dia chi",\s+"Địa chỉ chi tiết của trạm )[^"]*(",\s+30,\s+)True\)',
+            r'\1– không bắt buộc\2False)',
+            lambda t: re.search(
+                r'\("Dia chi",\s+"[^"]*không bắt buộc",\s+30,\s+False\)', t) is not None,
+        ),
+    ])
 
-def ensure_site_tech_flag(
-    db: Session, site: Site, tech: str, *,
-    changed_by_id: Optional[int] = None, changed_by_name: Optional[str] = None,
-    change_source: str = "form", change_note: Optional[str] = None,
-) -> bool:
-    """Turn site.tram_<tech> on if it is off (+ Site revision). No commit. True if changed."""
-    flag = TECH_FLAG[tech]
-    if _safe_bool(getattr(site, flag, None)):
-        return False
-    old_snap = _site_snapshot(site)
-    setattr(site, flag, True)
-    db.flush()
-    record_site_revision(
-        db, site, old_snapshot=old_snap,
-        changed_by_id=changed_by_id, changed_by_name=changed_by_name,
-        change_source=change_source, change_note=change_note,
-    )
-    return True
+    # ------------------------------------------------------------------ #
+    # 2. Pydantic schema (SiteCreate validator)
+    # ------------------------------------------------------------------ #
+    patch("backend/app/schemas/site.py", [
+        (
+            "remove dia_chi required check in SiteCreate",
+            r'\n        if not self\.dia_chi or not str\(self\.dia_chi\)\.strip\(\):\n'
+            r'            errors\.append\([^\n]*\)\n',
+            "\n",
+            lambda t: "self.dia_chi" not in t,
+        ),
+    ])
 
+    # ------------------------------------------------------------------ #
+    # 3. Excel import parser
+    # ------------------------------------------------------------------ #
+    patch("backend/app/services/import_excel.py", [
+        (
+            "remove dia_chi from SITE_REQUIRED_FIELDS",
+            r'^    "dia_chi":\s+"Địa chỉ",\n',
+            "",
+            lambda t: re.search(r'^    "dia_chi":\s+"Địa chỉ",\n', t, re.M) is None,
+        ),
+        (
+            "remove 'Địa chỉ is empty' row error in parse_site_excel",
+            r'        # [^\n]*Địa chỉ \(required\)[^\n]*\n'
+            r'(        dia_chi_val = _v_aware\([^\n]*\)\n)'
+            r'        if dia_chi_val is None or dia_chi_val is _CLEAR:\n'
+            r'            row_errors\.append\(\n'
+            r'[^\n]*\n'
+            r'            \)\n',
+            "        # -- Địa chỉ (optional - không bắt buộc) --\n\\1",
+            lambda t: re.search(r"Trường bắt buộc 'Địa chỉ' bị để trống", t) is None,
+        ),
+    ])
 
-def get_or_create_site_for_cell(
-    db: Session, rec: Dict[str, Any], tech: str, current_user: Any,
-) -> Tuple[Site, bool]:
-    """
-    Find the Site by site_name; create it when missing (with tram_<tech> = True and
-    a Site revision). Returns (site, created). Commits only when it creates a Site.
-    """
-    site_name = (rec.get("site_name") or "").strip()
-    site = db.query(Site).filter(Site.site_name == site_name).first()
-    if site is not None:
-        return site, False
+    # ------------------------------------------------------------------ #
+    # 4. Frontend: site form
+    # ------------------------------------------------------------------ #
+    patch("frontend/src/pages/sites/SiteFormPage.tsx", [
+        (
+            "dia_chi: remove '*' and required rule",
+            r'(name="dia_chi"\s+)label="Địa chỉ \*"\s+'
+            r"rules=\{\[\{ required: true, message: 'Vui lòng nhập địa chỉ' \}\]\}",
+            r'\1label="Địa chỉ"',
+            lambda t: re.search(r'name="dia_chi"\s+label="Địa chỉ \*"', t) is None,
+        ),
+    ])
 
-    new_site = Site(
-        site_name=site_name,
-        mien=rec.get("mien") or "",
-        tinh=rec.get("tinh") or "",
-        phuong_xa=rec.get("phuong_xa"),
-        lat=rec.get("lat"),
-        long=rec.get("long"),
-        created_by=current_user.id,
-        **{TECH_FLAG[tech]: True},
-    )
-    db.add(new_site)
-    db.flush()
-    record_site_revision(
-        db, new_site, old_snapshot=None,
-        changed_by_id=current_user.id,
-        changed_by_name=current_user.full_name or current_user.username,
-        change_source="excel",
-        change_note=f"Tự động tạo khi import Cell {tech.upper()}",
-    )
-    db.commit()
-    db.refresh(new_site)
-    return new_site, True
-SITEINFO_EOF
-echo "wrote backend/app/services/site_info.py"
+    # ------------------------------------------------------------------ #
+    # 5. Frontend: TypeScript type
+    # ------------------------------------------------------------------ #
+    patch("frontend/src/types/index.ts", [
+        (
+            "Site.dia_chi -> optional",
+            r'^  dia_chi: string$',
+            "  dia_chi?: string",
+            lambda t: re.search(r'^  dia_chi\?: string', t, re.M) is not None,
+        ),
+    ])
 
-# ── 4. optional one-off SQL for EXISTING data (NOT executed) ─────────────────
-mkdir -p backend/scripts
-cat > backend/scripts/one_off_backfill_site_cells.sql <<'SQL_EOF'
--- One-off backfill for data that already exists (PostgreSQL). Review, back up, then run manually.
--- Bypasses the ORM: no revisions are written and updated_at is not touched.
+except PatchError as e:
+    print(f"\nERROR: {e}\nNo file was modified.", file=sys.stderr)
+    sys.exit(2)
 
--- A) cells take mien/tinh/phuong_xa/site_name from their Site (never overwriting with blanks)
-UPDATE cells_3g c SET site_name = s.site_name,
-  mien = COALESCE(NULLIF(s.mien,''), c.mien), tinh = COALESCE(NULLIF(s.tinh,''), c.tinh),
-  phuong_xa = COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa)
-FROM sites s WHERE c.site_id = s.id AND (c.site_name IS DISTINCT FROM s.site_name
-  OR c.mien IS DISTINCT FROM COALESCE(NULLIF(s.mien,''), c.mien)
-  OR c.tinh IS DISTINCT FROM COALESCE(NULLIF(s.tinh,''), c.tinh)
-  OR c.phuong_xa IS DISTINCT FROM COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa));
-UPDATE cells_4g c SET site_name = s.site_name,
-  mien = COALESCE(NULLIF(s.mien,''), c.mien), tinh = COALESCE(NULLIF(s.tinh,''), c.tinh),
-  phuong_xa = COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa)
-FROM sites s WHERE c.site_id = s.id AND (c.site_name IS DISTINCT FROM s.site_name
-  OR c.mien IS DISTINCT FROM COALESCE(NULLIF(s.mien,''), c.mien)
-  OR c.tinh IS DISTINCT FROM COALESCE(NULLIF(s.tinh,''), c.tinh)
-  OR c.phuong_xa IS DISTINCT FROM COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa));
-UPDATE cells_5g c SET site_name = s.site_name,
-  mien = COALESCE(NULLIF(s.mien,''), c.mien), tinh = COALESCE(NULLIF(s.tinh,''), c.tinh),
-  phuong_xa = COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa)
-FROM sites s WHERE c.site_id = s.id AND (c.site_name IS DISTINCT FROM s.site_name
-  OR c.mien IS DISTINCT FROM COALESCE(NULLIF(s.mien,''), c.mien)
-  OR c.tinh IS DISTINCT FROM COALESCE(NULLIF(s.tinh,''), c.tinh)
-  OR c.phuong_xa IS DISTINCT FROM COALESCE(NULLIF(s.phuong_xa,''), c.phuong_xa));
+# All patches matched -> write everything
+for path, original, new in pending:
+    bak = path + ".bak_dia_chi"
+    if not os.path.exists(bak):
+        shutil.copy2(path, bak)
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        f.write(new)
 
--- B) sites that already have cells of a technology get the matching flag
-UPDATE sites SET tram_3g = TRUE WHERE tram_3g IS NOT TRUE AND id IN (SELECT DISTINCT site_id FROM cells_3g);
-UPDATE sites SET tram_4g = TRUE WHERE tram_4g IS NOT TRUE AND id IN (SELECT DISTINCT site_id FROM cells_4g);
-UPDATE sites SET tram_5g = TRUE WHERE tram_5g IS NOT TRUE AND id IN (SELECT DISTINCT site_id FROM cells_5g);
-SQL_EOF
-echo "wrote backend/scripts/one_off_backfill_site_cells.sql (not executed)"
+print(f"\n   {len(pending)} file(s) modified (backups: *.bak_dia_chi).")
+PYEOF
 
-# ── 5. syntax check ──────────────────────────────────────────────────────────
-python3 -m py_compile \
-  backend/app/services/site_info.py backend/app/api/routes/sites.py \
-  backend/app/api/routes/cells_3g.py backend/app/api/routes/cells_4g.py \
-  backend/app/api/routes/cells_5g.py
-echo
-echo "DONE. Restart the backend (uvicorn/gunicorn) to load the changes."
-echo "Originals are in $BK/ – restore with: cp -r $BK/backend/* backend/"
+# ---------------------------------------------------------------------------
+# Syntax check of patched Python files (no .pyc written)
+# ---------------------------------------------------------------------------
+echo "==> Syntax-checking Python files ..."
+for f in \
+  "backend/create_excel_templates.py" \
+  "backend/app/schemas/site.py" \
+  "backend/app/services/import_excel.py"
+do
+  python3 -c "import ast,sys; ast.parse(open(sys.argv[1], encoding='utf-8').read())" \
+    "$PROJECT_ROOT/$f" && echo "   OK  $f"
+done
+
+# ---------------------------------------------------------------------------
+# Review: any other place that still marks dia_chi / Địa chỉ as required
+# ---------------------------------------------------------------------------
+echo "==> Scanning for leftover 'required' markers on dia_chi / Địa chỉ ..."
+if grep -rnE --include='*.py' --include='*.ts' --include='*.tsx' \
+     --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist \
+     -i "(dia_chi|dia chi|địa chỉ).*(required|bắt buộc|bat buoc|\*)|(required|bắt buộc).*(dia_chi|địa chỉ)" \
+     "$PROJECT_ROOT/backend" "$PROJECT_ROOT/frontend/src" 2>/dev/null \
+   | grep -v "không bắt buộc" | grep -v "\.bak_dia_chi"; then
+  echo "   ^^^ Please review the lines above (files not included in your description may need a manual tweak)."
+else
+  echo "   Nothing found."
+fi
+
+# ---------------------------------------------------------------------------
+# Docker steps (DB column, template regeneration, backend restart)
+# ---------------------------------------------------------------------------
+PG_SQL="ALTER TABLE sites ALTER COLUMN dia_chi DROP NOT NULL;"
+
+if [ "$APPLY_DOCKER" = "1" ]; then
+  echo "==> Docker steps ..."
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    echo "   docker is not available/accessible - skipping."
+  else
+    # --- detect postgres container
+    PG_CONTAINER="${PG_CONTAINER:-}"
+    if [ -z "$PG_CONTAINER" ]; then
+      mapfile -t _pg < <(docker ps --format '{{.Names}} {{.Image}}' | awk 'tolower($0) ~ /postgres/ {print $1}')
+      if [ "${#_pg[@]}" -eq 1 ]; then PG_CONTAINER="${_pg[0]}"; fi
+    fi
+    # --- detect backend container
+    BACKEND_CONTAINER="${BACKEND_CONTAINER:-}"
+    if [ -z "$BACKEND_CONTAINER" ]; then
+      for c in $(docker ps --format '{{.Names}}'); do
+        if docker exec "$c" test -f /app/app/utils/template_regen.py >/dev/null 2>&1; then
+          BACKEND_CONTAINER="$c"; break
+        fi
+      done
+    fi
+
+    # 1) DB: make sure the column is nullable (idempotent, harmless if already nullable)
+    if [ -n "$PG_CONTAINER" ]; then
+      echo "   [db] $PG_CONTAINER: $PG_SQL"
+      docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG_CONTAINER" \
+        psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$PG_SQL" \
+        || echo "   [db] WARNING: could not alter column (run the SQL manually)."
+    else
+      echo "   [db] postgres container not found. Set PG_CONTAINER=<name> or run manually:"
+      echo "        $PG_SQL"
+    fi
+
+    # 2) Regenerate Excel templates + 3) restart backend so new Python code is loaded
+    if [ -n "$BACKEND_CONTAINER" ]; then
+      echo "   [templates] regenerating inside $BACKEND_CONTAINER ..."
+      docker exec "$BACKEND_CONTAINER" python -c \
+        "from app.utils.template_regen import _do_regen; _do_regen()" \
+        || echo "   [templates] WARNING: regeneration failed (check logs)."
+      echo "   [backend] restarting $BACKEND_CONTAINER ..."
+      docker restart "$BACKEND_CONTAINER" >/dev/null && echo "   [backend] restarted."
+    else
+      echo "   [backend] container not found. Set BACKEND_CONTAINER=<name>."
+    fi
+  fi
+else
+  cat <<EOF
+
+==> Code patched. Remaining (manual) steps:
+
+  1) DB (only needed if the column was ever created NOT NULL; harmless otherwise):
+       docker exec -e PGPASSWORD=$POSTGRES_PASSWORD <postgres_container> \\
+         psql -U $POSTGRES_USER -d $POSTGRES_DB -c "$PG_SQL"
+
+  2) Reload the backend so the new Python code is used, and regenerate the
+     Excel templates (template_regen runs automatically on startup/data change;
+     or force it):
+       docker exec <backend_container> python -c \\
+         "from app.utils.template_regen import _do_regen; _do_regen()"
+       docker restart <backend_container>
+     (If the backend code is baked into the image rather than bind-mounted:
+       docker compose up -d --build backend)
+
+  3) Frontend: restart 'npm run dev', or rebuild with 'npm run build'.
+
+  Or let this script do 1) and 2) for you:
+       APPLY_DOCKER=1 bash $0 "$PROJECT_ROOT"
+
+  Rollback: for f in \$(find "$PROJECT_ROOT" -name '*.bak_dia_chi' -not -path '*/node_modules/*'); do mv "\$f" "\${f%.bak_dia_chi}"; done
+EOF
+fi
+
+echo "==> Done."

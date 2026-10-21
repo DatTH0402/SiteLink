@@ -235,8 +235,7 @@ export default function SiteFormPage() {
             <Col span={24}>
               <Form.Item
                 name="dia_chi"
-                label="Địa chỉ *"
-                rules={[{ required: true, message: 'Vui lòng nhập địa chỉ' }]}
+                label="Địa chỉ"
               >
                 <Input.TextArea rows={2} placeholder="Nhập địa chỉ đầy đủ của trạm..." />
               </Form.Item>

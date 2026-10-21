@@ -634,7 +634,6 @@ SITE_REQUIRED = {
     "Site name",
     "Lat",
     "Long",
-    "Dia chi",
     "Do cao dinh cot anten",
 }
 
@@ -664,7 +663,7 @@ def create_site_template() -> None:
         ("MORAN 5G",              "MORAN 5G: VNPT HOST hoặc MBF HOST",                        18,  False),
         ("Do cao dinh cot anten", "Độ cao đỉnh cột anten tới mặt đất – bắt buộc (số hoặc chuỗi, vd: 35 hoặc IBC)", 22, True),
         ("Do cao cot anten",      "Độ cao cột anten – đỉnh đến chân cột (số hoặc chuỗi, vd: 30 hoặc IBC)", 20, False),
-        ("Dia chi",               "Địa chỉ chi tiết của trạm – bắt buộc",                     30,  True),
+        ("Dia chi",               "Địa chỉ chi tiết của trạm – không bắt buộc",                     30,  False),
         ("Ghi chu",               "Ghi chú thêm",                                              30,  False),
     ]
 

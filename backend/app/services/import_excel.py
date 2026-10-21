@@ -30,7 +30,6 @@ SITE_REQUIRED_FIELDS = {
     "site_name":             "Site name",
     "lat":                   "Lat",
     "long":                  "Long",
-    "dia_chi":               "Địa chỉ",
     "do_cao_dinh_cot_anten": "Độ cao đỉnh cột anten tới mặt đất",
 }
 
@@ -475,12 +474,8 @@ def parse_site_excel(file_bytes: bytes, db=None, dry_run: bool = False) -> Dict[
         lat  = _validate_lat(raw_lat,  row_num, label, row_errors, required=True)
         long = _validate_lon(raw_long, row_num, label, row_errors, required=True)
 
-        # ── Địa chỉ (required) ────────────────────────────────────────────────
+        # -- Địa chỉ (optional - không bắt buộc) --
         dia_chi_val = _v_aware(row, excel_cols, "Địa chỉ", "Dia chi", "dia_chi")
-        if dia_chi_val is None or dia_chi_val is _CLEAR:
-            row_errors.append(
-                f"Row {row_num} ({label}): Trường bắt buộc 'Địa chỉ' bị để trống."
-            )
 
         # ── Độ cao đỉnh cột anten (required, now STRING) ──────────────────────
         raw_dcant = _str_aware(row, excel_cols,

@@ -33,7 +33,7 @@ export interface Site {
   ma_ptm?: string
   do_cao_dinh_cot_anten?: string   // changed: number → string
   do_cao_cot_anten?: string        // changed: number → string
-  dia_chi: string
+  dia_chi?: string
   ghi_chu?: string
 }
 

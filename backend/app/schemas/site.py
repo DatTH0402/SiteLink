@@ -58,8 +58,6 @@ class SiteCreate(SiteBase):
                 f"'long' = {self.long} nằm ngoài phạm vi Việt Nam (102.14 – 109.47)."
             )
 
-        if not self.dia_chi or not str(self.dia_chi).strip():
-            errors.append("'dia_chi' (Địa chỉ) là trường bắt buộc.")
 
         if not self.do_cao_dinh_cot_anten or not str(self.do_cao_dinh_cot_anten).strip():
             errors.append("'do_cao_dinh_cot_anten' (Độ cao đỉnh cột anten) là trường bắt buộc.")

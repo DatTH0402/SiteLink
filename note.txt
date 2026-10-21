@@ -6,3 +6,6 @@ docker exec sitelink_postgres pg_dump -U sitelink -d sitelink_db -Fc \
 docker exec -i sitelink_postgres psql -U sitelink -d sitelink_db \
   -v ON_ERROR_STOP=1 -1 -f - \
   < backend/scripts/one_off_backfill_site_cells.sql
+
+
+3. Must schedule the "update_cells_with_revision.py" and "ops/backup_db.sh" daily.
