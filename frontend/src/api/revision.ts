@@ -51,6 +51,7 @@ export interface CellRevisionBase {
   site_name_old?: string
   cell_name: string
   cell_name_old?: string
+  subcell_id?: string
   revision_no: number
   changed_by_name: string
   change_source: 'form' | 'excel' | 'script'

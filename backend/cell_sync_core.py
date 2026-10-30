@@ -708,15 +708,21 @@ def load_vendor_data(tech: str, vendors: Optional[Set[str]] = None) -> pd.DataFr
 # ═════════════════════════════════════════════════════════════════════════════
 #  DB helpers
 # ═════════════════════════════════════════════════════════════════════════════
-def fetch_current_cells(conn: Connection, table: str, cell_names: List[str]) -> Dict[str, Dict]:
-    result: Dict[str, Dict] = {}
+def fetch_current_cells(conn: Connection, table: str, cell_names: List[str]) -> Dict[str, List[Dict]]:
+    """cell_name -> ALL DB rows carrying that name (cells sharing a name differ by subcell_id)."""
+    result: Dict[str, List[Dict]] = {}
+    n_rows = 0
     for i in range(0, len(cell_names), 500):
         batch = cell_names[i:i + 500]
         ph = ", ".join(f":n{j}" for j in range(len(batch)))
         params = {f"n{j}": n for j, n in enumerate(batch)}
-        rows = conn.execute(text(f"SELECT * FROM {table} WHERE cell_name IN ({ph})"), params).mappings().all()
-        result.update({row["cell_name"]: dict(row) for row in rows})
-    log.info("fetch_current_cells %s: requested=%d found=%d", table, len(cell_names), len(result))
+        rows = conn.execute(
+            text(f"SELECT * FROM {table} WHERE cell_name IN ({ph}) ORDER BY id"), params).mappings().all()
+        for row in rows:
+            result.setdefault(row["cell_name"], []).append(dict(row))
+            n_rows += 1
+    log.info("fetch_current_cells %s: requested=%d names_found=%d rows=%d",
+             table, len(cell_names), len(result), n_rows)
     return result
 
 
@@ -740,7 +746,7 @@ def _diff(old: Dict, new: Dict) -> Dict:
 # ── revision writer (one generic INSERT per tech) ────────────────────────────
 _REV_BASE_COLS = [
     "site_id", "site_name", "cell_name", "mien", "tinh", "phuong_xa",
-    "site_name_old", "cell_name_old", "cell_vip", "moran", "lat", "long",
+    "site_name_old", "cell_name_old", "subcell_id", "cell_vip", "moran", "lat", "long",
     "vung_phu_song", "vendor", "do_cao_anten", "azimuth", "m_tilt", "e_tilt",
     "total_tilt", "loai_anten",
 ]
@@ -835,35 +841,40 @@ def sync_cells(
         # Phase 1: read
         with eng.connect() as conn:
             current_map = fetch_current_cells(conn, table_name, cell_names)
-            rev_no_map  = fetch_max_revision_nos(conn, rev_tbl, [r["id"] for r in current_map.values()])
+            rev_no_map  = fetch_max_revision_nos(conn, rev_tbl, [r["id"] for rows in current_map.values() for r in rows])
 
         # Phase 2: plan (in memory)
         plans: List[Dict[str, Any]] = []
         for name in cell_names:
-            cur = current_map.get(name)
-            if not cur:
+            cur_rows = current_map.get(name)
+            if not cur_rows:
                 stats["not_in_db"] += 1
                 continue
             src = source_map.get(name)
             if src is None:
-                stats["not_in_csv"] += 1
+                stats["not_in_csv"] += len(cur_rows)
                 continue
 
+            # The source CSVs are keyed by cell_name ONLY. Cells that share a cell_name
+            # (they differ by subcell_id) therefore all receive the same synced values.
             eff_cols  = [c for c in cols if src.get(c) != _KEEP]
             new_vals  = {c: _clean(src.get(c)) for c in eff_cols}
             meta_vals = {c: _clean(src.get(c)) for c in META_COLUMNS}
-            diff      = _diff({c: cur.get(c) for c in eff_cols}, new_vals)
-            meta_changed = any(_canon(cur.get(k)) != _canon(v) for k, v in meta_vals.items())
 
-            if diff:
-                rev_no = rev_no_map.get(cur["id"], 0) + 1
-                rev_no_map[cur["id"]] = rev_no
-                plans.append({"kind": "full", "name": name, "cur": cur, "new_vals": new_vals,
-                              "meta_vals": meta_vals, "diff": diff, "rev_no": rev_no})
-            elif meta_changed:
-                plans.append({"kind": "meta", "name": name, "cur": cur, "meta_vals": meta_vals})
-            else:
-                stats["skipped"] += 1
+            for cur in cur_rows:
+                label = f"{name} [{cur['subcell_id']}]" if _canon(cur.get("subcell_id")) else name
+                diff  = _diff({c: cur.get(c) for c in eff_cols}, new_vals)
+                meta_changed = any(_canon(cur.get(k)) != _canon(v) for k, v in meta_vals.items())
+
+                if diff:
+                    rev_no = rev_no_map.get(cur["id"], 0) + 1
+                    rev_no_map[cur["id"]] = rev_no
+                    plans.append({"kind": "full", "name": label, "cur": cur, "new_vals": new_vals,
+                                  "meta_vals": meta_vals, "diff": diff, "rev_no": rev_no})
+                elif meta_changed:
+                    plans.append({"kind": "meta", "name": label, "cur": cur, "meta_vals": meta_vals})
+                else:
+                    stats["skipped"] += 1
 
         n_full = sum(p["kind"] == "full" for p in plans)
         n_meta = len(plans) - n_full

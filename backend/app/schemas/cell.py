@@ -3,7 +3,7 @@ schemas/cell.py
 """
 from __future__ import annotations
 from typing import Optional
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class CellBase(BaseModel):
@@ -12,6 +12,7 @@ class CellBase(BaseModel):
     site_name_old:  Optional[str]   = None
     cell_name:      Optional[str]   = None
     cell_name_old:  Optional[str]   = None
+    subcell_id:     Optional[str]   = None   # Subcell-ID (optional)
     mien:           Optional[str]   = None
     tinh:           Optional[str]   = None
     phuong_xa:      Optional[str]   = None
@@ -36,6 +37,19 @@ class CellBase(BaseModel):
     cell_max_power: Optional[str]   = None
     dump_date:      Optional[str]   = None
     oss:            Optional[str]   = None
+
+    @field_validator("subcell_id", mode="before")
+    @classmethod
+    def _normalize_subcell_id(cls, v):
+        # '' / whitespace -> None.  Cell identity = (site, cell_name, subcell_id)
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if len(s) > 50:
+            raise ValueError("'subcell_id' tối đa 50 ký tự.")
+        return s
 
     model_config = {"from_attributes": True}
 
@@ -101,6 +115,7 @@ class CellUpdate(BaseModel):
     site_name_old:  Optional[str]   = None
     cell_name:      Optional[str]   = None
     cell_name_old:  Optional[str]   = None
+    subcell_id:     Optional[str]   = None   # Subcell-ID (optional)
     mien:           Optional[str]   = None
     tinh:           Optional[str]   = None
     phuong_xa:      Optional[str]   = None
@@ -125,6 +140,19 @@ class CellUpdate(BaseModel):
     cell_max_power: Optional[str]   = None
     dump_date:      Optional[str]   = None
     oss:            Optional[str]   = None
+
+    @field_validator("subcell_id", mode="before")
+    @classmethod
+    def _normalize_subcell_id(cls, v):
+        # '' / whitespace -> None.  Cell identity = (site, cell_name, subcell_id)
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if len(s) > 50:
+            raise ValueError("'subcell_id' tối đa 50 ký tự.")
+        return s
 
     model_config = {"from_attributes": True}
 

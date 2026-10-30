@@ -22,6 +22,7 @@ class Cell3GRevision(Base):
     phuong_xa      = Column(String(150))
     site_name_old  = Column(String(100))
     cell_name_old  = Column(String(100))
+    subcell_id     = Column(String(50), nullable=True)   # optional: tells apart cells sharing one cell_name
     cell_vip       = Column(String(10))
     moran          = Column(String(50))
     lat            = Column(Float)
@@ -77,6 +78,7 @@ class Cell4GRevision(Base):
     phuong_xa        = Column(String(150))
     site_name_old    = Column(String(100))
     cell_name_old    = Column(String(100))
+    subcell_id       = Column(String(50), nullable=True)   # optional: tells apart cells sharing one cell_name
     cell_vip         = Column(String(10))
     moran            = Column(String(50))
     lat              = Column(Float)
@@ -131,6 +133,7 @@ class Cell5GRevision(Base):
     phuong_xa        = Column(String(150))
     site_name_old    = Column(String(100))
     cell_name_old    = Column(String(100))
+    subcell_id       = Column(String(50), nullable=True)   # optional: tells apart cells sharing one cell_name
     cell_vip         = Column(String(10))
     moran            = Column(String(50))
     lat              = Column(Float)

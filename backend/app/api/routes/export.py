@@ -143,7 +143,8 @@ SITE_COLS = [
 _CELL_HEAD = [
     ("Mien", 8, "mien"), ("Tinh", 22, "tinh"), ("Phuong xa", 22, "phuong_xa"),
     ("Site Name", 25, "site_name"), ("Site Name Old", 22, "site_name_old"),
-    ("Cell Name", 25, "cell_name"), ("Cell Name Old", 22, "cell_name_old"),
+    ("Cell Name", 25, "cell_name"), ("Subcell-ID", 14, "subcell_id"),
+    ("Cell Name Old", 22, "cell_name_old"),
     ("Cell VIP", 10, "cell_vip"), ("MORAN", 15, "moran"),
     ("Lat", 14, "lat"), ("Long", 14, "long"),
     ("Vung phu song", 15, "vung_phu_song"), ("Vendor", 14, "vendor"),

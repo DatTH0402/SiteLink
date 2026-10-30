@@ -47,6 +47,7 @@ export interface CellBase {
   site_name_old?: string
   cell_name: string
   cell_name_old?: string
+  subcell_id?: string        // optional - tells apart cells sharing one cell_name
   cell_vip?: string
   moran?: string
   lat: number

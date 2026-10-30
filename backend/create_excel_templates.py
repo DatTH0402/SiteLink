@@ -785,7 +785,10 @@ _CELL_COLS_HEAD: List[Tuple[str, str, float, bool]] = [
     ("Phuong xa",      "Phường / Xã – chọn từ danh sách. " + _GEO_NOTE,               28,  False),
     ("Site Name",      "Tên site – bắt buộc, phải khớp với site đã có",               28,  True),
     ("Site Name Old",  "Tên site cũ – điền khi site vừa đổi tên",                     24,  False),
-    ("Cell Name",      "Tên cell – bắt buộc, duy nhất trong site (vd: HNIHKM44DI4DA)", 28,  True),
+    ("Cell Name",      "Tên cell – bắt buộc; (Cell Name + Subcell-ID) phải duy nhất trong site (vd: HNIHKM44DI4DA)", 28,  True),
+    ("Subcell-ID",     "Subcell-ID – KHÔNG bắt buộc. Chỉ điền khi nhiều cell trùng Cell Name: "
+                       "(Site Name + Cell Name + Subcell-ID) xác định duy nhất 1 cell. "
+                       "Để trống nếu Cell Name đã đủ phân biệt",                      14,  False),
     ("Cell Name Old",  "Tên cell cũ – điền khi cell vừa đổi tên",                     24,  False),
     ("Cell VIP",       "Mức độ VIP: VIP hoặc VVIP",                                   10,  False),
     ("MORAN",          "MORAN: VNPT HOST hoặc MBF HOST",                               18,  False),
@@ -925,6 +928,24 @@ _CELL_GEO_IMPORT_RULES: List[Tuple[str, str]] = [
 ]
 
 
+_CELL_SUBCELL_IMPORT_RULES: List[Tuple[str, str]] = [
+    ("Subcell-ID (không bắt buộc)",
+     "→ Dùng khi nhiều cell có cùng Cell Name. Một cell được xác định bởi "
+     "(Site Name + Cell Name + Subcell-ID)"),
+    ("Subcell-ID để trống / không có cột",
+     "→ Chỉ dùng Cell Name để tìm cell (cell chưa có Subcell-ID, hoặc cell duy nhất mang tên đó). "
+     "Nếu nhiều cell trùng tên và đều đã có Subcell-ID → báo lỗi, cần điền Subcell-ID"),
+    ("Cùng Cell Name, khác Subcell-ID",
+     "→ Là các cell khác nhau: mỗi dòng được tạo mới / cập nhật riêng"),
+    ("Cùng Cell Name + cùng Subcell-ID",
+     "→ Là cùng 1 cell: cập nhật bản ghi hiện có (UPDATE). 2 dòng trùng nhau trong file → báo lỗi"),
+    ("Đổi Subcell-ID của cell đã có",
+     "→ Không thực hiện được bằng Excel (sẽ bị coi là cell mới). Hãy sửa trên form Chỉnh sửa Cell"),
+    ("Đồng bộ dữ liệu từ hệ thống nguồn (CSV)",
+     "→ Chỉ dùng Cell Name: các cell trùng tên (khác Subcell-ID) nhận cùng giá trị đồng bộ"),
+]
+
+
 def _finish_cell_template(
     wb: Workbook,
     ws: Worksheet,
@@ -934,13 +955,17 @@ def _finish_cell_template(
     filename: str,
     sample: Dict[str, Any],
 ) -> None:
+    # Subcell-ID is an identifier: keep it as TEXT so Excel never turns "001" into 1
+    if "Subcell-ID" in cm:
+        for _r in range(FIRST_DATA, LAST_DATA + 1):
+            ws.cell(row=_r, column=cm["Subcell-ID"]).number_format = "@"
     for k, v in sample.items():
         if k in cm:
             ws.cell(row=FIRST_DATA, column=cm[k], value=v)
 
     column_notes = [(h, note, req) for h, note, _w, req in all_cols]
     _add_legend_sheet(wb, tech_label, column_notes,
-                      extra_import_rules=_CELL_GEO_IMPORT_RULES)
+                      extra_import_rules=_CELL_GEO_IMPORT_RULES + _CELL_SUBCELL_IMPORT_RULES)
     _finalize_sheets(wb)
 
     path = os.path.join(OUTPUT_DIR, filename)

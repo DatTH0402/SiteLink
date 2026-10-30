@@ -236,6 +236,7 @@ export default function Cells3GPage() {
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220,
       ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Subcell-ID', dataIndex: 'subcell_id', fixed: 'left', width: 110 },
     { title: 'Cell VIP',  dataIndex: 'cell_vip',  width: 90,
       render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN',    dataIndex: 'moran',         width: 120 },
@@ -404,6 +405,12 @@ export default function Cells3GPage() {
             <Col span={12}>
               <Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}>
                 <Input />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="subcell_id" label="Subcell-ID"
+                tooltip="Không bắt buộc. Chỉ nhập khi nhiều cell trùng Cell Name – (Cell Name + Subcell-ID) xác định duy nhất 1 cell.">
+                <Input placeholder="Để trống nếu Cell Name đã đủ phân biệt" maxLength={50} />
               </Form.Item>
             </Col>
             <Col span={6}>

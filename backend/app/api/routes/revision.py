@@ -118,6 +118,7 @@ def list_cell3g_revisions(
     cell_id:   Optional[int] = Query(None),
     site_name: Optional[str] = Query(None),
     cell_name: Optional[str] = Query(None),
+    subcell_id: Optional[str] = Query(None),
     skip:      int = 0,
     limit:     int = 200,
     db: Session = Depends(get_db),
@@ -136,6 +137,8 @@ def list_cell3g_revisions(
             Cell3GRevision.cell_name.ilike(f"%{cell_name}%") |
             Cell3GRevision.cell_name_old.ilike(f"%{cell_name}%")
         )
+    if subcell_id:
+        q = q.filter(Cell3GRevision.subcell_id.ilike(f"%{subcell_id}%"))
     rows = (
         q.order_by(desc(Cell3GRevision.created_at))
          .offset(skip).limit(limit).all()
@@ -148,6 +151,7 @@ def list_cell3g_revisions(
             "site_name_old": r.site_name_old,
             "cell_name":     r.cell_name,
             "cell_name_old": r.cell_name_old,
+            "subcell_id": r.subcell_id,
             "mien":          r.mien,
             "tinh":          r.tinh,
             "phuong_xa":     r.phuong_xa,
@@ -204,6 +208,7 @@ def list_cell4g_revisions(
     cell_id:   Optional[int] = Query(None),
     site_name: Optional[str] = Query(None),
     cell_name: Optional[str] = Query(None),
+    subcell_id: Optional[str] = Query(None),
     skip:      int = 0,
     limit:     int = 200,
     db: Session = Depends(get_db),
@@ -222,6 +227,8 @@ def list_cell4g_revisions(
             Cell4GRevision.cell_name.ilike(f"%{cell_name}%") |
             Cell4GRevision.cell_name_old.ilike(f"%{cell_name}%")
         )
+    if subcell_id:
+        q = q.filter(Cell4GRevision.subcell_id.ilike(f"%{subcell_id}%"))
     rows = (
         q.order_by(desc(Cell4GRevision.created_at))
          .offset(skip).limit(limit).all()
@@ -234,6 +241,7 @@ def list_cell4g_revisions(
             "site_name_old":  r.site_name_old,
             "cell_name":      r.cell_name,
             "cell_name_old":  r.cell_name_old,
+            "subcell_id": r.subcell_id,
             "mien":           r.mien,
             "tinh":           r.tinh,
             "phuong_xa":      r.phuong_xa,
@@ -296,6 +304,7 @@ def list_cell5g_revisions(
     cell_id:   Optional[int] = Query(None),
     site_name: Optional[str] = Query(None),
     cell_name: Optional[str] = Query(None),
+    subcell_id: Optional[str] = Query(None),
     skip:      int = 0,
     limit:     int = 200,
     db: Session = Depends(get_db),
@@ -314,6 +323,8 @@ def list_cell5g_revisions(
             Cell5GRevision.cell_name.ilike(f"%{cell_name}%") |
             Cell5GRevision.cell_name_old.ilike(f"%{cell_name}%")
         )
+    if subcell_id:
+        q = q.filter(Cell5GRevision.subcell_id.ilike(f"%{subcell_id}%"))
     rows = (
         q.order_by(desc(Cell5GRevision.created_at))
          .offset(skip).limit(limit).all()
@@ -326,6 +337,7 @@ def list_cell5g_revisions(
             "site_name_old":    r.site_name_old,
             "cell_name":        r.cell_name,
             "cell_name_old":    r.cell_name_old,
+            "subcell_id": r.subcell_id,
             "mien":             r.mien,
             "tinh":             r.tinh,
             "phuong_xa":        r.phuong_xa,

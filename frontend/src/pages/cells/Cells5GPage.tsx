@@ -205,6 +205,7 @@ export default function Cells5GPage() {
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true } },
     { title: 'Site Name', dataIndex: 'site_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
     { title: 'Cell Name', dataIndex: 'cell_name', fixed: 'left', width: 220, ellipsis: { showTitle: true }, render: (v: string) => <strong>{v}</strong> },
+    { title: 'Subcell-ID', dataIndex: 'subcell_id', fixed: 'left', width: 110 },
     { title: 'Cell VIP', dataIndex: 'cell_vip', width: 90, render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
     { title: 'MORAN', dataIndex: 'moran', width: 120 },
     { title: 'Lat', dataIndex: 'lat', width: 110 },
@@ -364,6 +365,12 @@ export default function Cells5GPage() {
             </Form.Item></Col>
             <Col span={12}><Form.Item name="cell_name_old" label="Cell Name Old"><Input /></Form.Item></Col>
             <Col span={12}><Form.Item name="cell_name" label="Cell Name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col span={12}>
+              <Form.Item name="subcell_id" label="Subcell-ID"
+                tooltip="Không bắt buộc. Chỉ nhập khi nhiều cell trùng Cell Name – (Cell Name + Subcell-ID) xác định duy nhất 1 cell.">
+                <Input placeholder="Để trống nếu Cell Name đã đủ phân biệt" maxLength={50} />
+              </Form.Item>
+            </Col>
             <Col span={6}><Form.Item name="cell_vip" label="Cell VIP">
               <Select allowClear><Select.Option value="VIP">VIP</Select.Option><Select.Option value="VVIP">VVIP</Select.Option></Select>
             </Form.Item></Col>

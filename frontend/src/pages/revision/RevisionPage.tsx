@@ -396,6 +396,8 @@ function makeCommonCellColumns(): ColumnsType<CellRevisionBase> {
         </Space>
       ),
     },
+    { title: 'Subcell-ID', dataIndex: 'subcell_id', width: 100, fixed: 'left',
+      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
     { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true },
       render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
     { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true },
@@ -553,6 +555,7 @@ function CellRevisionTab({
 }) {
   const [siteName, setSiteName] = useState('')
   const [cellName, setCellName] = useState('')
+  const [subcellId, setSubcellId] = useState('')
   const [tinh,     setTinh]     = useState<string | undefined>()
   const [data,     setData]     = useState<CellRevisionBase[]>([])
   const { pagination } = useTablePagination(data.length, 'phiên bản')
@@ -564,10 +567,11 @@ function CellRevisionTab({
       const params: Record<string, unknown> = { limit: 500 }
       if (siteName.trim()) params.site_name = siteName.trim()
       if (cellName.trim()) params.cell_name = cellName.trim()
+      if (subcellId.trim()) params.subcell_id = subcellId.trim()
       const rows = await fetchFn(params)
       setData(tinh ? rows.filter(r => r.tinh === tinh) : rows)
     } finally { setLoading(false) }
-  }, [siteName, cellName, tinh, fetchFn])
+  }, [siteName, cellName, subcellId, tinh, fetchFn])
 
   useEffect(() => { load() }, [load])
 
@@ -597,6 +601,12 @@ function CellRevisionTab({
             value={cellName} onChange={e => setCellName(e.target.value)}
             onPressEnter={load} allowClear />
         </Col>
+        <Col flex="170px">
+          <Input prefix={<SearchOutlined />}
+            placeholder="Subcell-ID..."
+            value={subcellId} onChange={e => setSubcellId(e.target.value)}
+            onPressEnter={load} allowClear />
+        </Col>
         <Col>
           <TinhFilter tinhList={tinhList} value={tinh} onChange={setTinh} />
         </Col>
@@ -607,7 +617,7 @@ function CellRevisionTab({
         </Col>
         <Col>
           <Button icon={<ReloadOutlined />}
-            onClick={() => { setSiteName(''); setCellName(''); setTinh(undefined) }}>
+            onClick={() => { setSiteName(''); setCellName(''); setSubcellId(''); setTinh(undefined) }}>
             Xóa lọc
           </Button>
         </Col>

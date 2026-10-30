@@ -16,6 +16,7 @@ from app.utils.audit import log_action
 from app.models.user import User
 from app.services.import_excel import parse_cell3g_excel, _CLEAR
 from app.services.revision import record_cell3g_revision, _cell3g_snapshot
+from app.services.cell_identity import assert_no_duplicate, norm_subcell
 
 router = APIRouter()
 register_listing_routes(router, Cell3G, "cell")  # GET /ids, GET /distinct/{column}
@@ -126,7 +127,7 @@ def bulk_update(
         raise HTTPException(status_code=400, detail="No IDs provided")
     if not changes:
         raise HTTPException(status_code=400, detail="No changes provided")
-    for f in ("id", "cell_name", "site_id", "created_by", "created_at", "updated_at"):
+    for f in ("id", "cell_name", "subcell_id", "site_id", "created_by", "created_at", "updated_at"):
         changes.pop(f, None)
     errors, updated = [], 0
     for cid in ids:
@@ -291,6 +292,8 @@ def create_cell(
     site = db.query(Site).filter(Site.id == payload.site_id).first()
     if not site:
         raise HTTPException(status_code=400, detail=f"Site id={payload.site_id} not found.")
+    # a cell is identified by (site, cell_name, subcell_id)
+    assert_no_duplicate(db, Cell3G, site.id, payload.cell_name, payload.subcell_id)
     cell = Cell3G(**apply_site_info(payload.model_dump(), site), created_by=current_user.id)
     ensure_site_tech_flag(
         db, site, "3g",
@@ -320,6 +323,15 @@ def update_cell(
     old_snap = _cell3g_snapshot(cell)
     old_dict = {c.name: getattr(cell, c.name) for c in cell.__table__.columns}
     data     = payload.model_dump(exclude_unset=True)
+    if {"cell_name", "subcell_id", "site_id"} & set(data):
+        _new_name = data.get("cell_name", cell.cell_name)
+        _new_sub  = data.get("subcell_id", cell.subcell_id)
+        _new_site = data.get("site_id", cell.site_id)
+        if (_new_name != cell.cell_name
+                or norm_subcell(_new_sub) != norm_subcell(cell.subcell_id)
+                or _new_site != cell.site_id):
+            # identity = (site, cell_name, subcell_id); only checked when it actually changes
+            assert_no_duplicate(db, Cell3G, _new_site, _new_name, _new_sub, exclude_id=cell.id)
     for k, v in data.items():
         setattr(cell, k, v)
     db.flush()

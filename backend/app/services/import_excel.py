@@ -729,12 +729,20 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
     # ── Total Tilt (optional, now STRING) ─────────────────────────────────────
     total_tilt_val = _str_aware(row, excel_cols, "Total Tilt", "Total tilt", "total_tilt")
 
+    # ── Subcell-ID (optional; blank = clear, column absent = untouched) ───────
+    subcell_val = _v_aware(row, excel_cols, *SUBCELL_COLUMN_NAMES)
+    if isinstance(subcell_val, str) and len(subcell_val) > SUBCELL_MAX_LEN:
+        errors_out.append(
+            f"Row {row_num} ({label}): 'Subcell-ID' dài quá {SUBCELL_MAX_LEN} ký tự."
+        )
+
     return {
         "mien": mien, "tinh": tinh_official, "phuong_xa": phuong_xa_official,
         "site_name":     _v(row, "Site Name", "Site name", "site_name") or "",
         "site_name_old": _v_aware(row, excel_cols, "Site Name Old", "Site name old",
                                    "site_name_old", "Site Name (cũ)", "Site name (cu)"),
         "cell_name":     cell_name,
+        "subcell_id":    subcell_val,
         "cell_name_old": _v_aware(row, excel_cols, "Cell Name Old", "Cell name old",
                                    "cell_name_old", "Cell Name (cũ)"),
         "cell_vip":      cell_vip_val,
@@ -763,6 +771,47 @@ def _cell_common_aware(row: Dict, excel_cols: Set[str],
 
 # ── Core cell Excel parser ─────────────────────────────────────────────────────
 
+# ── Subcell-ID support ─────────────────────────────────────────────────────────
+# A cell is identified by (Site Name, Cell Name, Subcell-ID). Subcell-ID is optional:
+# when it is empty, Cell Name alone identifies the cell.
+from app.services.cell_identity import norm_subcell, subcell_clause  # noqa: E402
+
+SUBCELL_COLUMN_NAMES = (
+    "Subcell-ID", "Subcell ID", "SubCell-ID", "SubCell ID", "Subcell_ID",
+    "SUBCELL-ID", "SUBCELL ID", "subcell_id",
+)
+SUBCELL_MAX_LEN = 50
+
+
+def _norm_subcell(v: Any) -> Optional[str]:
+    return None if v is _CLEAR else norm_subcell(v)
+
+
+def _find_existing_cell(db, Model, name: str, sub: Optional[str], site_id: Optional[int]):
+    """
+    Return (cell | None, ambiguous_count).
+      Subcell-ID given -> exact (cell_name, subcell_id) match only.
+      Subcell-ID empty (or column absent) -> cell_name alone is enough:
+          the cell WITHOUT a Subcell-ID if there is one, otherwise the single cell
+          carrying that name. Several cells with other Subcell-IDs -> ambiguous.
+    """
+    q = db.query(Model).filter(Model.cell_name == name)
+    if site_id is not None:
+        q = q.filter(Model.site_id == site_id)
+    q = q.order_by(Model.id)
+    if sub is not None:
+        return q.filter(subcell_clause(Model, sub)).first(), 0
+    rows = q.limit(100).all()
+    if not rows:
+        return None, 0
+    blank = [r for r in rows if norm_subcell(r.subcell_id) is None]
+    if blank:
+        return blank[0], 0
+    if len(rows) == 1:
+        return rows[0], 0
+    return None, len(rows)
+
+
 def _parse_cell_excel(
     file_bytes, Model, extra_fields_fn, db=None, dry_run=False
 ) -> Dict[str, Any]:
@@ -778,6 +827,7 @@ def _parse_cell_excel(
     errors:            List[str]  = []
     fatal_rows:        Set[int]   = set()
     pending_new_sites: Dict[str, Dict] = {}
+    seen_keys: Dict[tuple, int] = {}      # (site, cell, subcell) -> first row number
 
     from app.models.site import Site
 
@@ -827,6 +877,20 @@ def _parse_cell_excel(
 
         rec = {**common, **extra}
 
+        # ── Cell identity = (Site Name, Cell Name, Subcell-ID) ────────────────
+        sub_key = _norm_subcell(common.get("subcell_id"))
+        sub_sfx = f" [{sub_key}]" if sub_key else ""
+        dup_key = (site_name.strip(), cell_name.strip(), sub_key or "")
+        if dup_key in seen_keys:
+            errors.append(
+                f"Row {row_num} ({cell_name}{sub_sfx}): Trùng lặp trong file – cell này "
+                f"(Site Name + Cell Name + Subcell-ID) đã xuất hiện ở dòng {seen_keys[dup_key]}. "
+                f"Nếu nhiều cell trùng Cell Name, hãy điền Subcell-ID khác nhau."
+            )
+            fatal_rows.add(row_num)
+            continue
+        seen_keys[dup_key] = row_num
+
         site_obj = None
         if db:
             site_obj = db.query(Site).filter(Site.site_name == site_name).first()
@@ -855,37 +919,46 @@ def _parse_cell_excel(
 
         existing_cell = None
         if db:
-            if site_obj:
-                existing_cell = db.query(Model).filter(
-                    Model.site_id == site_obj.id,
-                    Model.cell_name == cell_name,
-                ).first()
-                if not existing_cell and cell_name_old:
-                    existing_by_old = db.query(Model).filter(
-                        Model.site_id == site_obj.id,
-                        Model.cell_name == cell_name_old,
-                    ).first()
-                    if existing_by_old:
+            scope_id = site_obj.id if site_obj else None
+            existing_cell, n_amb = _find_existing_cell(db, Model, cell_name, sub_key, scope_id)
+            if n_amb:
+                errors.append(
+                    f"Row {row_num} ({cell_name}): Có {n_amb} cell trùng tên nhưng khác Subcell-ID – "
+                    f"không xác định được cell cần cập nhật. Vui lòng điền cột 'Subcell-ID'."
+                )
+                fatal_rows.add(row_num)
+                continue
+            if not existing_cell and cell_name_old:
+                old_cell, n_amb = _find_existing_cell(db, Model, cell_name_old, sub_key, scope_id)
+                if n_amb:
+                    errors.append(
+                        f"Row {row_num} ({cell_name_old}): Có {n_amb} cell trùng tên nhưng khác Subcell-ID – "
+                        f"không xác định được cell cần đổi tên. Vui lòng điền cột 'Subcell-ID'."
+                    )
+                    fatal_rows.add(row_num)
+                    continue
+                if old_cell:
+                    if site_obj:
+                        if sub_key is None and norm_subcell(old_cell.subcell_id) is not None:
+                            rec["subcell_id"] = _CLEAR      # matched by name only: keep its Subcell-ID
                         to_update.append({
-                            "existing_id": existing_by_old.id,
-                            "anchor":      f"{site_name}/{cell_name_old}",
+                            "existing_id": old_cell.id,
+                            "anchor":      f"{site_name}/{cell_name_old}{sub_sfx}",
                             "changes":     rec,
                             "is_rename":   True,
                         })
                         continue
-            else:
-                existing_cell = db.query(Model).filter(
-                    Model.cell_name == cell_name).first()
-                if not existing_cell and cell_name_old:
-                    existing_cell = db.query(Model).filter(
-                        Model.cell_name == cell_name_old).first()
-                if existing_cell:
+                    existing_cell = old_cell
+            if existing_cell:
+                if sub_key is None and norm_subcell(existing_cell.subcell_id) is not None:
+                    rec["subcell_id"] = _CLEAR              # matched by name only: keep its Subcell-ID
+                if not site_obj:
                     rec["site_id"] = existing_cell.site_id
 
         if existing_cell:
             to_update.append({
                 "existing_id": existing_cell.id,
-                "anchor":      f"{site_name}/{cell_name}",
+                "anchor":      f"{site_name}/{cell_name}{sub_sfx}",
                 "changes":     rec,
                 "is_rename":   False,
             })

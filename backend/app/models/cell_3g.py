@@ -18,6 +18,7 @@ class Cell3G(Base):
     site_name_old  = Column(String(100), nullable=True)
     cell_name      = Column(String(100), nullable=False, index=True)
     cell_name_old  = Column(String(100), nullable=True)
+    subcell_id     = Column(String(50), nullable=True)   # optional: tells apart cells sharing one cell_name
     cell_vip       = Column(String(10))
     moran          = Column(String(50))
     lat            = Column(Float)
