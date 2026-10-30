@@ -1,0 +1,143 @@
+import React, { useState } from 'react'
+import { Layout, Menu, Avatar, Dropdown, Space, Typography } from 'antd'
+import {
+  DashboardOutlined, DatabaseOutlined, TableOutlined,
+  BarChartOutlined, UserOutlined, AuditOutlined,
+  LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
+  WifiOutlined, HistoryOutlined,
+} from '@ant-design/icons'
+import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+import { useAuthStore } from '@/store/auth'
+import { ssoLogout } from '@/api/auth'
+import { Badge } from 'antd'
+import { CustomerServiceOutlined } from '@ant-design/icons'
+import { useFeedbackBadge } from '@/hooks/useFeedbackBadge'
+import FeedbackFab from '@/components/feedback/FeedbackFab'
+
+const { Sider, Header, Content } = Layout
+
+export default function MainLayout() {
+  const [collapsed, setCollapsed] = useState(false)
+  const navigate   = useNavigate()
+  const location   = useLocation()
+  const { user, logout, idToken } = useAuthStore()
+  const fbBadge = useFeedbackBadge()
+
+  const handleLogout = async () => {
+    if (idToken) {
+      try { await ssoLogout(idToken) } catch { /* ignore */ }
+    }
+    logout()
+    navigate('/login')
+  }
+
+  const menuItems = [
+    { key: '/',        icon: <DashboardOutlined />, label: 'Dashboard' },
+    { key: '/report',  icon: <BarChartOutlined />,  label: 'Báo cáo tổng hợp' },
+    { key: '/sites',   icon: <DatabaseOutlined />,  label: 'Quản lý Site' },
+    {
+      key: 'cells',
+      icon: <TableOutlined />,
+      label: 'Quản lý Cell',
+      children: [
+        { key: '/cells/3g', label: 'Cell 3G' },
+        { key: '/cells/4g', label: 'Cell 4G' },
+        { key: '/cells/5g', label: 'Cell 5G' },
+      ],
+    },
+    { key: '/antenna',  icon: <WifiOutlined />,    label: 'Thư viện Antenna' },
+    { key: '/revision', icon: <HistoryOutlined />, label: 'Lịch sử thay đổi' },
+    { key: '/feedback', icon: <CustomerServiceOutlined />, label: (
+      <span>Hỗ trợ / Góp ý{fbBadge > 0 && <Badge count={fbBadge} size="small" style={{ marginLeft: 8 }} />}</span>
+    ) },
+    ...(user?.role === 'admin'
+      ? [{
+          key: 'admin',
+          icon: <AuditOutlined />,
+          label: 'Quản trị',
+          children: [
+            { key: '/admin/users', label: 'Người dùng' },
+            { key: '/admin/audit', label: 'Audit Log' },
+          ],
+        }]
+      : []),
+  ]
+
+  const userMenu = {
+    items: [{
+      key: 'logout',
+      icon: <LogoutOutlined />,
+      label: 'Đăng xuất',
+      onClick: handleLogout,
+    }],
+  }
+
+  return (
+    <Layout style={{ minHeight: '100vh' }}>
+      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed}
+             theme="dark" width={220}>
+        <div style={{
+          height: 48, display: 'flex', alignItems: 'center',
+          justifyContent: 'center', color: '#fff',
+          fontWeight: 700, fontSize: collapsed ? 14 : 18,
+          borderBottom: '1px solid #333',
+        }}>
+          {collapsed ? 'SL' : 'SiteLink'}
+        </div>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[location.pathname.startsWith('/feedback') ? '/feedback' : location.pathname]}
+          defaultOpenKeys={['cells', 'admin']}
+          items={menuItems}
+          onClick={({ key }) => {
+            if (!['cells', 'admin'].includes(key)) navigate(key)
+          }}
+        />
+      </Sider>
+
+      <Layout>
+        <Header style={{
+          background: '#fff', padding: '0 24px',
+          display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between',
+          borderBottom: '1px solid #f0f0f0',
+        }}>
+          <Space>
+            {collapsed
+              ? <MenuUnfoldOutlined onClick={() => setCollapsed(false)}
+                                    style={{ fontSize: 18, cursor: 'pointer' }} />
+              : <MenuFoldOutlined   onClick={() => setCollapsed(true)}
+                                    style={{ fontSize: 18, cursor: 'pointer' }} />}
+            <Typography.Text strong style={{ fontSize: 16 }}>
+              Hệ thống quản lý dữ liệu tối ưu
+            </Typography.Text>
+          </Space>
+          <Dropdown menu={userMenu}>
+            <Space style={{ cursor: 'pointer' }}>
+              <Avatar icon={<UserOutlined />}
+                      style={{ backgroundColor: user?.auth_provider === 'sso'
+                        ? '#f5a623' : '#1890ff' }} />
+              <span>
+                {user?.full_name || user?.username}
+                {user?.auth_provider === 'sso' && (
+                  <span style={{ fontSize: 10, color: '#f5a623', marginLeft: 4 }}>[SSO]</span>
+                )}
+              </span>
+            </Space>
+          </Dropdown>
+        </Header>
+
+        <Content style={{
+          margin: 16, padding: 16,
+          background: '#fff', borderRadius: 8,
+          minHeight: 'calc(100vh - 112px)',
+          overflowY: 'auto',
+        }}>
+          <Outlet />
+          <FeedbackFab />
+        </Content>
+      </Layout>
+    </Layout>
+  )
+}

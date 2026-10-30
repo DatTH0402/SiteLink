@@ -31,6 +31,9 @@ import requests
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 log = logging.getLogger(__name__)
 
 # ── Tunables ──────────────────────────────────────────────────────────────────
@@ -639,7 +642,8 @@ _BUILDERS = {
 # ═════════════════════════════════════════════════════════════════════════════
 def fetch_csv(url: str, label: str) -> Optional[pd.DataFrame]:
     try:
-        r = requests.get(url, timeout=120)
+        # Added verify=False to ignore self-signed/internal SSL certificates
+        r = requests.get(url, timeout=120, verify=False)
         r.raise_for_status()
         try:
             df = pd.read_csv(io.BytesIO(r.content), dtype=str, encoding="utf-8-sig", low_memory=False)
@@ -651,7 +655,6 @@ def fetch_csv(url: str, label: str) -> Optional[pd.DataFrame]:
     except Exception as e:
         log.warning("✗ %s: %s", label, e)
         return None
-
 
 _VENDOR_CACHE_TTL = int(os.environ.get("CELL_SYNC_CACHE_TTL", "300"))   # seconds
 _vendor_cache: Dict[tuple, tuple] = {}              # (tech, vendor) -> (timestamp, DataFrame)

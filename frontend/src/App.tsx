@@ -18,6 +18,7 @@ import AntennaPage     from '@/pages/antenna/AntennaPage'
 import UsersPage       from '@/pages/admin/UsersPage'
 import AuditPage       from '@/pages/admin/AuditPage'
 import RevisionPage    from '@/pages/revision/RevisionPage'
+import ReconcilePage from '@/pages/reconcile/ReconcilePage'
 import FeedbackPage       from '@/pages/feedback/FeedbackPage'
 import FeedbackDetailPage from '@/pages/feedback/FeedbackDetailPage'
 
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="cells/5g"     element={<Cells5GPage />} />
           <Route path="antenna"      element={<AntennaPage />} />
           <Route path="revision"     element={<RevisionPage />} />
+          <Route path="reconcile"     element={<ReconcilePage />} />
           <Route path="feedback"     element={<FeedbackPage />} />
           <Route path="feedback/:id" element={<FeedbackDetailPage />} />
           <Route path="admin/users"

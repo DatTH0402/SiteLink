@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
 from sqlalchemy import create_engine, text
+os.environ.setdefault("CELL_SYNC_CACHE_TTL", "7200")   # one download per vendor CSV for sync + --reconcile
 import cell_sync_core as core
 
 DATABASE_URL = os.environ.get("DATABASE_URL",
@@ -55,6 +56,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="SiteLink daily cell sync")
     ap.add_argument("--dry-run", action="store_true", help="compute only, write nothing")
     ap.add_argument("--tech", default="3g,4g,5g", help="comma list, e.g. 4g,5g")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="after the sync, reconcile ALL dump cells against the web DB (page: Đối soát Cell)")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -71,6 +74,15 @@ def main() -> int:
                 rc = 1
                 continue
             rc |= run_bulk(eng, TECHS[tech], tech, args.dry_run)
+        if args.reconcile:
+            print("\n=== Reconcile dump <-> web ===")
+            try:
+                import cell_reconcile_core as recon
+                rtechs = [t.strip().lower() for t in args.tech.split(",") if t.strip().lower() in TECHS]
+                rc |= recon.run_reconcile(eng, rtechs, dry_run=args.dry_run)
+            except Exception as exc:
+                print(f"   ❌ reconcile failed: {exc}")
+                rc |= 1
     finally:
         eng.dispose()
     print("\n✅ Done." if rc == 0 else "\n⚠️ Finished with problems (see above).")

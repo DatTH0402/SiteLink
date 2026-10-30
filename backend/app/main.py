@@ -189,6 +189,8 @@ app.include_router(antenna_router.router,   prefix=f"{PREFIX}/antennas",   tags=
 app.include_router(templates_router.router, prefix=f"{PREFIX}/templates",  tags=["Templates"])
 app.include_router(export_router.router,    prefix=f"{PREFIX}/export",     tags=["Export"])
 app.include_router(revision_router.router,  prefix=f"{PREFIX}/revisions",  tags=["Revisions"])
+from app.api.routes.reconcile import router as reconcile_router  # noqa: E402
+app.include_router(reconcile_router, prefix="/api/v1/reconcile", tags=["reconcile"])
 app.include_router(rnc_router.router,       prefix=f"{PREFIX}/rnc",        tags=["RNC"])
 app.include_router(sync_router.router,         prefix=f"{PREFIX}/sync",       tags=["Sync"])
 app.include_router(feedback_router.router,     prefix=f"{PREFIX}/feedback",   tags=["Feedback"])

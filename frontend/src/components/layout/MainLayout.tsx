@@ -47,6 +47,7 @@ export default function MainLayout() {
     },
     { key: '/antenna',  icon: <WifiOutlined />,    label: 'Thư viện Antenna' },
     { key: '/revision', icon: <HistoryOutlined />, label: 'Lịch sử thay đổi' },
+    { key: '/reconcile', icon: <AuditOutlined />, label: 'Đối soát Cell' },
     { key: '/feedback', icon: <CustomerServiceOutlined />, label: (
       <span>Hỗ trợ / Góp ý{fbBadge > 0 && <Badge count={fbBadge} size="small" style={{ marginLeft: 8 }} />}</span>
     ) },
