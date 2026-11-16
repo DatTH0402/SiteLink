@@ -1,32 +1,32 @@
 /**
  * RevisionPage.tsx – Revision History Viewer
  *
- * Fixes & improvements:
- * 1. All site/cell columns shown in the main table.
- * 2. Rename banners (cell/site name) only shown when that field appears
- *    in changed_fields diff – not based on snapshot field values.
- * 3. Province (Tỉnh) filter added.
- * 4. Table loads automatically on mount and on filter change.
- *    Empty filters → show all records (sorted by time desc).
+ * Server-side, exactly like the Site module:
+ *  - Excel-style column filters + sorting on every column header (useServerColumns)
+ *  - server paging, "select all N results"
+ *  - "Xuất CSV" on every tab: selected rows win, otherwise everything the
+ *    top-bar + column filters match (current sort order)
+ * Rename banners only appear when the name is in the changed_fields diff.
  */
-import React, { useState, useCallback, useEffect } from 'react'
-import { useTablePagination } from '@/hooks/useTablePagination'
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
+import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import { useServerQuery, useServerColumns } from '@/hooks/useServerTable'
 import {
   Typography, Tabs, Input, Button, Table, Tag, Space,
-  Row, Col, Badge, Alert, Select, Divider,
+  Row, Col, Badge, Alert, Select, Tooltip, message,
 } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
+import type { ColumnsType, ColumnType } from 'antd/es/table'
+import type { TableRowSelection } from 'antd/es/table/interface'
 import {
   SearchOutlined, ReloadOutlined, HistoryOutlined,
-  FileExcelOutlined, FormOutlined, RobotOutlined,
+  FileExcelOutlined, FormOutlined, RobotOutlined, DownloadOutlined,
 } from '@ant-design/icons'
-import {
-  getSiteRevisions,
-  getCell3GRevisions,
-  getCell4GRevisions,
-  getCell5GRevisions,
-} from '@/api/revision'
 import type { SiteRevision, CellRevisionBase } from '@/api/revision'
+import {
+  getRevisionsPaged, getRevisionIds, getRevisionDistinct, exportRevisionCsv,
+} from '@/api/revisionListing'
+import type { RevisionLayer, RevisionCsvColumn } from '@/api/revisionListing'
+import { buildExportScope } from '@/api/export'
 import { getTinhList } from '@/api/report'
 import type { TinhItem } from '@/types'
 
@@ -39,6 +39,23 @@ const SOURCE_TAG: Record<string, React.ReactNode> = {
 
 const boolTag = (v: unknown) =>
   v ? <Tag color="green">x</Tag> : <Tag color="default">-</Tag>
+
+const fmtTime = (v: string) => (v ? new Date(v).toLocaleString('vi-VN') : '-')
+
+const diffCountCell = (_: unknown, r: { changed_fields?: Record<string, unknown> }) => {
+  const n = Object.keys(r.changed_fields || {}).length
+  return n ? <Tag color="orange">{n} trường</Tag> : <Tag color="default">Tạo mới</Tag>
+}
+
+/** drop empty values so the params object (and its JSON key) stays minimal */
+function cleanParams(p: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {}
+  Object.entries(p).forEach(([k, v]) => {
+    const t = (v ?? '').trim()
+    if (t) out[k] = t
+  })
+  return out
+}
 
 // ── DiffTable: shows changed_fields {field:[old,new]} ─────────────────────────
 function DiffTable({ diff }: { diff: Record<string, [unknown, unknown]> }) {
@@ -88,85 +105,6 @@ function DiffTable({ diff }: { diff: Record<string, [unknown, unknown]> }) {
   )
 }
 
-// ── SnapshotTable: shows all fields at revision time ──────────────────────────
-function SnapshotTable({ rows }: { rows: [string, unknown][] }) {
-  return (
-    <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
-      <thead>
-        <tr style={{ background: '#e6f7ff' }}>
-          <th style={{ padding: '4px 8px', border: '1px solid #bae7ff', width: 220 }}>Trường</th>
-          <th style={{ padding: '4px 8px', border: '1px solid #bae7ff' }}>Giá trị tại revision</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map(([k, v]) => (
-          <tr key={k}>
-            <td style={{
-              padding: '3px 8px', border: '1px solid #f0f0f0',
-              fontFamily: 'monospace', fontSize: 11, color: '#555',
-            }}>{k}</td>
-            <td style={{
-              padding: '3px 8px', border: '1px solid #f0f0f0',
-              fontFamily: 'monospace',
-              color: (v === null || v === undefined || v === '') ? '#ccc' : '#222',
-            }}>
-              {v === null || v === undefined || v === ''
-                ? <em>–</em>
-                : typeof v === 'boolean' ? (v ? '✓ Có' : '✗ Không') : String(v)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
-// ── Site snapshot field list ───────────────────────────────────────────────────
-function siteSnap(r: SiteRevision): [string, unknown][] {
-  return [
-    ['site_name', r.site_name], ['site_name_old_ref', r.site_name_old_ref],
-    ['site_name_cu', r.site_name_cu], ['mien', r.mien], ['tinh', r.tinh],
-    ['phuong_xa', r.phuong_xa], ['site_vip', r.site_vip],
-    ['lat', r.lat], ['long', r.long],
-    ['tram_2g', r.tram_2g], ['tram_3g', r.tram_3g],
-    ['tram_4g', r.tram_4g], ['tram_5g', r.tram_5g],
-    ['repeater', r.repeater], ['booster', r.booster],
-    ['node_truyen_dan_only', r.node_truyen_dan_only],
-    ['tram_phu_song_tsca', r.tram_phu_song_tsca],
-    ['phan_loai_tram', r.phan_loai_tram],
-    ['moran_3g', r.moran_3g], ['moran_4g', r.moran_4g], ['moran_5g', r.moran_5g],
-    ['ma_ptm', r.ma_ptm],
-    ['do_cao_dinh_cot_anten', r.do_cao_dinh_cot_anten],
-    ['do_cao_cot_anten', r.do_cao_cot_anten],
-    ['dia_chi', r.dia_chi], ['ghi_chu', r.ghi_chu],
-  ]
-}
-
-// ── Cell snapshot field list ───────────────────────────────────────────────────
-function cellSnap(r: CellRevisionBase): [string, unknown][] {
-  const base: [string, unknown][] = [
-    ['site_name', r.site_name], ['site_name_old', r.site_name_old],
-    ['cell_name', r.cell_name], ['cell_name_old', r.cell_name_old],
-    ['mien', r.mien], ['tinh', r.tinh], ['phuong_xa', r['phuong_xa']],
-    ['cell_vip', r['cell_vip']], ['moran', r['moran']],
-    ['lat', r['lat']], ['long', r['long']],
-    ['vung_phu_song', r['vung_phu_song']], ['vendor', r.vendor],
-    ['do_cao_anten', r['do_cao_anten']], ['azimuth', r.azimuth],
-    ['m_tilt', r['m_tilt']], ['e_tilt', r['e_tilt']], ['total_tilt', r['total_tilt']],
-    ['loai_anten', r['loai_anten']], ['baseband', r['baseband']],
-    ['rf', r['rf']], ['cell_id', r['cell_id']], ['mimo', r.mimo],
-  ]
-  // tech-specific
-  if (r['chung_anten'] !== undefined) base.push(['chung_anten', r['chung_anten']])
-  if (r['arfcn']       !== undefined) base.push(['arfcn',       r['arfcn']])
-  if (r['psc']         !== undefined) base.push(['psc',         r['psc']])
-  if (r['earfcn']      !== undefined) base.push(['earfcn',      r['earfcn']])
-  if (r['nr_arfcn']    !== undefined) base.push(['nr_arfcn',    r['nr_arfcn']])
-  if (r['pci']         !== undefined) base.push(['pci',         r['pci']])
-  if (r['root_sequence_id'] !== undefined) base.push(['root_sequence_id', r['root_sequence_id']])
-  return base
-}
-
 // ── Shared: province filter select ────────────────────────────────────────────
 function TinhFilter({
   tinhList, value, onChange,
@@ -194,182 +132,89 @@ function TinhFilter({
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SITE REVISION TAB
+// COLUMN DEFINITIONS  (every column needs a string dataIndex = DB column name)
 // ═════════════════════════════════════════════════════════════════════════════
-function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
-  const [search,  setSearch]  = useState('')
-  const [tinh,    setTinh]    = useState<string | undefined>()
-  const [data,    setData]    = useState<SiteRevision[]>([])
-  const { pagination } = useTablePagination(data.length, 'phiên bản')
-  const [loading, setLoading] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params: Record<string, unknown> = { limit: 500 }
-      if (search.trim()) params.site_name = search.trim()
-      const rows = await getSiteRevisions(params)
-      setData(tinh ? rows.filter(r => r.tinh === tinh) : rows)
-    } finally { setLoading(false) }
-  }, [search, tinh])
+// ── Site ──────────────────────────────────────────────────────────────────────
+const SITE_COLUMNS: ColumnsType<SiteRevision> = [
+  {
+    title: 'Rev#', dataIndex: 'revision_no', width: 60, fixed: 'left',
+    render: (v: number) => <Badge count={v} color="#597ef7" />,
+  },
+  { title: 'Thời gian', dataIndex: 'created_at', width: 155, fixed: 'left', render: fmtTime },
+  {
+    title: 'Site Name', dataIndex: 'site_name', width: 220, fixed: 'left',
+    ellipsis: { showTitle: true },
+    render: (v: string, r: SiteRevision) => (
+      <Space direction="vertical" size={0}>
+        <strong>{v}</strong>
+        {r.site_name_old_ref && (
+          <span style={{ fontSize: 11, color: '#d46b08' }}>
+            ← đổi từ: <em>{r.site_name_old_ref}</em>
+          </span>
+        )}
+      </Space>
+    ),
+  },
+  { title: 'Site name (cũ)', dataIndex: 'site_name_cu', width: 180, ellipsis: { showTitle: true } },
+  { title: 'Miền',    dataIndex: 'mien',     width: 70  },
+  { title: 'Tỉnh',    dataIndex: 'tinh',     width: 160 },
+  { title: 'Phường xã', dataIndex: 'phuong_xa', width: 160, ellipsis: { showTitle: true } },
+  { title: 'Site VIP', dataIndex: 'site_vip', width: 90,
+    render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
+  { title: 'Lat',  dataIndex: 'lat',  width: 110 },
+  { title: 'Long', dataIndex: 'long', width: 110 },
+  { title: 'Trạm 2G', dataIndex: 'tram_2g', width: 80, render: boolTag },
+  { title: 'Trạm 3G', dataIndex: 'tram_3g', width: 80, render: boolTag },
+  { title: 'Trạm 4G', dataIndex: 'tram_4g', width: 80, render: boolTag },
+  { title: 'Trạm 5G', dataIndex: 'tram_5g', width: 80, render: boolTag },
+  { title: 'Repeater', dataIndex: 'repeater', width: 90, render: boolTag },
+  { title: 'Booster',  dataIndex: 'booster',  width: 85, render: boolTag },
+  { title: 'Node truyền dẫn only', dataIndex: 'node_truyen_dan_only', width: 175, render: boolTag },
+  { title: 'TSCA', dataIndex: 'tram_phu_song_tsca', width: 75, render: boolTag },
+  { title: 'Phân loại trạm', dataIndex: 'phan_loai_tram', width: 160 },
+  { title: 'MORAN 3G', dataIndex: 'moran_3g', width: 110 },
+  { title: 'MORAN 4G', dataIndex: 'moran_4g', width: 110 },
+  { title: 'MORAN 5G', dataIndex: 'moran_5g', width: 110 },
+  { title: 'Mã PTM',   dataIndex: 'ma_ptm',   width: 110 },
+  { title: 'Độ cao đỉnh cột anten đến mặt đất (m)', dataIndex: 'do_cao_dinh_cot_anten', width: 150 },
+  { title: 'Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình) (m)',
+    dataIndex: 'do_cao_cot_anten', width: 120 },
+  { title: 'Địa chỉ', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
+  { title: 'Ghi chú', dataIndex: 'ghi_chu', width: 160, ellipsis: { showTitle: true } },
+  {
+    title: 'Nguồn', dataIndex: 'change_source', width: 90,
+    render: (v: string) => SOURCE_TAG[v] || <Tag>{v}</Tag>,
+  },
+  {
+    title: 'Người thay đổi', dataIndex: 'changed_by_name', width: 160,
+    render: (v: string) => v || <span style={{ color: '#ccc' }}>–</span>,
+  },
+  { title: 'Số trường TĐ', dataIndex: 'diff_count', width: 120, render: diffCountCell },
+  { title: 'Ghi chú TĐ', dataIndex: 'change_note', width: 160, ellipsis: { showTitle: true } },
+]
 
-  useEffect(() => { load() }, [load])
+// ── Cells ─────────────────────────────────────────────────────────────────────
+type CellCol = ColumnType<CellRevisionBase>
 
-  const columns: ColumnsType<SiteRevision> = [
-    {
-      title: 'Rev#', dataIndex: 'revision_no', width: 60, fixed: 'left',
-      render: (v: number) => <Badge count={v} color="#597ef7" />,
-    },
-    {
-      title: 'Thời gian', dataIndex: 'created_at', width: 155, fixed: 'left',
-      defaultSortOrder: 'descend',
-      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      render: (v: string) => v ? new Date(v).toLocaleString('vi-VN') : '-',
-    },
-    {
-      title: 'Site Name', dataIndex: 'site_name', width: 220, fixed: 'left',
-      ellipsis: { showTitle: true },
-      render: (v: string, r: SiteRevision) => (
-        <Space direction="vertical" size={0}>
-          <strong>{v}</strong>
-          {r.site_name_old_ref && (
-            <span style={{ fontSize: 11, color: '#d46b08' }}>
-              ← đổi từ: <em>{r.site_name_old_ref}</em>
-            </span>
-          )}
-        </Space>
-      ),
-    },
-    { title: 'Site name (cũ)', dataIndex: 'site_name_cu', width: 180, ellipsis: { showTitle: true } },
-    { title: 'Miền',    dataIndex: 'mien',     width: 70  },
-    { title: 'Tỉnh',    dataIndex: 'tinh',     width: 160 },
-    { title: 'Phường xã', dataIndex: 'phuong_xa', width: 160, ellipsis: { showTitle: true } },
-    { title: 'Site VIP', dataIndex: 'site_vip', width: 90,
-      render: (v: string) => v ? <Tag color="gold">{v}</Tag> : '-' },
-    { title: 'Lat',  dataIndex: 'lat',  width: 110 },
-    { title: 'Long', dataIndex: 'long', width: 110 },
-    { title: 'Trạm 2G', dataIndex: 'tram_2g', width: 80, render: boolTag },
-    { title: 'Trạm 3G', dataIndex: 'tram_3g', width: 80, render: boolTag },
-    { title: 'Trạm 4G', dataIndex: 'tram_4g', width: 80, render: boolTag },
-    { title: 'Trạm 5G', dataIndex: 'tram_5g', width: 80, render: boolTag },
-    { title: 'Repeater', dataIndex: 'repeater', width: 90, render: boolTag },
-    { title: 'Booster',  dataIndex: 'booster',  width: 85, render: boolTag },
-    { title: 'Node truyền dẫn only', dataIndex: 'node_truyen_dan_only', width: 175, render: boolTag },
-    { title: 'TSCA', dataIndex: 'tram_phu_song_tsca', width: 75, render: boolTag },
-    { title: 'Phân loại trạm', dataIndex: 'phan_loai_tram', width: 160 },
-    { title: 'MORAN 3G', dataIndex: 'moran_3g', width: 110 },
-    { title: 'MORAN 4G', dataIndex: 'moran_4g', width: 110 },
-    { title: 'MORAN 5G', dataIndex: 'moran_5g', width: 110 },
-    { title: 'Mã PTM',   dataIndex: 'ma_ptm',   width: 110 },
-    { title: 'Độ cao đỉnh cột anten đến mặt đất (m)', dataIndex: 'do_cao_dinh_cot_anten', width: 150 },
-    { title: 'Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình) (m)',      dataIndex: 'do_cao_cot_anten',       width: 120 },
-    { title: 'Địa chỉ', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
-    { title: 'Ghi chú', dataIndex: 'ghi_chu', width: 160, ellipsis: { showTitle: true } },
-    {
-      title: 'Nguồn', dataIndex: 'change_source', width: 90,
-      render: (v: string) => SOURCE_TAG[v] || <Tag>{v}</Tag>,
-    },
-    {
-      title: 'Người thay đổi', dataIndex: 'changed_by_name', width: 160,
-      render: (v: string) => v || <span style={{ color: '#ccc' }}>–</span>,
-    },
-    {
-      title: 'Số trường TĐ', key: 'diff_count', width: 120,
-      render: (_: unknown, r: SiteRevision) => {
-        const n = Object.keys(r.changed_fields || {}).length
-        return n ? <Tag color="orange">{n} trường</Tag> : <Tag color="default">Tạo mới</Tag>
-      },
-    },
-    { title: 'Ghi chú TĐ', dataIndex: 'change_note', width: 160, ellipsis: { showTitle: true } },
-  ]
-
-  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
-
-  return (
-    <div>
-      <Row gutter={8} style={{ marginBottom: 12 }}>
-        <Col flex="300px">
-          <Input prefix={<SearchOutlined />}
-            placeholder="Tìm site name (hiện tại hoặc tên cũ)..."
-            value={search} onChange={e => setSearch(e.target.value)}
-            onPressEnter={load} allowClear />
-        </Col>
-        <Col>
-          <TinhFilter tinhList={tinhList} value={tinh} onChange={setTinh} />
-        </Col>
-        <Col>
-          <Button type="primary" icon={<SearchOutlined />} onClick={load} loading={loading}>
-            Tìm kiếm
-          </Button>
-        </Col>
-        <Col>
-          <Button icon={<ReloadOutlined />} onClick={() => { setSearch(''); setTinh(undefined) }}>
-            Xóa lọc
-          </Button>
-        </Col>
-      </Row>
-      <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-        {data.length} phiên bản – nhấn ▶ để xem chi tiết các trường thay đổi
-      </Typography.Text>
-      <Table
-        columns={columns} dataSource={data} rowKey="id"
-        loading={loading} size="small"
-        scroll={{ x: scrollX, y: 500 }} bordered
-        pagination={pagination}
-        expandable={{
-          expandedRowRender: (r: SiteRevision) => {
-            const diff   = r.changed_fields || {}
-            const nDiff  = Object.keys(diff).length
-            // Only show rename banner when site_name is in the diff
-            const renamed = 'site_name' in diff
-            return (
-              <div style={{ padding: '12px 16px' }}>
-                {renamed && (
-                  <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-                    message={
-                      <span>Đổi tên site:&nbsp;
-                        <strong style={{ color: '#cf1322' }}>{diff['site_name']?.[0] as string}</strong>
-                        &nbsp;→&nbsp;
-                        <strong style={{ color: '#237804' }}>{diff['site_name']?.[1] as string}</strong>
-                      </span>
-                    }
-                  />
-                )}
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  🔄 Các trường thay đổi ({nDiff}) – Revision #{r.revision_no}
-                </Typography.Text>
-                <div style={{ marginTop: 8, marginBottom: 16 }}>
-                  <DiffTable diff={diff} />
-                </div>
-
-              </div>
-            )
-          },
-          rowExpandable: () => true,
-        }}
-      />
-    </div>
-  )
+/** Plain text column read from r[key] ('-' when empty). */
+function txtCol(title: string, key: string, width: number, extra: Partial<CellCol> = {}): CellCol {
+  return {
+    title, dataIndex: key, width,
+    render: (_: unknown, r: CellRevisionBase) => String(r[key] ?? '-'),
+    ...extra,
+  }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// GENERIC CELL REVISION TAB  (tech-specific columns)
-// ═════════════════════════════════════════════════════════════════════════════
+const dashOr = (v: string) => v || <span style={{ color: '#ccc' }}>-</span>
 
-// ── Shared column builders ────────────────────────────────────────────────────
-function makeCommonCellColumns(): ColumnsType<CellRevisionBase> {
+function commonCellColumns(): CellCol[] {
   return [
     {
       title: 'Rev#', dataIndex: 'revision_no', width: 60, fixed: 'left',
       render: (v: number) => <Badge count={v} color="#597ef7" />,
     },
-    {
-      title: 'Thời gian', dataIndex: 'created_at', width: 155, fixed: 'left',
-      defaultSortOrder: 'descend' as const,
-      sorter: (a: CellRevisionBase, b: CellRevisionBase) =>
-        new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      render: (v: string) => v ? new Date(v).toLocaleString('vi-VN') : '-',
-    },
+    { title: 'Thời gian', dataIndex: 'created_at', width: 155, fixed: 'left', render: fmtTime },
     {
       title: 'Site Name', dataIndex: 'site_name', width: 200, fixed: 'left',
       ellipsis: { showTitle: true },
@@ -396,195 +241,446 @@ function makeCommonCellColumns(): ColumnsType<CellRevisionBase> {
         </Space>
       ),
     },
-    { title: 'Subcell-ID', dataIndex: 'subcell_id', width: 100, fixed: 'left',
-      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
-    { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200, ellipsis: { showTitle: true },
-      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
-    { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200, ellipsis: { showTitle: true },
-      render: (v: string) => v || <span style={{ color: '#ccc' }}>-</span> },
+    { title: 'Subcell-ID', dataIndex: 'subcell_id', width: 100, fixed: 'left', render: dashOr },
+    { title: 'Site Name Old', dataIndex: 'site_name_old', width: 200,
+      ellipsis: { showTitle: true }, render: dashOr },
+    { title: 'Cell Name Old', dataIndex: 'cell_name_old', width: 200,
+      ellipsis: { showTitle: true }, render: dashOr },
     { title: 'Miền', dataIndex: 'mien', width: 70 },
     { title: 'Tỉnh', dataIndex: 'tinh', width: 160 },
-    { title: 'Phường xã', key: 'phuong_xa', width: 160,
-      render: (_: unknown, r: CellRevisionBase) => String(r['phuong_xa'] ?? '-') },
-    { title: 'Cell VIP', key: 'cell_vip', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => {
-        const v = r['cell_vip']
-        return v ? <Tag color="gold">{String(v)}</Tag> : <span>-</span>
-      }},
-    { title: 'MORAN', key: 'moran', width: 120,
-      render: (_: unknown, r: CellRevisionBase) => String(r['moran'] ?? '-') },
+    txtCol('Phường xã', 'phuong_xa', 160),
+    txtCol('Cell VIP', 'cell_vip', 90, {
+      render: (_: unknown, r: CellRevisionBase) =>
+        r['cell_vip'] ? <Tag color="gold">{String(r['cell_vip'])}</Tag> : <span>-</span>,
+    }),
+    txtCol('MORAN', 'moran', 120),
     { title: 'Lat',  dataIndex: 'lat',  width: 110 },
     { title: 'Long', dataIndex: 'long', width: 110 },
-    { title: 'Vùng phủ sóng', key: 'vung_phu_song', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => String(r['vung_phu_song'] ?? '-') },
+    txtCol('Vùng phủ sóng', 'vung_phu_song', 130),
     { title: 'Vendor', dataIndex: 'vendor', width: 100 },
-    { title: 'Cao anten (m)', key: 'do_cao_anten', width: 115,
-      render: (_: unknown, r: CellRevisionBase) => String(r['do_cao_anten'] ?? '-') },
+    txtCol('Cao anten (m)', 'do_cao_anten', 115),
     { title: 'Azimuth', dataIndex: 'azimuth', width: 90 },
-    { title: 'M-tilt', key: 'm_tilt', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['m_tilt'] ?? '-') },
-    { title: 'E-Tilt', key: 'e_tilt', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['e_tilt'] ?? '-') },
-    { title: 'Total Tilt', key: 'total_tilt', width: 95,
-      render: (_: unknown, r: CellRevisionBase) => String(r['total_tilt'] ?? '-') },
-    { title: 'Loại Anten', key: 'loai_anten', width: 220, ellipsis: { showTitle: true },
-      render: (_: unknown, r: CellRevisionBase) => String(r['loai_anten'] ?? '-') },
-    { title: 'RF', key: 'rf', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => String(r['rf'] ?? '-') },
-    { title: 'Cell ID', key: 'cell_id', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => String(r['cell_id'] ?? '-') },
-    { title: 'MIMO', key: 'mimo', width: 80,
+    txtCol('M-tilt', 'm_tilt', 80),
+    txtCol('E-Tilt', 'e_tilt', 80),
+    txtCol('Total Tilt', 'total_tilt', 95),
+    txtCol('Loại Anten', 'loai_anten', 220, { ellipsis: { showTitle: true } }),
+    txtCol('RF', 'rf', 90),
+    txtCol('Cell ID', 'cell_id', 90),
+    txtCol('MIMO', 'mimo', 80, {
       render: (_: unknown, r: CellRevisionBase) =>
-        r['mimo'] ? <Tag color="blue">{String(r['mimo'])}</Tag> : <span>-</span> },
-    { title: 'Cell max power (dBm)', key: 'cell_max_power', width: 175,
-      render: (_: unknown, r: CellRevisionBase) => String(r['cell_max_power'] ?? '-') },
-    { title: 'BBUname', key: 'bbu_name', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => String(r['bbu_name'] ?? '-') },
-    { title: 'Cell status', key: 'cell_status', width: 140,
-      render: (_: unknown, r: CellRevisionBase) => String(r['cell_status'] ?? '-') },
-    { title: 'Ngày dữ liệu dump', key: 'dump_date', width: 160,
-      render: (_: unknown, r: CellRevisionBase) => String(r['dump_date'] ?? '-') },
-    { title: 'OSS', key: 'oss', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => String(r['oss'] ?? '-') },
+        r['mimo'] ? <Tag color="blue">{String(r['mimo'])}</Tag> : <span>-</span>,
+    }),
+    txtCol('Cell max power (dBm)', 'cell_max_power', 175),
+    txtCol('BBUname', 'bbu_name', 130),
+    txtCol('Cell status', 'cell_status', 140),
+    txtCol('Ngày dữ liệu dump', 'dump_date', 160),
+    txtCol('OSS', 'oss', 90),
+  ]
+}
+
+function metaCellColumns(): CellCol[] {
+  return [
     { title: 'Nguồn', dataIndex: 'change_source', width: 90,
       render: (v: string) => SOURCE_TAG[v] || <Tag>{v}</Tag> },
     { title: 'Người thay đổi', dataIndex: 'changed_by_name', width: 160,
       render: (v: string) => v || <span style={{ color: '#ccc' }}>–</span> },
-    {
-      title: 'Số trường TĐ', key: 'diff_count', width: 120,
-      render: (_: unknown, r: CellRevisionBase) => {
-        const n = Object.keys(r.changed_fields || {}).length
-        return n ? <Tag color="orange">{n} trường</Tag> : <Tag color="default">Tạo mới</Tag>
-      },
-    },
+    { title: 'Số trường TĐ', dataIndex: 'diff_count', width: 120, render: diffCountCell },
   ]
 }
 
-function makeCell3GColumns(): ColumnsType<CellRevisionBase> {
-  const common = makeCommonCellColumns()
-  // Insert 3G-specific columns before the trailing meta columns (Nguồn, Người thay đổi, Số trường TĐ)
-  // We splice them in after 'cell_id' column by rebuilding the array
-  const metaCount = 3 // Nguồn, Người thay đổi, Số trường TĐ
-  const before = common.slice(0, common.length - metaCount)
-  const meta   = common.slice(common.length - metaCount)
-  const specific: ColumnsType<CellRevisionBase> = [
-    { title: 'Chung anten', key: 'chung_anten', width: 120,
-      render: (_: unknown, r: CellRevisionBase) => String(r['chung_anten'] ?? '-') },
-    { title: 'ARFCN', key: 'arfcn', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => String(r['arfcn'] ?? '-') },
-    { title: 'UARFCN', key: 'uarfcn', width: 95,
-      render: (_: unknown, r: CellRevisionBase) => String(r['uarfcn'] ?? '-') },
-    { title: 'LAC', key: 'lac', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['lac'] ?? '-') },
-    { title: 'RAC', key: 'rac', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['rac'] ?? '-') },
-    { title: 'PSC', key: 'psc', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['psc'] ?? '-') },
-    { title: 'URAId', key: 'ura_id', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['ura_id'] ?? '-') },
-    { title: 'RNC Name', key: 'rnc_name', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => r['rnc_name'] ? <Tag color="cyan">{String(r['rnc_name'])}</Tag> : <span>-</span> },
-    { title: 'CPICH power (dBm)', key: 'cpich_power', width: 155,
-      render: (_: unknown, r: CellRevisionBase) => String(r['cpich_power'] ?? '-') },
-  ]
-  return [...before, ...specific, ...meta]
+function techCellColumns(tech: '3G' | '4G' | '5G'): ColumnsType<CellRevisionBase> {
+  let specific: CellCol[] = []
+  if (tech === '3G') {
+    specific = [
+      txtCol('Chung anten', 'chung_anten', 120),
+      txtCol('ARFCN', 'arfcn', 90),
+      txtCol('UARFCN', 'uarfcn', 95),
+      txtCol('LAC', 'lac', 80),
+      txtCol('RAC', 'rac', 80),
+      txtCol('PSC', 'psc', 80),
+      txtCol('URAId', 'ura_id', 80),
+      txtCol('RNC Name', 'rnc_name', 130, {
+        render: (_: unknown, r: CellRevisionBase) =>
+          r['rnc_name'] ? <Tag color="cyan">{String(r['rnc_name'])}</Tag> : <span>-</span>,
+      }),
+      txtCol('CPICH power (dBm)', 'cpich_power', 155),
+    ]
+  } else if (tech === '4G') {
+    specific = [
+      txtCol('Chung anten', 'chung_anten', 120),
+      txtCol('EnodeB ID', 'enodeb_id', 110),
+      txtCol('EARFCN', 'earfcn', 90),
+      txtCol('TAC', 'tac', 80),
+      txtCol('PCI', 'pci', 80),
+      txtCol('Root Sequence ID', 'root_sequence_id', 155),
+      txtCol('Bandwidth (MHz)', 'bandwidth', 130),
+      txtCol('ECI', 'eci', 110),
+    ]
+  } else {
+    specific = [
+      txtCol('gNodeB ID', 'gnodeb_id', 110),
+      txtCol('TAC', 'tac', 80),
+      txtCol('PCI', 'pci', 80),
+      txtCol('Root Sequence ID', 'root_sequence_id', 155),
+      txtCol('SSB-ARFCN', 'ssb_arfcn', 110),
+      txtCol('Center-ARFCN', 'center_arfcn', 125),
+      txtCol('GSCN', 'gscn', 85),
+      txtCol('Bandwidth (MHz)', 'bandwidth', 130),
+      txtCol('NCI', 'nci', 110),
+      txtCol('MU-MIMO', 'mu_mimo', 95),
+    ]
+  }
+  return [...commonCellColumns(), ...specific, ...metaCellColumns()]
 }
 
-function makeCell4GColumns(): ColumnsType<CellRevisionBase> {
-  const common = makeCommonCellColumns()
-  const metaCount = 3
-  const before = common.slice(0, common.length - metaCount)
-  const meta   = common.slice(common.length - metaCount)
-  const specific: ColumnsType<CellRevisionBase> = [
-    { title: 'Chung anten', key: 'chung_anten', width: 120,
-      render: (_: unknown, r: CellRevisionBase) => String(r['chung_anten'] ?? '-') },
-    { title: 'EnodeB ID', key: 'enodeb_id', width: 110,
-      render: (_: unknown, r: CellRevisionBase) => String(r['enodeb_id'] ?? '-') },
-    { title: 'EARFCN', key: 'earfcn', width: 90,
-      render: (_: unknown, r: CellRevisionBase) => String(r['earfcn'] ?? '-') },
-    { title: 'TAC', key: 'tac', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['tac'] ?? '-') },
-    { title: 'PCI', key: 'pci', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['pci'] ?? '-') },
-    { title: 'Root Sequence ID', key: 'root_sequence_id', width: 155,
-      render: (_: unknown, r: CellRevisionBase) => String(r['root_sequence_id'] ?? '-') },
-    { title: 'Bandwidth (MHz)', key: 'bandwidth', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => String(r['bandwidth'] ?? '-') },
-    { title: 'ECI', key: 'eci', width: 110,
-      render: (_: unknown, r: CellRevisionBase) => String(r['eci'] ?? '-') },
-  ]
-  return [...before, ...specific, ...meta]
+const CELL_COLUMNS: Record<'3G' | '4G' | '5G', ColumnsType<CellRevisionBase>> = {
+  '3G': techCellColumns('3G'),
+  '4G': techCellColumns('4G'),
+  '5G': techCellColumns('5G'),
 }
 
-function makeCell5GColumns(): ColumnsType<CellRevisionBase> {
-  const common = makeCommonCellColumns()
-  const metaCount = 3
-  const before = common.slice(0, common.length - metaCount)
-  const meta   = common.slice(common.length - metaCount)
-  const specific: ColumnsType<CellRevisionBase> = [
-    { title: 'gNodeB ID', key: 'gnodeb_id', width: 110,
-      render: (_: unknown, r: CellRevisionBase) => String(r['gnodeb_id'] ?? '-') },
-    { title: 'TAC', key: 'tac', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['tac'] ?? '-') },
-    { title: 'PCI', key: 'pci', width: 80,
-      render: (_: unknown, r: CellRevisionBase) => String(r['pci'] ?? '-') },
-    { title: 'Root Sequence ID', key: 'root_sequence_id', width: 155,
-      render: (_: unknown, r: CellRevisionBase) => String(r['root_sequence_id'] ?? '-') },
-    { title: 'SSB-ARFCN', key: 'ssb_arfcn', width: 110,
-      render: (_: unknown, r: CellRevisionBase) => String(r['ssb_arfcn'] ?? '-') },
-    { title: 'Center-ARFCN', key: 'center_arfcn', width: 125,
-      render: (_: unknown, r: CellRevisionBase) => String(r['center_arfcn'] ?? '-') },
-    { title: 'GSCN', key: 'gscn', width: 85,
-      render: (_: unknown, r: CellRevisionBase) => String(r['gscn'] ?? '-') },
-    { title: 'Bandwidth (MHz)', key: 'bandwidth', width: 130,
-      render: (_: unknown, r: CellRevisionBase) => String(r['bandwidth'] ?? '-') },
-    { title: 'NCI', key: 'nci', width: 110,
-      render: (_: unknown, r: CellRevisionBase) => String(r['nci'] ?? '-') },
-    { title: 'MU-MIMO', key: 'mu_mimo', width: 95,
-      render: (_: unknown, r: CellRevisionBase) => String(r['mu_mimo'] ?? '-') },
-  ]
-  return [...before, ...specific, ...meta]
+// extra fields added to the CSV on top of the visible columns
+const SITE_EXTRAS: RevisionCsvColumn[] = [
+  { field: 'site_id',           title: 'Site ID (DB)' },
+  { field: 'site_name_old_ref', title: 'Site name cũ (đổi từ)' },
+  { field: 'change_note',       title: 'Ghi chú thay đổi' },
+]
+const CELL_EXTRAS: RevisionCsvColumn[] = [
+  { field: 'site_id',     title: 'Site ID (DB)' },
+  { field: 'cell_id_ref', title: 'Cell ID (DB)' },
+  { field: 'baseband',    title: 'Baseband' },
+  { field: 'change_note', title: 'Ghi chú thay đổi' },
+]
+
+/** CSV columns = the table's columns (same titles / order) + extras */
+function csvColumnsOf<T>(cols: ColumnsType<T>, extras: RevisionCsvColumn[]): RevisionCsvColumn[] {
+  const out: RevisionCsvColumn[] = []
+  const seen = new Set<string>()
+  ;(cols as ColumnType<T>[]).forEach(c => {
+    const f = typeof c.dataIndex === 'string' ? c.dataIndex : undefined
+    if (!f || seen.has(f)) return
+    seen.add(f)
+    out.push({ field: f, title: typeof c.title === 'string' ? c.title : f })
+  })
+  extras.forEach(e => { if (!seen.has(e.field)) { seen.add(e.field); out.push(e) } })
+  return out
 }
 
-function CellRevisionTab({
-  tech, fetchFn, tinhList,
+// ═════════════════════════════════════════════════════════════════════════════
+// EXPANDED ROW RENDERERS
+// ═════════════════════════════════════════════════════════════════════════════
+const renderSiteExpanded = (r: SiteRevision) => {
+  const diff    = r.changed_fields || {}
+  const nDiff   = Object.keys(diff).length
+  const renamed = 'site_name' in diff          // banner only when site_name is in the diff
+  return (
+    <div style={{ padding: '12px 16px' }}>
+      {renamed && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message={
+            <span>Đổi tên site:&nbsp;
+              <strong style={{ color: '#cf1322' }}>{String(diff['site_name']?.[0] ?? '')}</strong>
+              &nbsp;→&nbsp;
+              <strong style={{ color: '#237804' }}>{String(diff['site_name']?.[1] ?? '')}</strong>
+            </span>
+          }
+        />
+      )}
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        🔄 Các trường thay đổi ({nDiff}) – Revision #{r.revision_no}
+      </Typography.Text>
+      <div style={{ marginTop: 8, marginBottom: 16 }}>
+        <DiffTable diff={diff} />
+      </div>
+    </div>
+  )
+}
+
+const renderCellExpanded = (r: CellRevisionBase) => {
+  const diff  = r.changed_fields || {}
+  const nDiff = Object.keys(diff).length
+  const cellRenamed = 'cell_name' in diff
+  const siteRenamed = 'site_name' in diff
+  return (
+    <div style={{ padding: '12px 16px' }}>
+      {cellRenamed && (
+        <Alert type="warning" showIcon style={{ marginBottom: 8 }}
+          message={
+            <span>Đổi tên cell:&nbsp;
+              <strong style={{ color: '#cf1322' }}>{String(diff['cell_name']?.[0] ?? '')}</strong>
+              &nbsp;→&nbsp;
+              <strong style={{ color: '#237804' }}>{String(diff['cell_name']?.[1] ?? '')}</strong>
+            </span>
+          }
+        />
+      )}
+      {siteRenamed && (
+        <Alert type="warning" showIcon style={{ marginBottom: 12 }}
+          message={
+            <span>Đổi tên site:&nbsp;
+              <strong style={{ color: '#cf1322' }}>{String(diff['site_name']?.[0] ?? '')}</strong>
+              &nbsp;→&nbsp;
+              <strong style={{ color: '#237804' }}>{String(diff['site_name']?.[1] ?? '')}</strong>
+            </span>
+          }
+        />
+      )}
+      <Typography.Text strong style={{ fontSize: 13 }}>
+        🔄 Các trường thay đổi ({nDiff}) – Revision #{r.revision_no}
+      </Typography.Text>
+      <div style={{ marginTop: 8 }}>
+        <DiffTable diff={diff} />
+      </div>
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SHARED GRID  (server paging + column filters + sort + selection + CSV export)
+// ═════════════════════════════════════════════════════════════════════════════
+interface RevRow {
+  id: number
+  revision_no: number
+  changed_fields: Record<string, [unknown, unknown]>
+}
+
+function RevisionGrid<T extends RevRow>({
+  layer, topParams, reloadKey, resetKey, columns, renderExpanded, extraFields, unit,
 }: {
-  tech: string
-  fetchFn: (p: Record<string, unknown>) => Promise<CellRevisionBase[]>
-  tinhList: TinhItem[]
+  layer: RevisionLayer
+  topParams: Record<string, string>      // already debounced + cleaned
+  reloadKey: number                      // bump => reload
+  resetKey: number                       // bump => clear column filters + selection
+  columns: ColumnsType<T>
+  renderExpanded: (r: T) => React.ReactNode
+  extraFields: RevisionCsvColumn[]
+  unit: string
 }) {
-  const [siteName, setSiteName] = useState('')
-  const [cellName, setCellName] = useState('')
-  const [subcellId, setSubcellId] = useState('')
-  const [tinh,     setTinh]     = useState<string | undefined>()
-  const [data,     setData]     = useState<CellRevisionBase[]>([])
-  const { pagination } = useTablePagination(data.length, 'phiên bản')
-  const [loading,  setLoading]  = useState(false)
+  const paramsKey = JSON.stringify(topParams)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const stableParams = useMemo(() => topParams, [paramsKey])
 
-  const load = useCallback(async () => {
+  const sq = useServerQuery([paramsKey])
+  const [rows,        setRows]        = useState<T[]>([])
+  const [loading,     setLoading]     = useState(false)
+  const [loadError,   setLoadError]   = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [exporting,   setExporting]   = useState(false)
+
+  const load = useCallback(() => {
     setLoading(true)
-    try {
-      const params: Record<string, unknown> = { limit: 500 }
-      if (siteName.trim()) params.site_name = siteName.trim()
-      if (cellName.trim()) params.cell_name = cellName.trim()
-      if (subcellId.trim()) params.subcell_id = subcellId.trim()
-      const rows = await fetchFn(params)
-      setData(tinh ? rows.filter(r => r.tinh === tinh) : rows)
-    } finally { setLoading(false) }
-  }, [siteName, cellName, subcellId, tinh, fetchFn])
+    setLoadError(null)
+    const params: Record<string, unknown> = { ...sq.params, ...stableParams }
+    const ticket = sq.nextTicket()
+    getRevisionsPaged<T>(layer, params)
+      .then(res => {
+        if (!sq.isCurrent(ticket)) return
+        setRows(res.items)
+        sq.onLoaded(res.total, params)
+      })
+      .catch(err => {
+        if (!sq.isCurrent(ticket)) return
+        const detail = err?.response?.data?.detail || err?.message || 'Unknown error'
+        setLoadError(`Không tải được lịch sử thay đổi: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`)
+      })
+      .finally(() => { if (sq.isCurrent(ticket)) setLoading(false) })
+    // reloadKey: explicit "Tìm kiếm" button
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layer, stableParams, reloadKey, sq.params])
 
   useEffect(() => { load() }, [load])
 
-  // Select column set based on tech
-  const columns: ColumnsType<CellRevisionBase> = React.useMemo(() => {
-    const t = tech.toLowerCase()
-    if (t === '3g') return makeCell3GColumns()
-    if (t === '4g') return makeCell4GColumns()
-    if (t === '5g') return makeCell5GColumns()
-    return makeCommonCellColumns()
-  }, [tech])
+  const {
+    columns: excelColumns, dataSource, onChange, filterBar,
+  } = useServerColumns<T>(columns, rows, sq, {
+    fetchDistinct: (field, p) => getRevisionDistinct(layer, field, p),
+    fetchIds:      (p) => getRevisionIds(layer, p),
+    selectedIds, setSelectedIds, unit,
+  })
 
-  const scrollX = columns.reduce((s, c) => s + ((c.width as number) || 100), 0)
+  // toolbar "Xóa lọc" => also clear column filters + selection
+  const firstReset = useRef(true)
+  useEffect(() => {
+    if (firstReset.current) { firstReset.current = false; return }
+    sq.clearFilters()
+    setSelectedIds([])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey])
+
+  const exportCols = useMemo(() => csvColumnsOf(columns, extraFields), [columns, extraFields])
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      // selected rows -> exactly those; otherwise everything the filters match
+      const scope  = buildExportScope(sq, selectedIds)
+      const hasIds = Boolean(scope.ids && scope.ids.length > 0)
+      const res = await exportRevisionCsv(layer, {
+        ids:      scope.ids,
+        params:   hasIds ? {} : stableParams,
+        filters:  scope.filters,
+        sort_by:  scope.sort_by,
+        sort_dir: scope.sort_dir ?? 'asc',
+        columns:  exportCols,
+      })
+      message.success(
+        `Xuất CSV thành công${res.rows != null ? ` (${res.rows.toLocaleString('vi-VN')} dòng)` : ''}`)
+    } catch (e: unknown) {
+      message.error(e instanceof Error ? e.message : 'Xuất CSV thất bại')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const rowSelection: TableRowSelection<T> = {
+    selectedRowKeys: selectedIds,
+    preserveSelectedRowKeys: true,
+    fixed: true,
+    columnWidth: 48,
+    onChange: keys => setSelectedIds(keys as number[]),
+    selections: [Table.SELECTION_ALL, Table.SELECTION_INVERT, Table.SELECTION_NONE],
+  }
+
+  const scrollX = excelColumns.reduce((s, c) => s + ((c.width as number) || 100), 0) + 100
+
+  return (
+    <div>
+      {loadError && (
+        <Alert message={loadError} type="error" showIcon closable
+               style={{ marginBottom: 12 }} onClose={() => setLoadError(null)} />
+      )}
+
+      <Row justify="space-between" align="middle" gutter={[8, 8]} style={{ marginBottom: 8 }}>
+        <Col>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            Nhấn ▶ để xem chi tiết các trường thay đổi; nhấn biểu tượng lọc ở tiêu đề cột để lọc / sắp xếp.
+          </Typography.Text>
+        </Col>
+        <Col>
+          <Tooltip
+            title={selectedIds.length > 0
+              ? `Xuất ${selectedIds.length} dòng đã chọn ra CSV`
+              : 'Xuất các dòng đang lọc (gồm cả bộ lọc cột) ra CSV'}
+          >
+            <Button
+              icon={<DownloadOutlined />}
+              loading={exporting}
+              disabled={loading || sq.total === 0}
+              onClick={handleExport}
+              style={{ borderColor: '#52c41a', color: '#52c41a' }}
+            >
+              Xuất CSV{selectedIds.length > 0
+                ? ` (${selectedIds.length.toLocaleString('vi-VN')} đã chọn)`
+                : ` (${sq.total.toLocaleString('vi-VN')} dòng)`}
+            </Button>
+          </Tooltip>
+        </Col>
+      </Row>
+
+      {filterBar}
+
+      <Table<T>
+        rowSelection={rowSelection}
+        columns={excelColumns}
+        onChange={onChange}
+        dataSource={dataSource}
+        rowKey="id"
+        loading={loading}
+        size="small"
+        scroll={{ x: scrollX, y: 500 }}
+        bordered
+        pagination={sq.pagination(unit)}
+        expandable={{
+          expandedRowRender: renderExpanded,
+          rowExpandable: () => true,
+        }}
+      />
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SITE REVISION TAB
+// ═════════════════════════════════════════════════════════════════════════════
+function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
+  const [search,    setSearch]    = useState('')
+  const [tinh,      setTinh]      = useState<string | undefined>()
+  const [reloadKey, setReloadKey] = useState(0)
+  const [resetKey,  setResetKey]  = useState(0)
+  const dSearch = useDebouncedValue(search, 400)
+
+  const topParams = useMemo(
+    () => cleanParams({ site_name: dSearch, tinh }),
+    [dSearch, tinh],
+  )
+  const reload = () => setReloadKey(k => k + 1)
+
+  return (
+    <div>
+      <Row gutter={8} style={{ marginBottom: 12 }}>
+        <Col flex="300px">
+          <Input prefix={<SearchOutlined />}
+            placeholder="Tìm site name (hiện tại hoặc tên cũ)..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            onPressEnter={reload} allowClear />
+        </Col>
+        <Col>
+          <TinhFilter tinhList={tinhList} value={tinh} onChange={setTinh} />
+        </Col>
+        <Col>
+          <Button type="primary" icon={<SearchOutlined />} onClick={reload}>
+            Tìm kiếm
+          </Button>
+        </Col>
+        <Col>
+          <Button icon={<ReloadOutlined />}
+            onClick={() => { setSearch(''); setTinh(undefined); setResetKey(k => k + 1) }}>
+            Xóa lọc
+          </Button>
+        </Col>
+      </Row>
+      <RevisionGrid<SiteRevision>
+        layer="sites"
+        topParams={topParams}
+        reloadKey={reloadKey}
+        resetKey={resetKey}
+        columns={SITE_COLUMNS}
+        renderExpanded={renderSiteExpanded}
+        extraFields={SITE_EXTRAS}
+        unit="phiên bản"
+      />
+    </div>
+  )
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// CELL REVISION TAB (3G / 4G / 5G)
+// ═════════════════════════════════════════════════════════════════════════════
+const CELL_LAYER: Record<'3G' | '4G' | '5G', RevisionLayer> = {
+  '3G': 'cells-3g', '4G': 'cells-4g', '5G': 'cells-5g',
+}
+
+function CellRevisionTab({
+  tech, tinhList,
+}: {
+  tech: '3G' | '4G' | '5G'
+  tinhList: TinhItem[]
+}) {
+  const [siteName,  setSiteName]  = useState('')
+  const [cellName,  setCellName]  = useState('')
+  const [subcellId, setSubcellId] = useState('')
+  const [tinh,      setTinh]      = useState<string | undefined>()
+  const [reloadKey, setReloadKey] = useState(0)
+  const [resetKey,  setResetKey]  = useState(0)
+  const dSite    = useDebouncedValue(siteName, 400)
+  const dCell    = useDebouncedValue(cellName, 400)
+  const dSubcell = useDebouncedValue(subcellId, 400)
+
+  const topParams = useMemo(
+    () => cleanParams({ site_name: dSite, cell_name: dCell, subcell_id: dSubcell, tinh }),
+    [dSite, dCell, dSubcell, tinh],
+  )
+  const reload = () => setReloadKey(k => k + 1)
 
   return (
     <div>
@@ -593,84 +689,47 @@ function CellRevisionTab({
           <Input prefix={<SearchOutlined />}
             placeholder="Site name (hiện tại hoặc cũ)..."
             value={siteName} onChange={e => setSiteName(e.target.value)}
-            onPressEnter={load} allowClear />
+            onPressEnter={reload} allowClear />
         </Col>
         <Col flex="250px">
           <Input prefix={<SearchOutlined />}
             placeholder="Cell name (hiện tại hoặc cũ)..."
             value={cellName} onChange={e => setCellName(e.target.value)}
-            onPressEnter={load} allowClear />
+            onPressEnter={reload} allowClear />
         </Col>
         <Col flex="170px">
           <Input prefix={<SearchOutlined />}
             placeholder="Subcell-ID..."
             value={subcellId} onChange={e => setSubcellId(e.target.value)}
-            onPressEnter={load} allowClear />
+            onPressEnter={reload} allowClear />
         </Col>
         <Col>
           <TinhFilter tinhList={tinhList} value={tinh} onChange={setTinh} />
         </Col>
         <Col>
-          <Button type="primary" icon={<SearchOutlined />} onClick={load} loading={loading}>
+          <Button type="primary" icon={<SearchOutlined />} onClick={reload}>
             Tìm kiếm
           </Button>
         </Col>
         <Col>
           <Button icon={<ReloadOutlined />}
-            onClick={() => { setSiteName(''); setCellName(''); setSubcellId(''); setTinh(undefined) }}>
+            onClick={() => {
+              setSiteName(''); setCellName(''); setSubcellId(''); setTinh(undefined)
+              setResetKey(k => k + 1)
+            }}>
             Xóa lọc
           </Button>
         </Col>
       </Row>
-      <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8, fontSize: 12 }}>
-        {data.length} phiên bản Cell {tech} – nhấn ▶ để xem chi tiết các trường thay đổi
-      </Typography.Text>
-      <Table
-        columns={columns} dataSource={data} rowKey="id"
-        loading={loading} size="small"
-        scroll={{ x: scrollX, y: 500 }} bordered
-        pagination={pagination}
-        expandable={{
-          expandedRowRender: (r: CellRevisionBase) => {
-            const diff  = r.changed_fields || {}
-            const nDiff = Object.keys(diff).length
-            const cellRenamed = 'cell_name' in diff
-            const siteRenamed = 'site_name' in diff
-            return (
-              <div style={{ padding: '12px 16px' }}>
-                {cellRenamed && (
-                  <Alert type="warning" showIcon style={{ marginBottom: 8 }}
-                    message={
-                      <span>Đổi tên cell:&nbsp;
-                        <strong style={{ color: '#cf1322' }}>{String(diff['cell_name']?.[0] ?? '')}</strong>
-                        &nbsp;→&nbsp;
-                        <strong style={{ color: '#237804' }}>{String(diff['cell_name']?.[1] ?? '')}</strong>
-                      </span>
-                    }
-                  />
-                )}
-                {siteRenamed && (
-                  <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-                    message={
-                      <span>Đổi tên site:&nbsp;
-                        <strong style={{ color: '#cf1322' }}>{String(diff['site_name']?.[0] ?? '')}</strong>
-                        &nbsp;→&nbsp;
-                        <strong style={{ color: '#237804' }}>{String(diff['site_name']?.[1] ?? '')}</strong>
-                      </span>
-                    }
-                  />
-                )}
-                <Typography.Text strong style={{ fontSize: 13 }}>
-                  🔄 Các trường thay đổi ({nDiff}) – Revision #{r.revision_no}
-                </Typography.Text>
-                <div style={{ marginTop: 8 }}>
-                  <DiffTable diff={diff} />
-                </div>
-              </div>
-            )
-          },
-          rowExpandable: () => true,
-        }}
+      <RevisionGrid<CellRevisionBase>
+        layer={CELL_LAYER[tech]}
+        topParams={topParams}
+        reloadKey={reloadKey}
+        resetKey={resetKey}
+        columns={CELL_COLUMNS[tech]}
+        renderExpanded={renderCellExpanded}
+        extraFields={CELL_EXTRAS}
+        unit={`phiên bản Cell ${tech}`}
       />
     </div>
   )
@@ -700,14 +759,16 @@ export default function RevisionPage() {
             <li>Tìm kiếm theo tên hiện tại <strong>hoặc</strong> tên cũ đều ra kết quả.</li>
             <li>Nhấn ▶ để xem diff chi tiết các trường thay đổi trong revision đó.</li>
             <li>Banner "Đổi tên" chỉ xuất hiện khi tên <strong>thực sự thay đổi</strong> trong revision đó.</li>
+            <li>Nhấn biểu tượng lọc ở tiêu đề cột để <strong>lọc kiểu Excel</strong> và <strong>sắp xếp</strong> (xử lý trên server, toàn bộ lịch sử).</li>
+            <li><strong>Xuất CSV</strong>: xuất các dòng đã chọn, hoặc toàn bộ kết quả đang lọc (gồm cả bộ lọc cột).</li>
           </ul>
         }
       />
       <Tabs defaultActiveKey="sites" items={[
         { key: 'sites',   label: '🏗️ Site',    children: <SiteRevisionTab tinhList={tinhList} /> },
-        { key: 'cells3g', label: '📡 Cell 3G', children: <CellRevisionTab tech="3G" fetchFn={getCell3GRevisions} tinhList={tinhList} /> },
-        { key: 'cells4g', label: '📡 Cell 4G', children: <CellRevisionTab tech="4G" fetchFn={getCell4GRevisions} tinhList={tinhList} /> },
-        { key: 'cells5g', label: '📡 Cell 5G', children: <CellRevisionTab tech="5G" fetchFn={getCell5GRevisions} tinhList={tinhList} /> },
+        { key: 'cells3g', label: '📡 Cell 3G', children: <CellRevisionTab tech="3G" tinhList={tinhList} /> },
+        { key: 'cells4g', label: '📡 Cell 4G', children: <CellRevisionTab tech="4G" tinhList={tinhList} /> },
+        { key: 'cells5g', label: '📡 Cell 5G', children: <CellRevisionTab tech="5G" tinhList={tinhList} /> },
       ]} />
     </div>
   )
