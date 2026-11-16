@@ -13,6 +13,11 @@ For every technology (3G / 4G / 5G) two directions are reported:
 Matching key = cell_name only (same rule as the sync): all web cells that share a
 cell_name (different subcell_id) match the dump cell of that name.
 
+Ignore rules (cells that are deliberately not reconciled):
+  * web cells whose name starts OR ends with MBF are never reported as missing_in_dump
+  * dump cells whose name starts OR ends with VNP are never reported as missing_in_web
+  (env RECONCILE_IGNORE_WEB_NOT_IN_DUMP / RECONCILE_IGNORE_DUMP_NOT_IN_WEB, comma separated)
+
 Safety nets (a bad download must never produce a flood of false alarms):
   * a vendor file that can not be downloaded while the web holds cells of that vendor
     -> the technology is NOT reconciled (run stored with status 'error')
@@ -55,6 +60,22 @@ KEEP_DAYS = int(os.environ.get("RECONCILE_KEEP_DAYS", "400"))
 MIN_RATIO = float(os.environ.get("RECONCILE_MIN_RATIO", "0.5"))
 WEBHOOK_URL = os.environ.get("RECONCILE_WEBHOOK_URL", "").strip()
 INSERT_BATCH = 2000
+
+
+# -- ignore rules (prefix OR postfix, case-insensitive) ----------------------
+def _parse_affixes(env_name: str, default: str) -> Tuple[str, ...]:
+    raw = os.environ.get(env_name, default)
+    return tuple(x.strip().upper() for x in raw.split(",") if x.strip())
+
+
+IGNORE_WEB_NOT_IN_DUMP = _parse_affixes("RECONCILE_IGNORE_WEB_NOT_IN_DUMP", "MBF")
+IGNORE_DUMP_NOT_IN_WEB = _parse_affixes("RECONCILE_IGNORE_DUMP_NOT_IN_WEB", "VNP")
+
+
+def has_affix(name: Any, affixes: Tuple[str, ...]) -> bool:
+    # True when the cell name starts or ends with one of the affixes
+    n = str(name or "").strip().upper()
+    return bool(n) and bool(affixes) and (n.startswith(affixes) or n.endswith(affixes))
 
 
 # ── status classification ────────────────────────────────────────────────────
@@ -356,6 +377,7 @@ def _compute(engine, tech: str, geo, run: Dict[str, Any]) -> List[Dict[str, Any]
 
     items: List[Dict[str, Any]] = []
     matched = inactive_not_in_web = 0
+    ignored_dump = ignored_web = 0
     for rec in dump.to_dict("records"):
         if rec["cell_name"] in web_names:
             matched += 1
@@ -363,12 +385,24 @@ def _compute(engine, tech: str, geo, run: Dict[str, Any]) -> List[Dict[str, Any]
         if not rec["_active"]:
             inactive_not_in_web += 1
             continue
+        if has_affix(rec["cell_name"], IGNORE_DUMP_NOT_IN_WEB):
+            ignored_dump += 1
+            continue
         items.append(_dump_item(tech, rec, geo))
     for r in web_rows:
         name = core._clean(r.get("cell_name")) or ""
         if not name or name in dump_names:
             continue
+        if has_affix(name, IGNORE_WEB_NOT_IN_DUMP):
+            ignored_web += 1
+            continue
         items.append(_web_item(tech, r, name))
+    if ignored_dump:
+        notes.append("Bỏ qua %d cell active trong dump có tiền tố/hậu tố %s (không đối soát)."
+                     % (ignored_dump, "/".join(IGNORE_DUMP_NOT_IN_WEB)))
+    if ignored_web:
+        notes.append("Bỏ qua %d cell trên web có tiền tố/hậu tố %s (không đối soát)."
+                     % (ignored_web, "/".join(IGNORE_WEB_NOT_IN_DUMP)))
 
     # first_seen / new / resolved vs the previous successful run
     prev: Dict[tuple, Tuple[Optional[str], str]] = {}
@@ -389,8 +423,10 @@ def _compute(engine, tech: str, geo, run: Dict[str, Any]) -> List[Dict[str, Any]
                 new_web += 1
             elif it["dump_covered"] != "N":
                 new_dump += 1
-    res_web = sum(1 for k in prev if k[0] == "missing_in_web" and k not in cur_keys)
-    res_dump = sum(1 for k, v in prev.items() if k[0] == "missing_in_dump" and v[1] != "N" and k not in cur_keys)
+    res_web = sum(1 for k in prev if k[0] == "missing_in_web" and k not in cur_keys
+                  and not has_affix(k[1], IGNORE_DUMP_NOT_IN_WEB))
+    res_dump = sum(1 for k, v in prev.items() if k[0] == "missing_in_dump" and v[1] != "N"
+                   and k not in cur_keys and not has_affix(k[1], IGNORE_WEB_NOT_IN_DUMP))
 
     n_web = sum(1 for it in items if it["direction"] == "missing_in_web")
     n_dump = sum(1 for it in items if it["direction"] == "missing_in_dump" and it["dump_covered"] != "N")
