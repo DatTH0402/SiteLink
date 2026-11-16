@@ -261,8 +261,8 @@ function SiteRevisionTab({ tinhList }: { tinhList: TinhItem[] }) {
     { title: 'MORAN 4G', dataIndex: 'moran_4g', width: 110 },
     { title: 'MORAN 5G', dataIndex: 'moran_5g', width: 110 },
     { title: 'Mã PTM',   dataIndex: 'ma_ptm',   width: 110 },
-    { title: 'Cao đỉnh cột (m)', dataIndex: 'do_cao_dinh_cot_anten', width: 150 },
-    { title: 'Cao cột (m)',      dataIndex: 'do_cao_cot_anten',       width: 120 },
+    { title: 'Độ cao đỉnh cột anten đến mặt đất (m)', dataIndex: 'do_cao_dinh_cot_anten', width: 150 },
+    { title: 'Độ cao cột anten (đỉnh cột anten đến chân cột anten, không tính độ cao công trình) (m)',      dataIndex: 'do_cao_cot_anten',       width: 120 },
     { title: 'Địa chỉ', dataIndex: 'dia_chi', width: 200, ellipsis: { showTitle: true } },
     { title: 'Ghi chú', dataIndex: 'ghi_chu', width: 160, ellipsis: { showTitle: true } },
     {
