@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # SSO_REDIRECT_URI is now DYNAMIC — set per-request from the frontend.
     # This default is used only as fallback for sso/config endpoint.
-    SSO_REDIRECT_URI: str = "http://localhost:8081/sitelink/sso/callback"
+    SSO_REDIRECT_URI: str = "http://localhost:8101/sitelink/sso/callback"
 
     @property
     def DATABASE_URL(self) -> str:

@@ -5,8 +5,8 @@ Handles both local login and MobiFone SSO (Keycloak) login.
 
 Key design: redirect_uri is DYNAMIC — the frontend passes its own origin
 so the same backend works for:
-  - http://localhost:8081/sitelink/sso/callback
-  - http://10.24.15.169:8081/sitelink/sso/callback
+  - http://localhost:8101/sitelink/sso/callback
+  - http://10.24.15.169:8101/sitelink/sso/callback
   - https://mlmt.mobifone.vn/sitelink/sso/callback
 
 SSO Flow:
@@ -89,7 +89,7 @@ def sso_login_url(
     correct host (localhost, IP, or domain).
 
     Example:
-      GET /api/v1/auth/sso/login-url?redirect_uri=http://localhost:8081/sitelink/sso/callback
+      GET /api/v1/auth/sso/login-url?redirect_uri=http://localhost:8101/sitelink/sso/callback
     """
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=400, detail="SSO is not enabled")

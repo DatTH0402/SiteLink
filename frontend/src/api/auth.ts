@@ -19,7 +19,7 @@ export const getMe = () =>
 
 /**
  * Build the callback URL dynamically from the current browser location.
- * Works for localhost:8081, 10.24.15.169:8081, mlmt.mobifone.vn, etc.
+ * Works for localhost:8101, 10.24.15.169:8101, mlmt.mobifone.vn, etc.
  */
 export function buildCallbackUrl(): string {
   const { protocol, host } = window.location

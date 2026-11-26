@@ -5,8 +5,8 @@
  *   <origin>/sitelink/sso/callback?code=xxx&state=xxx
  *
  * This page works regardless of origin:
- *   - http://localhost:8081/sitelink/sso/callback
- *   - http://10.24.15.169:8081/sitelink/sso/callback
+ *   - http://localhost:8101/sitelink/sso/callback
+ *   - http://10.24.15.169:8101/sitelink/sso/callback
  *   - https://mlmt.mobifone.vn/sitelink/sso/callback
  *
  * Steps:

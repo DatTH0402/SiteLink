@@ -145,7 +145,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "https://mlmt.mobifone.vn,http://10.24.15.169:8081,http://localhost:8081,http://localhost:5173").split(",") if o.strip()],
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "https://mlmt.mobifone.vn,http://10.24.15.169:8101,http://localhost:8101,http://localhost:5173").split(",") if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
